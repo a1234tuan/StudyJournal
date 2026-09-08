@@ -32,6 +32,7 @@ import {
   type VoiceRecallInputMode,
   type VoiceRecallState,
 } from "../features/voiceRecall/domain";
+import { BUILT_IN_ASR_PROFILES, BUILT_IN_VOICE_TEMPLATES, BUILT_IN_VOICE_TTS_PROFILES } from "../features/voiceRecall/providerProfiles";
 import "./voiceRecallPrototype.css";
 
 type VisualTheme = "reading" | "modern";
@@ -89,6 +90,10 @@ export const VoiceRecallPrototypeApp = () => {
   const [reduceMotion, setReduceMotion] = useState(false);
   const [callPalette, setCallPalette] = useState<"bright" | "dark">("bright");
   const [captionsVisible, setCaptionsVisible] = useState(true);
+  const [voiceTemplate, setVoiceTemplate] = useState("voice-mock-cn");
+  const [asrProfile, setAsrProfile] = useState("voice-asr-mock");
+  const [llmProfile, setLlmProfile] = useState("voice-llm-mock");
+  const [ttsProfile, setTtsProfile] = useState("voice-tts-mock");
   const timerRef = useRef<number | undefined>();
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
@@ -292,7 +297,8 @@ export const VoiceRecallPrototypeApp = () => {
       {detailsOpen && (
         <aside className="vr-details" aria-label="通话技术详情">
           <header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header>
-          <dl><div><dt>模板</dt><dd>voice-mock-cn@1</dd></div><div><dt>输入</dt><dd>16 kHz · 单声道 PCM</dd></div><div><dt>运行代际</dt><dd>{state.generation}</dd></div></dl>
+          <dl><div><dt>模板</dt><dd>{voiceTemplate}@1</dd></div><div><dt>输入</dt><dd>16 kHz · 单声道 PCM</dd></div><div><dt>运行代际</dt><dd>{state.generation}</dd></div></dl>
+          <div className="vr-provider-section"><strong>Provider 配置</strong><small>仅原型选择；密钥和设备覆盖不会写入这里</small><label>配置预设<select value={voiceTemplate} onChange={(event) => setVoiceTemplate(event.target.value)}>{BUILT_IN_VOICE_TEMPLATES.map((template) => <option key={template.templateId} value={template.templateId}>{template.templateId} · {template.status === "verified" ? "已验证 Mock" : "候选"}</option>)}</select></label><label>ASR<select value={asrProfile} onChange={(event) => setAsrProfile(event.target.value)}>{BUILT_IN_ASR_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.providerName}</option>)}</select></label><label>LLM<select value={llmProfile} onChange={(event) => setLlmProfile(event.target.value)}><option value="voice-llm-mock">Mock LLM · 已验证</option><option value="deepseek-v4-flash">DeepSeek v4 Flash · 候选</option></select></label><label>TTS<select value={ttsProfile} onChange={(event) => setTtsProfile(event.target.value)}>{BUILT_IN_VOICE_TTS_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.providerName} · {profile.voice}</option>)}</select></label></div>
           <label><input type="checkbox" checked={reduceMotion} onChange={(event) => setReduceMotion(event.target.checked)} />减少动态效果</label>
           <div className="vr-call-palette-toggle" role="group" aria-label="通话声场">
             <button type="button" aria-pressed={callPalette === "bright"} onClick={() => setCallPalette("bright")}><Sun />明亮声场</button>

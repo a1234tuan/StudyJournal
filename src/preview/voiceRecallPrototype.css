@@ -541,6 +541,11 @@
 .vr-details dl div { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--vr-call-line); font-size: .8rem; }
 .vr-details dt { color: var(--vr-call-muted); }
 .vr-details dd { margin: 0; font-weight: 650; }
+.vr-provider-section { display: grid; gap: 8px; margin: 14px 0; padding: 12px; border: 1px solid var(--vr-call-line); border-radius: 8px; background: color-mix(in srgb, var(--vr-call-surface) 72%, transparent); }
+.vr-provider-section > strong { font-size: .82rem; }
+.vr-provider-section > small { color: var(--vr-call-muted); font-size: .68rem; line-height: 1.4; }
+.vr-provider-section label { display: grid; gap: 4px; color: var(--vr-call-muted); font-size: .68rem; }
+.vr-provider-section select { min-height: 34px; padding: 0 8px; border: 1px solid var(--vr-call-line); border-radius: 6px; color: var(--vr-call-text); background: var(--vr-call-surface-strong); font: inherit; }
 .vr-details > label { display: flex; gap: 9px; align-items: center; min-height: 40px; font-size: .82rem; }
 .vr-call-palette-toggle {
   display: grid;

@@ -20,6 +20,13 @@ test.describe("voice recall isolated prototype", () => {
     await expect(page.getByText("正在听", { exact: true })).toBeVisible();
     await expect(page.locator(".vr-call")).toHaveAttribute("data-call-palette", "bright");
     await page.getByRole("button", { name: "通话设置" }).click();
+    await expect(page.getByText("Provider 配置", { exact: true })).toBeVisible();
+    await expect(page.locator("select")).toHaveCount(4);
+    await expect(page.locator("select").nth(0)).toContainText("voice-mock-cn");
+    await expect(page.locator("select").nth(1)).toContainText("豆包流式 ASR");
+    await expect(page.locator("select").nth(3)).toContainText("Fish Audio");
+    await page.locator("select").nth(3).selectOption("voice-tts-doubao-seed-20");
+    await expect(page.locator("select").nth(3)).toHaveValue("voice-tts-doubao-seed-20");
     await page.getByRole("button", { name: "深色声场" }).click();
     await expect(page.locator(".vr-call")).toHaveAttribute("data-call-palette", "dark");
     await page.getByRole("button", { name: "明亮声场" }).click();
