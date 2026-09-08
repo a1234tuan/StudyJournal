@@ -1,10 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const backupFlushListeners = new Set();
+const voiceSuspendListeners = new Set();
 
 ipcRenderer.on("study-journal:backup-flush-request", async (_event, payload) => {
   await Promise.allSettled(Array.from(backupFlushListeners).map((listener) => listener(payload.reason)));
   ipcRenderer.send("study-journal:backup-flush-complete", payload.requestId);
+});
+
+ipcRenderer.on("study-journal:voice-suspend", (_event, payload) => {
+  for (const listener of voiceSuspendListeners) listener(payload.reason);
 });
 
 contextBridge.exposeInMainWorld("studyJournalDesktop", Object.freeze({
@@ -30,6 +35,14 @@ contextBridge.exposeInMainWorld("studyJournalDesktop", Object.freeze({
   }),
   tts: Object.freeze({
     synthesize: (options) => ipcRenderer.invoke("study-journal:tts-synthesize", options),
+  }),
+  voice: Object.freeze({
+    getCapabilities: () => ipcRenderer.invoke("study-journal:voice-capabilities"),
+    setCaptureActive: (active) => ipcRenderer.invoke("study-journal:voice-capture-active", Boolean(active)),
+    onSuspendRequested: (listener) => {
+      voiceSuspendListeners.add(listener);
+      return () => voiceSuspendListeners.delete(listener);
+    },
   }),
   proxy: Object.freeze({
     getProxy: () => ipcRenderer.invoke("study-journal:get-proxy"),

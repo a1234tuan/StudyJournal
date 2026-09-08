@@ -3,6 +3,29 @@ import { describe, expect, it } from "vitest";
 import { buildTabPageKey, createInitialTabMemory, getTabDepth, popTabDepth, recordReferenceOpenError, reviewQueueReferenceOpenError } from "./tabNavigation";
 
 describe("tabNavigation", () => {
+  it("treats the voice recall workspace as one review-owned navigation layer", () => {
+    const memory = createInitialTabMemory();
+    memory.review.currentRecordId = "record-1";
+    memory.review.queueIds = ["record-1", "record-2"];
+    memory.review.reviewProgress = { total: 2, completed: 0 };
+    memory.review.voiceRecall = {
+      screen: "call",
+      returnTab: "review",
+      sourceKind: "review-card",
+      recordIds: ["record-1"],
+      sessionId: "voice-session-1",
+    };
+
+    expect(getTabDepth("review", memory)).toBe(1);
+    expect(buildTabPageKey("review", memory)).toContain("voice-call-voice-session-1");
+
+    const returned = popTabDepth(memory, "review");
+    expect(returned.review.voiceRecall).toBeUndefined();
+    expect(returned.review.currentRecordId).toBe("record-1");
+    expect(returned.review.queueIds).toEqual(["record-1", "record-2"]);
+    expect(returned.review.reviewProgress).toEqual({ total: 2, completed: 0 });
+  });
+
   it("keeps each tab state independent", () => {
     const memory = createInitialTabMemory();
     const next = {

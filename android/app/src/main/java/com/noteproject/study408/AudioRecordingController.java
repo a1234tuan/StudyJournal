@@ -27,6 +27,9 @@ final class AudioRecordingController {
     }
 
     static synchronized void start(Context context) throws IOException {
+        if (VoiceCaptureController.isCapturing()) {
+            throw new IOException("请先结束语音复述，再开始普通录音。");
+        }
         if (isRecording()) {
             throw new IOException("录音已经在进行中。");
         }

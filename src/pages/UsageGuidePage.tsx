@@ -46,6 +46,21 @@ const reviewStrategyItems = [
   },
 ];
 
+const voiceRecallSteps = [
+  {
+    title: "从复习或日志开始",
+    body: "在复习页进入语音复述，或从只读日志、当前复习卡直接开始。语音练习不会自动评分，也不会改写复习间隔。",
+  },
+  {
+    title: "确认外发范围",
+    body: "开始前核对资料范围：ASR 接收麦克风音频，LLM 接收所选日志片段和确认后的转写，TTS 接收教师回复文本。日志内容只作为不可信学习资料处理。",
+  },
+  {
+    title: "确认转写再提交",
+    body: "自动、长按和点击录音三种模式互斥。转写可以修改；在学习助教中必须明确确认，才会作为这一题唯一的正式答案提交。",
+  },
+];
+
 const faqItems = [
   {
     question: "AI 报“未配置供应商、API Key 或模型”怎么办？",
@@ -129,6 +144,19 @@ export const UsageGuidePage = () => (
           ))}
         </ul>
       </SurfaceCard>
+    </section>
+
+    <section className="usage-guide-section">
+      <h2>语音主动回忆</h2>
+      <div className="guide-step-list">
+        {voiceRecallSteps.map((step) => (
+          <SurfaceCard key={step.title} className="guide-step-card" variant="raised">
+            <h3>{step.title}</h3>
+            <p>{step.body}</p>
+          </SurfaceCard>
+        ))}
+      </div>
+      <p className="guide-note">临时会话和主动保存的通话摘要只保存在本机，不进入云同步或完整备份。重装、清除数据或换机前，请把需要长期保留的内容整理为正式日志。</p>
     </section>
 
     <section className="usage-guide-section">

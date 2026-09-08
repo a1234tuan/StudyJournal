@@ -13,6 +13,8 @@ import {
   REVIEW_COACH_SCHEMA_17_STORES,
   REVIEW_COACH_SCHEMA_18_STORES,
   REVIEW_COACH_SCHEMA_19_STORES,
+  REVIEW_ANNOTATION_SCHEMA_20_STORES,
+  VOICE_RECALL_SCHEMA_21_STORES,
   buildSchema17MigrationBackup,
   finalizeReviewCoachMigration,
   migrateToReviewCoachSchema17,
@@ -51,8 +53,11 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     await database.open();
 
-    expect(database.verno).toBe(20);
+    expect(database.verno).toBe(21);
     expect(database.tables.some((table) => table.name === "reviewAnnotationDrafts")).toBe(true);
+    expect(database.tables.map((table) => table.name)).toEqual(expect.arrayContaining([
+      "voiceRecallSessions", "voiceRecallTurns", "voiceRecallLocalHistory",
+    ]));
     expect(await database.blocks.count()).toBe(1);
     expect(await database.recordReviewLogs.count()).toBe(1);
     expect(await database.decisionBlocks.count()).toBe(0);
@@ -72,7 +77,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     await database.open();
 
-    expect(database.verno).toBe(20);
+    expect(database.verno).toBe(21);
     expect(await database.learningEvidence.count()).toBe(1);
     expect(await database.knowledgePoints.count()).toBe(2);
     expect(await database.recordKnowledgePointLinks.count()).toBe(1);
@@ -147,7 +152,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
       idempotencyKey: "verification-task", createdAt: "2026-09-07T08:00:00.000Z", updatedAt: "2026-09-07T08:00:00.000Z",
     });
 
-    expect(database.verno).toBe(20);
+    expect(database.verno).toBe(21);
     expect(await database.adaptiveReviewTasks.where("blueprintId").equals("blueprint-1").count()).toBe(2);
     database.close();
   });
@@ -178,9 +183,35 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     const retried = new StudyJournalDatabase(name);
     await retried.open();
-    expect(retried.verno).toBe(20);
+    expect(retried.verno).toBe(21);
     expect(await retried.learningEvidence.count()).toBe(1);
     expect(await retried.coachMigrationBackups.get("schema-17")).toMatchObject({ status: "completed" });
+    retried.close();
+  });
+
+  it("rolls back a failed schema 21 store creation and retries from schema 20", async () => {
+    const name = `voice-schema-20-${crypto.randomUUID()}`;
+    names.add(name);
+    const schema20 = new Dexie(name);
+    schema20.version(20).stores(REVIEW_ANNOTATION_SCHEMA_20_STORES);
+    await schema20.open();
+    await schema20.table("settings").put({ id: "settings", theme: "system" });
+    schema20.close();
+
+    const failing = new Dexie(name);
+    failing.version(20).stores(REVIEW_ANNOTATION_SCHEMA_20_STORES);
+    failing.version(21).stores(VOICE_RECALL_SCHEMA_21_STORES).upgrade(async (transaction) => {
+      await transaction.table("voiceRecallSessions").put({ id: "partial" });
+      throw new Error("injected schema 21 failure");
+    });
+    await expect(failing.open()).rejects.toThrow("injected schema 21 failure");
+    failing.close();
+
+    const retried = new StudyJournalDatabase(name);
+    await retried.open();
+    expect(retried.verno).toBe(21);
+    expect(await retried.settings.get("settings")).toMatchObject({ theme: "system" });
+    expect(await retried.voiceRecallSessions.count()).toBe(0);
     retried.close();
   });
 });

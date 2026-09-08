@@ -24,6 +24,7 @@ import { CategoriesPage } from "./pages/CategoriesPage";
 import { SearchPage } from "./pages/SearchPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
 import { ReviewPage } from "./pages/ReviewPage";
+import { VoiceRecallWorkspace } from "./features/voiceRecall/VoiceRecallWorkspace";
 import { StatsPage } from "./pages/StatsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { RecordEditorPage } from "./pages/RecordEditorPage";
@@ -73,6 +74,7 @@ import {
   type RecordingPlayerQueueSource,
   type TabKey,
   type TabMemory,
+  type VoiceRecallNavigationRoute,
 } from "./lib/tabNavigation";
 import {
   createWebNavigationSessionId,
@@ -358,6 +360,15 @@ export const App = () => {
 
   const popCurrentTabDepth = useCallback(() => {
     const current = navigationStateRef.current;
+    const voiceRoute = current.activeTab === "review" ? current.tabMemory.review.voiceRecall : undefined;
+    if (voiceRoute) {
+      commitNavigation({
+        ...current,
+        activeTab: voiceRoute.returnTab,
+        tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: undefined } },
+      });
+      return;
+    }
     const nextMemory = popTabDepth(current.tabMemory, current.activeTab);
     if (nextMemory === current.tabMemory) {
       return;
@@ -399,6 +410,60 @@ export const App = () => {
       tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, adaptiveTaskId: undefined } },
     });
   }, [commitNavigation]);
+
+  const openVoiceRecall = useCallback((record?: RecordBlock, sourceKind: "record" | "review-card" = "review-card") => {
+    const current = navigationStateRef.current;
+    const route: VoiceRecallNavigationRoute = {
+      screen: "start",
+      returnTab: current.activeTab,
+      sourceKind: record ? sourceKind : "review-home",
+      recordIds: record ? [record.id] : [],
+      learningGoal: record ? `闭卷复述《${record.title}》并发现理解缺口` : undefined,
+    };
+    commitNavigation({
+      ...current,
+      activeTab: "review",
+      tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: route } },
+    }, { scrollToTop: true });
+  }, [commitNavigation]);
+
+  const updateVoiceRecallRoute = useCallback((route: VoiceRecallNavigationRoute) => {
+    updateNavigationState((current) => ({
+      ...current,
+      activeTab: "review",
+      tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: route } },
+    }));
+  }, [updateNavigationState]);
+
+  const closeVoiceRecall = useCallback(() => {
+    const current = navigationStateRef.current;
+    const returnTab = current.tabMemory.review.voiceRecall?.returnTab ?? "review";
+    commitNavigation({
+      ...current,
+      activeTab: returnTab,
+      tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: undefined } },
+    });
+  }, [commitNavigation]);
+
+  const createJournalFromVoiceRecall = useCallback(async (subject: string, contentHtml: string) => {
+    const created = await app.createRecordBlock(todayISO(), subject, contentHtml);
+    newlyCreatedRecordIdsRef.current.add(created.id);
+    const current = navigationStateRef.current;
+    const targetTab = current.tabMemory.review.voiceRecall?.returnTab ?? "review";
+    const nextMemory: TabMemory = {
+      ...current.tabMemory,
+      review: { ...current.tabMemory.review, voiceRecall: undefined },
+      [targetTab]: {
+        ...current.tabMemory[targetTab],
+        recordId: created.id,
+        highlightAssetId: undefined,
+        recordEditing: true,
+        referenceStack: [],
+        restoreScrollY: undefined,
+      },
+    };
+    commitNavigation({ ...current, activeTab: targetTab, tabMemory: nextMemory }, { scrollToTop: true });
+  }, [app.createRecordBlock, commitNavigation]);
 
   const createRecordFromGlobalAction = useCallback(async () => {
     const subject = app.activeSubjects[0]?.name;
@@ -795,6 +860,7 @@ export const App = () => {
         await app.removeRecordFromReview(recordId);
       }}
       onExportRecord={(recordId) => exportRecordTransferPackage(storage, [recordId])}
+      onOpenVoiceRecall={(sourceRecord) => openVoiceRecall(sourceRecord, "record")}
       isNewRecord={newlyCreatedRecordIdsRef.current.has(record.id)}
       onListDecisionBlockArchives={(recordId) => reviewCoachRepository.listRestorableDecisionBlockArchives(recordId)}
     />
@@ -1283,7 +1349,18 @@ export const App = () => {
           />
         );
       case "review":
-        return currentRecord ? (
+        return tabMemory.review.voiceRecall ? (
+          <VoiceRecallWorkspace
+            route={tabMemory.review.voiceRecall}
+            blocks={app.blocks}
+            assets={app.assets}
+            subjects={app.subjects}
+            templates={app.templates}
+            onRouteChange={updateVoiceRecallRoute}
+            onBack={closeVoiceRecall}
+            onCreateJournal={createJournalFromVoiceRecall}
+          />
+        ) : currentRecord ? (
           renderRecordPage(currentRecord, tabMemory.review.highlightAssetId)
         ) : (
           <ReviewPage
@@ -1376,6 +1453,7 @@ export const App = () => {
             onOpenRecord={(record) => openRecordInTab(record, "review")}
             onEditRecord={(record) => openRecordInTab(record, "review", undefined, true)}
             onAskAiRecord={openAiForRecord}
+            onOpenVoiceRecall={(record) => openVoiceRecall(record, "review-card")}
             onAddToReview={async (recordId) => {
               await app.addRecordToReview(recordId);
             }}
@@ -1411,7 +1489,8 @@ export const App = () => {
   const immersiveTaskActive = Boolean(
     (currentRecord && currentRecordState.recordEditing)
     || (activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
-    || (activeTab === "today" && tabMemory.today.adaptiveTaskId),
+    || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
+    || (activeTab === "review" && tabMemory.review.voiceRecall?.screen === "call"),
   );
 
   const shellClassName = [

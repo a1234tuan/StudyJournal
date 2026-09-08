@@ -10,7 +10,9 @@ import {
   type ReviewSessionProgress,
   type TabKey,
   type TabMemory,
+  type VoiceRecallNavigationRoute,
 } from "./tabNavigation";
+import type { AiKnowledgeScope } from "../types";
 
 const HISTORY_KIND = "study-journal-web-navigation";
 const HISTORY_VERSION = 1;
@@ -51,6 +53,8 @@ const MORE_SUB_ROUTES: readonly MoreSubRoute[] = [
 const REVIEW_CARD_FILTERS: readonly ReviewCardFilter[] = ["all", "unadded", "new", "due", "learning", "suspended", "mastered"];
 const REVIEW_CARD_SORTS: readonly ReviewCardSort[] = ["due", "created", "reviewed", "title"];
 const REVIEW_KINDS = ["all", "overview", "memory"] as const;
+const VOICE_RECALL_SCREENS = ["start", "scope", "call", "summary", "history"] as const;
+const VOICE_RECALL_SOURCE_KINDS = ["review-home", "record", "review-card", "coach-task", "free-topic"] as const;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -118,6 +122,40 @@ const restoreReviewLibraryState = (value: unknown): ReviewLibraryState => {
     sort: REVIEW_CARD_SORTS.includes(value.sort as ReviewCardSort)
       ? value.sort as ReviewCardSort
       : fallback.sort,
+  };
+};
+
+const restoreAiKnowledgeScope = (value: unknown): AiKnowledgeScope | undefined => {
+  if (!isObject(value)) return undefined;
+  if (value.kind === "recent" && [7, 14, 30].includes(value.days as number)) return { kind: "recent", days: value.days as 7 | 14 | 30 };
+  if (value.kind === "date" && typeof value.date === "string") return { kind: "date", date: value.date };
+  if (value.kind === "tag" && typeof value.subject === "string" && typeof value.tag === "string") return { kind: "tag", subject: value.subject, tag: value.tag };
+  if (value.kind === "records" && Array.isArray(value.recordIds) && value.recordIds.every((id) => typeof id === "string")) {
+    return { kind: "records", recordIds: [...value.recordIds] };
+  }
+  return undefined;
+};
+
+const restoreVoiceRecallRoute = (value: unknown): VoiceRecallNavigationRoute | undefined => {
+  if (!isObject(value)
+    || !VOICE_RECALL_SCREENS.includes(value.screen as VoiceRecallNavigationRoute["screen"])
+    || !TAB_KEYS.includes(value.returnTab as TabKey)
+    || !VOICE_RECALL_SOURCE_KINDS.includes(value.sourceKind as VoiceRecallNavigationRoute["sourceKind"])
+    || !Array.isArray(value.recordIds)
+    || value.recordIds.length > 10
+    || !value.recordIds.every((id) => typeof id === "string")) return undefined;
+  const scope = restoreAiKnowledgeScope(value.scope);
+  if (value.scope !== undefined && !scope) return undefined;
+  return {
+    screen: value.screen as VoiceRecallNavigationRoute["screen"],
+    returnTab: value.returnTab as TabKey,
+    sourceKind: value.sourceKind as VoiceRecallNavigationRoute["sourceKind"],
+    recordIds: [...value.recordIds],
+    taskId: optionalString(value.taskId),
+    sessionId: optionalString(value.sessionId),
+    scope,
+    topic: optionalString(value.topic)?.slice(0, 500),
+    learningGoal: optionalString(value.learningGoal)?.slice(0, 500),
   };
 };
 
@@ -234,6 +272,7 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
       currentRecordId: optionalString(value.review.currentRecordId),
       reviewProgress: restoreReviewSessionProgress(value.review.reviewProgress),
       library: restoreReviewLibraryState(value.review.library),
+      voiceRecall: restoreVoiceRecallRoute(value.review.voiceRecall),
     },
     more: {
       ...moreBase,

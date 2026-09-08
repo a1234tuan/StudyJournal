@@ -8,7 +8,7 @@ describe("UsageGuidePage", () => {
     render(<UsageGuidePage />);
 
     expect(screen.getByRole("heading", { name: "使用教程" })).toBeInTheDocument();
-    for (const heading of ["推荐使用流", "AI 学习用法", "AI 配置", "OCR 配置", "备份与导出", "常见问题"]) {
+    for (const heading of ["推荐使用流", "AI 学习用法", "语音主动回忆", "AI 配置", "OCR 配置", "备份与导出", "常见问题"]) {
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     }
 
@@ -23,6 +23,8 @@ describe("UsageGuidePage", () => {
 
     expect(screen.getByText("请根据今天的日志，用白纸复述的方式考我。")).toBeInTheDocument();
     expect(screen.getByText(/按学科 Markdown、知识库 JSON、纯文本 TXT/)).toBeInTheDocument();
+    expect(screen.getByText(/ASR 接收麦克风音频/)).toBeInTheDocument();
+    expect(screen.getByText(/临时会话和主动保存的通话摘要只保存在本机/)).toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PaddleOCR Token")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /保存/ })).not.toBeInTheDocument();

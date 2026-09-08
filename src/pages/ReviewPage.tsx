@@ -6,6 +6,7 @@
   Edit3,
   Eye,
   MessageSquare,
+  Mic,
   MoreHorizontal,
   PauseCircle,
   PlusCircle,
@@ -101,6 +102,7 @@ interface ReviewPageProps {
   onOpenRecord: (record: RecordBlock) => void;
   onEditRecord: (record: RecordBlock) => void;
   onAskAiRecord?: (record: RecordBlock) => void;
+  onOpenVoiceRecall?: (record?: RecordBlock) => void;
   referenceRecords?: readonly RecordBlock[];
   referenceSubjects?: readonly SubjectConfig[];
   onOpenRecordReference?: (sourceRecordId: string, targetRecordId: string) => void;
@@ -292,6 +294,7 @@ export const ReviewPage = ({
   onOpenRecord,
   onEditRecord,
   onAskAiRecord,
+  onOpenVoiceRecall,
   referenceRecords = [],
   referenceSubjects = [],
   onOpenRecordReference,
@@ -886,6 +889,16 @@ export const ReviewPage = ({
                         <span>AI 问答</span>
                       </button>
                     )}
+                    {onOpenVoiceRecall && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}
+                      >
+                        <Mic size={16} />
+                        <span>语音复述当前卡片</span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -906,6 +919,9 @@ export const ReviewPage = ({
         <button type="button" className={!coachOpen && mode === "manage" ? "active" : ""} onClick={() => { setCoachOpen(false); onModeChange("manage"); }}>
           卡片库
         </button>
+        {onOpenVoiceRecall && <button type="button" onClick={() => onOpenVoiceRecall()}>
+          <Mic size={16} />语音复述
+        </button>}
       </div>}
 
       {coachOpen && reviewCoachSnapshot && onRunDeepAnalysis && onResumeDeepAnalysis && onSwitchAdaptiveTask && onDeferAdaptiveTask && (
@@ -1011,6 +1027,7 @@ export const ReviewPage = ({
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}><RefreshCw size={16} /><span>刷新复习列表</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }} disabled={!onOpenStats}><BarChart3 size={16} /><span>学习统计</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span></button>
+                  {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
                 </div>}
               </div>
             </section>

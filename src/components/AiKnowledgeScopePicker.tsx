@@ -14,8 +14,8 @@ import type { AiKnowledgeScope, Asset, Block, RecordBlock } from "../types";
 
 const SCOPE_SEARCH_DEBOUNCE_MS = 300;
 const RECORD_SEARCH_RESULT_LIMIT = 200;
-const MIN_SELECTED_SCOPE_RECORDS = 2;
-const MAX_SELECTED_SCOPE_RECORDS = 10;
+const DEFAULT_MIN_SELECTED_SCOPE_RECORDS = 2;
+const DEFAULT_MAX_SELECTED_SCOPE_RECORDS = 10;
 
 interface ScopeAction {
   label: string;
@@ -39,6 +39,8 @@ interface AiKnowledgeScopePickerProps {
   onCancel?: () => void;
   onScopeChange?: (scope: AiKnowledgeScope) => void;
   onConfirm: (scope: AiKnowledgeScope) => void | Promise<void>;
+  minSelectedRecords?: number;
+  maxSelectedRecords?: number;
 }
 
 const recordsOf = (blocks: Block[]): RecordBlock[] =>
@@ -65,6 +67,8 @@ export const AiKnowledgeScopePicker = ({
   onCancel = onBack,
   onScopeChange,
   onConfirm,
+  minSelectedRecords = DEFAULT_MIN_SELECTED_SCOPE_RECORDS,
+  maxSelectedRecords = DEFAULT_MAX_SELECTED_SCOPE_RECORDS,
 }: AiKnowledgeScopePickerProps) => {
   const savedRecords = useMemo(() => recordsOf(blocks), [blocks]);
   const [scopeKind, setScopeKind] = useState<AiKnowledgeScope["kind"]>(() => initialKind(initialScope, includeDate));
@@ -126,10 +130,10 @@ export const AiKnowledgeScopePicker = ({
 
   useEffect(() => {
     setSelectedRecordIds((current) => {
-      const next = current.filter((id) => savedRecordIds.has(id)).slice(0, MAX_SELECTED_SCOPE_RECORDS);
+      const next = current.filter((id) => savedRecordIds.has(id)).slice(0, maxSelectedRecords);
       return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
     });
-  }, [savedRecordIds]);
+  }, [maxSelectedRecords, savedRecordIds]);
 
   useEffect(() => {
     if (!desktop || recordSearchComposingRef.current) return;
@@ -191,7 +195,7 @@ export const AiKnowledgeScopePicker = ({
   const scopeUnavailableReason = (() => {
     if (scopeKind === "tag" && scopeSubjects.length === 0) return "没有可用学科，请先保存正式日志。";
     if (scopeKind === "tag" && scopeTags.length === 0) return "该学科没有已保存标签。";
-    if (scopeKind === "records" && selectedRecordCount < MIN_SELECTED_SCOPE_RECORDS) return `请至少选择 ${MIN_SELECTED_SCOPE_RECORDS} 条日志。`;
+    if (scopeKind === "records" && selectedRecordCount < minSelectedRecords) return `请至少选择 ${minSelectedRecords} 条日志。`;
     if (!pendingScope) return "请选择完整的知识范围。";
     if (pendingScopeRecords.length === 0) return "当前范围没有命中可用日志。";
     return "";
@@ -206,7 +210,7 @@ export const AiKnowledgeScopePicker = ({
   const toggleScopeRecord = (recordId: string) => {
     setSelectedRecordIds((current) => {
       if (current.includes(recordId)) return current.filter((id) => id !== recordId);
-      if (current.length >= MAX_SELECTED_SCOPE_RECORDS) return current;
+      if (current.length >= maxSelectedRecords) return current;
       return [...current, recordId];
     });
   };
@@ -234,7 +238,7 @@ export const AiKnowledgeScopePicker = ({
 
   const renderRecordOption = (record: RecordBlock) => {
     const selected = selectedRecordIdSet.has(record.id);
-    const selectionLimitReached = !selected && selectedRecordCount >= MAX_SELECTED_SCOPE_RECORDS;
+    const selectionLimitReached = !selected && selectedRecordCount >= maxSelectedRecords;
     return (
       <label key={record.id} className={`ai-scope-record-option${selected ? " selected" : ""}${selectionLimitReached ? " disabled" : ""}`}>
         <input type="checkbox" checked={selected} onChange={() => toggleScopeRecord(record.id)} disabled={selectionLimitReached} aria-label={`选择日志 ${record.title || "未命名日志"}`} />
@@ -269,7 +273,7 @@ export const AiKnowledgeScopePicker = ({
           ) : (
             <div className="ai-scope-record-picker">
               <label className="search-box ai-scope-record-search"><Search size={18} /><input value={desktop ? recordSearchInput : recordTitleQuery} onCompositionStart={() => { if (desktop) recordSearchComposingRef.current = true; }} onCompositionEnd={(event) => { if (!desktop) return; recordSearchComposingRef.current = false; setRecordSearchInput(event.currentTarget.value); setRecordTitleQuery(event.currentTarget.value); }} onChange={(event) => { const value = event.target.value; if (!desktop) { setRecordTitleQuery(value); return; } setRecordSearchInput(value); if (!(event.nativeEvent as InputEvent).isComposing && !recordSearchComposingRef.current) setRecordTitleQuery(value); }} placeholder="按日志标题搜索" aria-label="按日志标题搜索" /></label>
-              <div className="ai-scope-selection-status" role="status"><strong>已选 {selectedRecordCount}/{MAX_SELECTED_SCOPE_RECORDS} 条日志</strong><span>{selectedRecordCount < MIN_SELECTED_SCOPE_RECORDS ? `还需选择 ${MIN_SELECTED_SCOPE_RECORDS - selectedRecordCount} 条` : "可跨学科选择，最多 10 条"}</span></div>
+              <div className="ai-scope-selection-status" role="status"><strong>已选 {selectedRecordCount}/{maxSelectedRecords} 条日志</strong><span>{selectedRecordCount < minSelectedRecords ? `还需选择 ${minSelectedRecords - selectedRecordCount} 条` : `可跨学科选择，最多 ${maxSelectedRecords} 条`}</span></div>
               <div className="ai-scope-record-list" aria-label="可选日志">
                 {searchingRecordTitles && <p className="status-message">正在搜索标题…</p>}
                 {hasMoreRecordTitleResults && <p className="status-message">结果较多，仅显示前 {RECORD_SEARCH_RESULT_LIMIT} 条，请缩小关键词。</p>}

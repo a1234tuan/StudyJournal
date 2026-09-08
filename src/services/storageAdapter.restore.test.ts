@@ -222,6 +222,9 @@ const createRestoreDb = (podcasts: KnowledgePodcast[] = [], assets: Asset[] = [p
   cloudSyncMutation: new MemoryTable<StoredRow>([{ id: "local", epoch: 0 }]),
   restoreStagingAssets: new MemoryTable<StoredRow>([], "stagingId"),
   reviewAnnotationDrafts: new MemoryTable(),
+  voiceRecallSessions: new MemoryTable(),
+  voiceRecallTurns: new MemoryTable(),
+  voiceRecallLocalHistory: new MemoryTable(),
   transaction: async (_mode: string, ...args: unknown[]) => {
     const callback = args.at(-1) as () => Promise<unknown>;
     return callback();
@@ -422,6 +425,9 @@ describe("DexieStorageAdapter cloud restore", () => {
   it("keeps ordinary backup restore normalization unchanged", async () => {
     vi.resetModules();
     const fakeDb = createRestoreDb();
+    await fakeDb.voiceRecallSessions.put({ id: "voice-session", status: "paused" });
+    await fakeDb.voiceRecallTurns.put({ id: "voice-turn", sessionId: "voice-session" });
+    await fakeDb.voiceRecallLocalHistory.put({ id: "voice-history", title: "本机摘要" });
     vi.doMock("../db/database", () => ({ db: fakeDb }));
     const { DexieStorageAdapter } = await import("./storageAdapter");
     const adapter = new DexieStorageAdapter();
@@ -436,5 +442,25 @@ describe("DexieStorageAdapter cloud restore", () => {
     expect(restored).toMatchObject({ audioStatus: "idle", audioUnits: [{ audioStatus: "pending" }], segments: [{ audioStatus: "pending" }] });
     expect(restored.audioUnits?.[0].audioAssetId).toBeUndefined();
     expect(restored.segments[0].audioAssetId).toBeUndefined();
+    expect(await fakeDb.voiceRecallSessions.get("voice-session")).toBeUndefined();
+    expect(await fakeDb.voiceRecallTurns.get("voice-turn")).toBeUndefined();
+    expect(await fakeDb.voiceRecallLocalHistory.get("voice-history")).toMatchObject({ title: "本机摘要" });
+  });
+
+  it("preserves every local voice store while applying a cloud pull", async () => {
+    vi.resetModules();
+    const fakeDb = createRestoreDb();
+    await fakeDb.voiceRecallSessions.put({ id: "voice-session", status: "paused" });
+    await fakeDb.voiceRecallTurns.put({ id: "voice-turn", sessionId: "voice-session" });
+    await fakeDb.voiceRecallLocalHistory.put({ id: "voice-history", title: "本机摘要" });
+    vi.doMock("../db/database", () => ({ db: fakeDb }));
+    const { DexieStorageAdapter } = await import("./storageAdapter");
+    const adapter = new DexieStorageAdapter();
+
+    await adapter.restoreCloudSyncSnapshot({ payload: { ...restorePayload, podcasts: [] }, assets: [] } as StorageSnapshot);
+
+    expect(await fakeDb.voiceRecallSessions.get("voice-session")).toMatchObject({ status: "paused" });
+    expect(await fakeDb.voiceRecallTurns.get("voice-turn")).toMatchObject({ sessionId: "voice-session" });
+    expect(await fakeDb.voiceRecallLocalHistory.get("voice-history")).toMatchObject({ title: "本机摘要" });
   });
 });

@@ -1,0 +1,98 @@
+import type { VoiceAudioFrame, VoiceCaptureAdapter, VoiceCaptureOptions } from "./contracts";
+
+class AsyncFrameQueue implements AsyncIterable<VoiceAudioFrame> {
+  private values: VoiceAudioFrame[] = [];
+  private waiters: Array<(value: IteratorResult<VoiceAudioFrame>) => void> = [];
+  private closed = false;
+
+  push(frame: VoiceAudioFrame) {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ done: false, value: frame });
+    else this.values.push(frame);
+  }
+
+  close() {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter({ done: true, value: undefined });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<VoiceAudioFrame> {
+    return {
+      next: () => {
+        const value = this.values.shift();
+        if (value) return Promise.resolve({ done: false, value });
+        if (this.closed) return Promise.resolve({ done: true, value: undefined });
+        return new Promise((resolve) => this.waiters.push(resolve));
+      },
+    };
+  }
+}
+
+const floatToPcm16 = (input: Float32Array): Uint8Array => {
+  const output = new Int16Array(input.length);
+  for (let index = 0; index < input.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, input[index]));
+    output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return new Uint8Array(output.buffer);
+};
+
+export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
+  readonly id = "web-audio-pcm";
+  private stream?: MediaStream;
+  private context?: AudioContext;
+  private source?: MediaStreamAudioSourceNode;
+  private processor?: ScriptProcessorNode;
+  private queue?: AsyncFrameQueue;
+
+  async requestPermission(): Promise<"granted" | "denied" | "prompt"> {
+    if (!navigator.mediaDevices?.getUserMedia) return "denied";
+    const permission = await navigator.permissions?.query?.({ name: "microphone" as PermissionName }).catch(() => undefined);
+    return permission?.state ?? "prompt";
+  }
+
+  async *start(options: VoiceCaptureOptions, signal: AbortSignal): AsyncIterable<VoiceAudioFrame> {
+    if (this.stream) throw new Error("语音采集已经在进行中");
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: options.preferredFormat.channelCount,
+      sampleRate: options.preferredFormat.sampleRate,
+      echoCancellation: options.echoCancellation,
+      noiseSuppression: options.noiseSuppression,
+      autoGainControl: options.autoGainControl,
+    } });
+    await window.studyJournalDesktop?.voice.setCaptureActive(true);
+    this.context = new AudioContext({ sampleRate: options.preferredFormat.sampleRate });
+    this.source = this.context.createMediaStreamSource(this.stream);
+    this.processor = this.context.createScriptProcessor(2048, 1, 1);
+    this.queue = new AsyncFrameQueue();
+    let sequence = 0;
+    this.processor.onaudioprocess = (event) => this.queue?.push({
+      sequence: sequence++,
+      capturedAtMonotonicMs: performance.now(),
+      format: { encoding: "pcm-s16le", sampleRate: this.context!.sampleRate, channelCount: 1 },
+      data: floatToPcm16(event.inputBuffer.getChannelData(0)),
+    });
+    this.source.connect(this.processor);
+    this.processor.connect(this.context.destination);
+    signal.addEventListener("abort", () => { void this.stop(); }, { once: true });
+    for await (const frame of this.queue) yield frame;
+  }
+
+  async pause() {
+    await this.context?.suspend();
+  }
+
+  async stop() {
+    this.queue?.close();
+    this.processor?.disconnect();
+    this.source?.disconnect();
+    this.stream?.getTracks().forEach((track) => track.stop());
+    await this.context?.close().catch(() => undefined);
+    this.queue = undefined;
+    this.processor = undefined;
+    this.source = undefined;
+    this.stream = undefined;
+    this.context = undefined;
+    await window.studyJournalDesktop?.voice.setCaptureActive(false);
+  }
+}

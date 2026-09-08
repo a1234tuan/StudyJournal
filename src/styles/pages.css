@@ -3677,6 +3677,15 @@
 .adaptive-review-hints { display: grid; gap: 8px; margin-bottom: 14px; }
 .adaptive-review-hints p { display: flex; gap: 8px; margin: 0; padding: 10px 12px; background: #fff8e8; border-left: 3px solid #b7791f; }
 .adaptive-review-hints button { width: fit-content; }
+.adaptive-answer-mode,
+.adaptive-voice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.adaptive-answer-mode { margin: 2px 0 0; }
+.adaptive-answer-mode button,
+.adaptive-voice-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.adaptive-answer-mode button.active,
+.adaptive-voice-actions button.active { border-color: var(--color-accent); color: var(--color-accent); background: var(--color-accent-soft); }
+.adaptive-voice-boundary { margin: 12px 0 0; color: var(--color-muted); font-size: 0.88rem; line-height: 1.55; }
+.adaptive-voice-actions { margin-top: 10px; }
 .adaptive-review-primary-actions,
 .adaptive-review-secondary-actions,
 .adaptive-review-outcomes,

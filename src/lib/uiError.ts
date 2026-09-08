@@ -4,6 +4,7 @@ export type UiErrorContext =
   | "review-feedback"
   | "review-annotation"
   | "adaptive-review"
+  | "voice-recall"
   | "record-save"
   | "ai-request"
   | "cloud-sync"
@@ -20,6 +21,7 @@ const CONTEXT_MESSAGES: Record<UiErrorContext, string> = {
   "review-feedback": "暂时无法完成这项复习操作，请重试。",
   "review-annotation": "批注暂时无法读取或保存。正文内容不受影响，请重试。",
   "adaptive-review": "暂时无法更新学习助教任务。当前回答仍保留在本页，请重试。",
+  "voice-recall": "语音复述操作没有完成。当前转写和本机学习数据不会因此上传，请重试。",
   "record-save": "保存失败。内容已存于本机草稿，请重试。",
   "ai-request": "AI 暂时无法完成本次请求。你的提问已保留，可以重试。",
   "cloud-sync": "云同步未完成。请检查网络后重试，本机数据不会因此删除。",

@@ -64,6 +64,43 @@ describe("web navigation history snapshots", () => {
     expect(restoreWebNavigationSnapshot(legacySnapshot)?.tabMemory.review.library).toEqual(createInitialTabMemory().review.library);
   });
 
+  it("round-trips the bounded voice recall route without serialising runtime data", () => {
+    const memory = createInitialTabMemory();
+    memory.review.voiceRecall = {
+      screen: "call",
+      returnTab: "review",
+      sourceKind: "review-card",
+      recordIds: ["record-1"],
+      sessionId: "voice-session-1",
+      learningGoal: "闭卷解释核心概念",
+    };
+
+    const snapshot = createWebNavigationSnapshot("session-1", "review", memory, null, 0);
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
+
+    expect(restored?.tabMemory.review.voiceRecall).toEqual(memory.review.voiceRecall);
+    expect(JSON.stringify(snapshot)).not.toContain("providerFinalText");
+    expect(JSON.stringify(snapshot)).not.toContain("confirmedText");
+  });
+
+  it("rejects malformed or oversized voice recall routes", () => {
+    const memory = createInitialTabMemory();
+    memory.review.voiceRecall = {
+      screen: "start",
+      returnTab: "review",
+      sourceKind: "review-home",
+      recordIds: [],
+    };
+    const snapshot = createWebNavigationSnapshot("session-1", "review", memory, null, 0);
+    const malformed = JSON.parse(JSON.stringify(snapshot));
+    malformed.tabMemory.review.voiceRecall.screen = "unknown";
+    expect(restoreWebNavigationSnapshot(malformed)?.tabMemory.review.voiceRecall).toBeUndefined();
+
+    const oversized = JSON.parse(JSON.stringify(snapshot));
+    oversized.tabMemory.review.voiceRecall.recordIds = Array.from({ length: 11 }, (_, index) => `record-${index}`);
+    expect(restoreWebNavigationSnapshot(oversized)?.tabMemory.review.voiceRecall).toBeUndefined();
+  });
+
   it("rejects foreign, stale or malformed history state", () => {
     const snapshot = createWebNavigationSnapshot("session-1", "today", createInitialTabMemory(), null, 0);
 

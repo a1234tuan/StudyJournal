@@ -215,6 +215,34 @@ describe("ReviewPage", () => {
     richTextEditorMock.props = [];
   });
 
+  it("opens voice recall for the current card without changing queue or rating state", () => {
+    const onOpenVoiceRecall = vi.fn();
+    const onQueueChange = vi.fn();
+    const onCurrentRecordChange = vi.fn();
+    const onRate = vi.fn();
+    renderReviewPage({
+      mode: "queue",
+      dueReviews: [review("active")],
+      reviewStates: [review("active")],
+      queueIds: ["active", "second"],
+      currentRecordId: "active",
+      onOpenVoiceRecall,
+      onQueueChange,
+      onCurrentRecordChange,
+      onRate,
+    });
+
+    const queueCallsBeforeOpen = onQueueChange.mock.calls.length;
+    const currentCallsBeforeOpen = onCurrentRecordChange.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "语音复述当前卡片" }));
+
+    expect(onOpenVoiceRecall).toHaveBeenCalledWith(records[0]);
+    expect(onQueueChange).toHaveBeenCalledTimes(queueCallsBeforeOpen);
+    expect(onCurrentRecordChange).toHaveBeenCalledTimes(currentCallsBeforeOpen);
+    expect(onRate).not.toHaveBeenCalled();
+  });
+
   it("shows a strictly later easy interval for overview cards", () => {
     const currentReview = review("active", { intervalDays: 10 });
     renderReviewPage({

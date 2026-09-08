@@ -48,6 +48,11 @@ declare global {
           languageCode?: string;
         }) => Promise<{ data: string; mimeType?: string }>;
       }>;
+      voice: Readonly<{
+        getCapabilities: () => Promise<{ rendererCapture: boolean; pcmSampleRates: number[]; protocolProxy: boolean }>;
+        setCaptureActive: (active: boolean) => Promise<{ active: boolean }>;
+        onSuspendRequested: (listener: (reason: "minimize" | "focus-lost") => void) => () => void;
+      }>;
       proxy: Readonly<{
         getProxy: () => Promise<{ proxyUrl: string }>;
         setProxy: (proxyUrl: string) => Promise<{ proxyUrl: string }>;

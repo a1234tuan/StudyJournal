@@ -17,7 +17,11 @@ test("shows and exercises the isolated AI coach preview", async ({ page }, testI
   await expect(page.getByText("在 BFS 中首次发现一个尚未访问的相邻节点时")).toBeVisible();
   await page.getByRole("button", { name: "提示 1" }).click();
   await expect(page.getByText("考虑两个父节点同时发现同一个相邻节点。")).toBeVisible();
-  await page.getByRole("textbox", { name: "你的回答" }).fill("先标记 visited，再入队，避免重复入队。");
+  await page.getByRole("button", { name: "语音输入" }).click();
+  await page.getByRole("textbox", { name: "语音回答转写" }).fill("先标记 visited，再入队，避免重复入队。");
+  await expect(page.getByRole("button", { name: "提交回答" })).toBeDisabled();
+  await page.getByRole("button", { name: "确认转写" }).click();
+  await expect(page.getByRole("button", { name: "提交回答" })).toBeEnabled();
   await page.getByRole("button", { name: "提交回答" }).click();
   await expect(page.getByText("回答正确", { exact: true })).toBeVisible();
 

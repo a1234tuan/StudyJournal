@@ -1,8 +1,11 @@
-import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, Lightbulb, LoaderCircle, LogOut, Play, RotateCcw, Send } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, Keyboard, Lightbulb, LoaderCircle, LogOut, Mic, Pause, Play, RotateCcw, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { RecordBlock } from "../../types";
 import { formatUiError } from "../../lib/uiError";
+import type { VoiceCaptureAdapter } from "../voiceRecall/contracts";
+import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "../voiceRecall/nativeVoiceCapture";
+import { WebVoiceCaptureAdapter } from "../voiceRecall/webVoiceCapture";
 import type { ReviewCoachFormalSnapshot, SubjectiveOutcome } from "./domain";
 
 interface AdaptiveReviewPageProps {
@@ -37,6 +40,9 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
   const record = task ? records.find((item) => item.id === task.recordId) : undefined;
   const delayedVerification = task ? snapshot.delayedVerifications.find((item) => item.taskId === task.id) : undefined;
   const [answer, setAnswer] = useState("");
+  const [answerInputMode, setAnswerInputMode] = useState<"text" | "voice">("text");
+  const [voiceTranscriptConfirmed, setVoiceTranscriptConfirmed] = useState(false);
+  const [capturingVoice, setCapturingVoice] = useState(false);
   const [busy, setBusy] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [finishing, setFinishing] = useState(false);
@@ -45,6 +51,60 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
   const [showInvalid, setShowInvalid] = useState(false);
   const [showExit, setShowExit] = useState(false);
   const [confirmMastered, setConfirmMastered] = useState(false);
+  const captureAdapterRef = useRef<VoiceCaptureAdapter>();
+  const captureAbortRef = useRef<AbortController>();
+  const capturedFramesRef = useRef(0);
+
+  const stopVoiceCapture = async () => {
+    captureAbortRef.current?.abort();
+    captureAbortRef.current = undefined;
+    await captureAdapterRef.current?.stop().catch(() => undefined);
+    captureAdapterRef.current = undefined;
+    setCapturingVoice(false);
+  };
+
+  useEffect(() => () => { void stopVoiceCapture(); }, []);
+  useEffect(() => {
+    setAnswer("");
+    setVoiceTranscriptConfirmed(false);
+    void stopVoiceCapture();
+  }, [currentTurn?.id]);
+
+  const startVoiceCapture = () => {
+    if (capturingVoice || busy) return;
+    setMessage(undefined);
+    setVoiceTranscriptConfirmed(false);
+    capturedFramesRef.current = 0;
+    const adapter = canUseNativeVoiceCapture() ? new NativeVoiceCaptureAdapter() : new WebVoiceCaptureAdapter();
+    const controller = new AbortController();
+    captureAdapterRef.current = adapter;
+    captureAbortRef.current = controller;
+    setCapturingVoice(true);
+    void (async () => {
+      try {
+        for await (const _frame of adapter.start({
+          inputMode: "tap-to-record",
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          preferredFormat: { encoding: "pcm-s16le", sampleRate: 16_000, channelCount: 1 },
+        }, controller.signal)) capturedFramesRef.current += 1;
+      } catch (error) {
+        if (!controller.signal.aborted) setMessage(formatUiError(error, "adaptive-review"));
+      } finally {
+        if (captureAbortRef.current === controller) {
+          captureAbortRef.current = undefined;
+          captureAdapterRef.current = undefined;
+          setCapturingVoice(false);
+        }
+      }
+    })();
+  };
+
+  const finishVoiceCapture = async () => {
+    await stopVoiceCapture();
+    setMessage(`已采集 ${capturedFramesRef.current} 个 PCM 帧。真实 ASR 尚未验收，请手动填写或校对转写后再确认。`);
+  };
 
   const run = async (key: string, work: () => Promise<unknown>, success?: string) => {
     setBusy(key);
@@ -52,6 +112,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
     try {
       await work();
       setAnswer("");
+      setVoiceTranscriptConfirmed(false);
       if (success) setMessage(success);
       return true;
     } catch (error) {
@@ -127,9 +188,24 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
                   })}
                 </div>
               )}
-              <textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="写下你的回答..." aria-label="你的回答" rows={6} />
+              <div className="adaptive-answer-mode" role="group" aria-label="回答输入方式">
+                <button type="button" className={answerInputMode === "text" ? "active" : ""} aria-pressed={answerInputMode === "text"} onClick={() => { void stopVoiceCapture(); setAnswerInputMode("text"); setVoiceTranscriptConfirmed(false); }}><Keyboard size={16} />文本输入</button>
+                <button type="button" className={answerInputMode === "voice" ? "active" : ""} aria-pressed={answerInputMode === "voice"} onClick={() => { setAnswerInputMode("voice"); setVoiceTranscriptConfirmed(false); }}><Mic size={16} />语音输入</button>
+              </div>
+              {answerInputMode === "voice" && <p className="adaptive-voice-boundary">麦克风仅采集本机 PCM。真实 ASR 尚未验收，转写必须由你校对并明确确认。</p>}
+              <textarea
+                value={answer}
+                onChange={(event) => { setAnswer(event.target.value); setVoiceTranscriptConfirmed(false); }}
+                placeholder={answerInputMode === "voice" ? "录音后在这里填写或校对转写..." : "写下你的回答..."}
+                aria-label={answerInputMode === "voice" ? "语音回答转写" : "你的回答"}
+                rows={6}
+              />
+              {answerInputMode === "voice" && <div className="adaptive-voice-actions">
+                <button type="button" className={capturingVoice ? "active" : ""} disabled={Boolean(busy)} onClick={() => void (capturingVoice ? finishVoiceCapture() : startVoiceCapture())}>{capturingVoice ? <Pause size={16} /> : <Mic size={16} />}{capturingVoice ? "结束录音" : "开始录音"}</button>
+                <button type="button" disabled={!answer.trim() || capturingVoice || Boolean(busy)} aria-pressed={voiceTranscriptConfirmed} className={voiceTranscriptConfirmed ? "active" : ""} onClick={() => { setVoiceTranscriptConfirmed(true); setMessage("转写已确认，可以提交本题回答。"); }}><Check size={16} />{voiceTranscriptConfirmed ? "转写已确认" : "确认转写"}</button>
+              </div>}
               <div className="adaptive-review-primary-actions">
-                <button type="button" className="primary-button" disabled={!answer.trim() || Boolean(busy)} onClick={() => void run("answer", () => onSubmitAnswer(currentTurn.id, answer))}>{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提交回答</button>
+                <button type="button" className="primary-button" disabled={!answer.trim() || Boolean(busy) || capturingVoice || (answerInputMode === "voice" && !voiceTranscriptConfirmed)} onClick={() => void run("answer", () => onSubmitAnswer(currentTurn.id, answer.trim()))}>{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提交回答</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => void run("skip", () => onSkipTurn(currentTurn.id))}>跳过本题</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => setShowInvalid(true)}><Flag size={16} />题目有问题</button>
               </div>

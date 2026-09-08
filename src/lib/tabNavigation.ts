@@ -1,4 +1,4 @@
-import type { EntityId, RecordReviewKind, Subject } from "../types";
+import type { AiKnowledgeScope, EntityId, RecordReviewKind, Subject } from "../types";
 
 export type TabKey = "today" | "journal" | "categories" | "review" | "more";
 export type MoreSubRoute =
@@ -21,6 +21,19 @@ export type MoreSubRoute =
 export type AiWorkspaceScreen = "chat" | "scope";
 export type PodcastWorkspaceScreen = "editor" | "scope";
 export type ReviewMode = "queue" | "manage";
+export type VoiceRecallScreen = "start" | "scope" | "call" | "summary" | "history";
+export type VoiceRecallSourceKind = "review-home" | "record" | "review-card" | "coach-task" | "free-topic";
+export type VoiceRecallNavigationRoute = {
+  screen: VoiceRecallScreen;
+  returnTab: TabKey;
+  sourceKind: VoiceRecallSourceKind;
+  recordIds: EntityId[];
+  taskId?: EntityId;
+  sessionId?: EntityId;
+  scope?: AiKnowledgeScope;
+  topic?: string;
+  learningGoal?: string;
+};
 export type RecordingPlayerQueueSource =
   | { kind: "folder"; folderId: string }
   | { kind: "search"; query: string };
@@ -101,6 +114,7 @@ export type TabMemory = {
     currentRecordId?: EntityId;
     reviewProgress?: ReviewSessionProgress;
     library: ReviewLibraryState;
+    voiceRecall?: VoiceRecallNavigationRoute;
   };
   more: RecordTabState & {
     subRoute: MoreSubRoute;
@@ -136,6 +150,7 @@ export const createInitialTabMemory = (): TabMemory => ({
     queueIds: [],
     reviewProgress: undefined,
     library: createInitialReviewLibraryState(),
+    voiceRecall: undefined,
   },
   more: {
     subRoute: null,
@@ -220,7 +235,7 @@ export const getTabDepth = (tab: TabKey, memory: TabMemory): number => {
     case "categories":
       return memory.categories.recordId ? 2 + referenceDepth(memory.categories) : memory.categories.activeSubject || memory.categories.managing ? 1 : 0;
     case "review":
-      return memory.review.recordId ? 1 + referenceDepth(memory.review) : 0;
+      return memory.review.voiceRecall ? 1 : memory.review.recordId ? 1 + referenceDepth(memory.review) : 0;
     case "more":
       if (memory.more.recordId) {
         return 2 + referenceDepth(memory.more);
@@ -272,7 +287,10 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
     return `${tab}-${depth}-${recordPart}-${memory.categories.managing ? "manage" : memory.categories.activeSubject ?? "all"}`;
   }
   if (tab === "review") {
-    return `${tab}-${depth}-${recordPart}-${memory.review.mode}`;
+    const voicePart = memory.review.voiceRecall
+      ? `voice-${memory.review.voiceRecall.screen}-${memory.review.voiceRecall.sessionId ?? "new"}`
+      : memory.review.mode;
+    return `${tab}-${depth}-${recordPart}-${voicePart}`;
   }
   if (tab === "today") {
     return `${tab}-${depth}-${recordPart}-${memory.today.adaptiveTaskId ?? "dashboard"}`;
@@ -343,6 +361,9 @@ export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
         categories: { ...memory.categories, activeSubject: null, managing: false },
       };
     case "review":
+      if (memory.review.voiceRecall) {
+        return { ...memory, review: { ...memory.review, voiceRecall: undefined } };
+      }
       {
         const previous = popRecordReference(memory.review);
         if (previous) {

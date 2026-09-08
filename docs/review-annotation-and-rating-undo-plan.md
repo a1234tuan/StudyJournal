@@ -4,7 +4,7 @@
 
 - 状态：已复审并完成第一阶段实施与工具栏 UX 修复（2026-09-08）
 - 适用范围：间隔复习队列中的只读笔记卡片，以及 Today、Review、Journal、More 主导航页面的首屏信息密度
-- 当前数据库基线：schema 20，其中 `reviewAnnotationDrafts` 仅保存在设备本地
+- 批注能力落地于 schema 20，其中 `reviewAnnotationDrafts` 仅保存在设备本地；项目当前数据库基线为 schema 21，后续仅增加三张同样 local-only 的语音复述表
 - 目标平台：Web、Electron、Capacitor Android
 - 不在本方案范围：笔记编辑模式批注、批注云同步、批注导出、评分后批注恢复
 
@@ -38,7 +38,7 @@
 
 本次已落地 schema 20、本地批注 repository、正文块指纹与归一化坐标锚定、SVG 笔迹/基础图形、DOM 文本输入与下拉组件、颜色/线宽/透明度、批注撤回重做、评分后清除、App 级跨 Tab 评分撤回，以及五个目标页面的紧凑布局。复习进行态使用内联的 `review-session-chrome`，锚点测量内聚在 `ReviewAnnotationSurface`；工具栏固定在视口内，根据可见评分区动态调整底部位置，入口和互斥工具均公开明确的选中状态。
 
-当前交付是可用的第一阶段，不等同于完整 Excalidraw 编辑器。元素选择后移动/缩放、框选与分组、复制、层级调整、跨块笔迹裁分、孤立锚点修复、触控笔专用模式和完整快捷键仲裁仍属于后续完善范围。现有自动化基线为 Vitest `119/796`、Desktop/Android-narrow Playwright `32/32`、Firebase Emulator `3/3`；Android 真机手写、中文 IME 和安全区仍保留人工验收门槛。
+当前交付是可用的第一阶段，不等同于完整 Excalidraw 编辑器。元素选择后移动/缩放、框选与分组、复制、层级调整、跨块笔迹裁分、孤立锚点修复、触控笔专用模式和完整快捷键仲裁仍属于后续完善范围。加入后续语音阶段 0–6 回归后，当前自动化基线为 Vitest `125` 个文件 / `837` 项测试、Desktop/Android-narrow Playwright `38/38`、Firebase Emulator `4/4`；Android 真机手写、中文 IME 和安全区仍保留人工验收门槛。
 
 ## 2. 现有实现分析
 

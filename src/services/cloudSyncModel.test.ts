@@ -111,6 +111,20 @@ const snapshot: StorageSnapshot = {
 };
 
 describe("cloud sync model", () => {
+  it("ignores local voice stores when deriving a publish or no-op plan", async () => {
+    const baseline = await exportCloudSync(snapshot);
+    const withLocalVoiceData = await exportCloudSync({
+      ...snapshot,
+      voiceRecallSessions: [{ id: "local-session", partial: "private partial" }],
+      voiceRecallTurns: [{ id: "local-turn", audio: "private audio" }],
+      voiceRecallLocalHistory: [{ id: "local-history", summary: "private summary" }],
+    } as never);
+
+    expect(withLocalVoiceData.entities).toEqual(baseline.entities);
+    expect(withLocalVoiceData.reviewEvents).toEqual(baseline.reviewEvents);
+    expect(JSON.stringify(withLocalVoiceData)).not.toContain("local-session");
+  });
+
   it("round-trips formal review-coach entities without derived projections or AI secrets", async () => {
     const coach = completeCoachTestSnapshot();
     coach.aiRoleConfigs = [{

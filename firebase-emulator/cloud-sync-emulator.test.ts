@@ -18,6 +18,8 @@ import {
   where,
 } from "firebase/firestore";
 import { getBytes, ref, uploadBytes } from "firebase/storage";
+import { DEFAULT_SETTINGS } from "../src/db/defaults";
+import { exportCloudSync } from "../src/services/cloudSyncModel";
 
 const projectId = "demo-noteproject-stage9";
 const uid = "stage9-user";
@@ -89,5 +91,36 @@ describe("Stage 9 Firebase incremental-sync acceptance", () => {
     ));
     expect(resumed.data()?.phase).toBe("committed");
     expect(byRevision.docs.filter((item) => item.id === "task-outcome-event:stage9-clock")).toHaveLength(1);
+  });
+
+  it("uploads no voice runtime, ASR partial, audio, or provider credential fields", async () => {
+    const database = environment.authenticatedContext(uid).firestore();
+    const exported = await exportCloudSync({
+      payload: {
+        manifest: {
+          format: "study-journal", version: 6, exportedAt: "2026-09-08T00:00:00.000Z", appVersion: "0.1.6",
+          counts: { entries: 0, blocks: 0, mistakes: 0, assets: 0, tags: 0, reviews: 0, studySessions: 0 },
+        },
+        entries: [], blocks: [], templates: [], recordDrafts: [], mistakes: [], tags: [], reviews: [],
+        recordReviews: [], recordReviewLogs: [], recordReviewDayStats: [], studySessions: [],
+        settings: { ...structuredClone(DEFAULT_SETTINGS), apiKey: "must-not-upload" } as never,
+      },
+      assets: [],
+      voiceRecallSessions: [{ id: "local-session", partial: "must-not-upload" }],
+      voiceRecallTurns: [{ id: "local-turn", audio: "must-not-upload" }],
+      voiceRecallLocalHistory: [{ id: "local-history", summary: "must-not-upload" }],
+    } as never);
+
+    for (const entity of exported.entities) {
+      await setDoc(doc(database, `users/${uid}/syncEntities/${entity.key}`), entity);
+    }
+    const remote = await getDocs(collection(database, `users/${uid}/syncEntities`));
+    const serialized = JSON.stringify(remote.docs.map((item) => item.data()));
+
+    expect(exported.assetBlobs.size).toBe(0);
+    expect(serialized).not.toContain("local-session");
+    expect(serialized).not.toContain("local-turn");
+    expect(serialized).not.toContain("local-history");
+    expect(serialized).not.toContain("must-not-upload");
   });
 });

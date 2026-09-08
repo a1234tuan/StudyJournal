@@ -84,6 +84,13 @@ export const REVIEW_ANNOTATION_SCHEMA_20_STORES = {
   reviewAnnotationDrafts: "id, recordId, [recordId+reviewOccurrenceKey], pendingClear, updatedAt",
 } as const;
 
+export const VOICE_RECALL_SCHEMA_21_STORES = {
+  ...REVIEW_ANNOTATION_SCHEMA_20_STORES,
+  voiceRecallSessions: "id, status, updatedAt, sourceKind",
+  voiceRecallTurns: "id, sessionId, [sessionId+sequence], status, updatedAt",
+  voiceRecallLocalHistory: "id, savedAt, sourceKind",
+} as const;
+
 const tableRows = async <T>(transaction: Transaction, name: string): Promise<T[]> => {
   if (!transaction.db.tables.some((table) => table.name === name)) return [];
   return transaction.table<T, string>(name).toArray();

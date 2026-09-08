@@ -53,10 +53,12 @@ import {
   REVIEW_COACH_SCHEMA_18_STORES,
   REVIEW_COACH_SCHEMA_19_STORES,
   REVIEW_ANNOTATION_SCHEMA_20_STORES,
+  VOICE_RECALL_SCHEMA_21_STORES,
   finalizeReviewCoachMigration,
   migrateToReviewCoachSchema17,
 } from "./reviewCoachSchema";
 import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain";
+import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "../features/voiceRecall/localTypes";
 
 export interface RestoreStagingAsset {
   stagingId: string;
@@ -109,6 +111,9 @@ export class StudyJournalDatabase extends Dexie {
   aiRoleConfigs!: Table<AiRoleConfig, string>;
   coachMigrationBackups!: Table<CoachMigrationBackup, string>;
   reviewAnnotationDrafts!: Table<ReviewAnnotationDraft, string>;
+  voiceRecallSessions!: Table<VoiceRecallSessionLocal, string>;
+  voiceRecallTurns!: Table<VoiceRecallTurnLocal, string>;
+  voiceRecallLocalHistory!: Table<VoiceRecallLocalHistory, string>;
 
   constructor(name = "study-journal-408") {
     super(name);
@@ -324,6 +329,7 @@ export class StudyJournalDatabase extends Dexie {
       .stores(REVIEW_COACH_SCHEMA_19_STORES)
       .upgrade(finalizeReviewCoachMigration);
     this.version(20).stores(REVIEW_ANNOTATION_SCHEMA_20_STORES);
+    this.version(21).stores(VOICE_RECALL_SCHEMA_21_STORES);
   }
 }
 

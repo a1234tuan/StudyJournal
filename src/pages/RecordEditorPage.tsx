@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarCheck, Download, Edit3, FilePlus, ImagePlus, MoreHorizontal, PanelRight, Pi, RotateCcw, Save, Search, Star, Trash2, Volume2, X } from "lucide-react";
+import { ArrowLeft, CalendarCheck, Download, Edit3, FilePlus, ImagePlus, Mic, MoreHorizontal, PanelRight, Pi, RotateCcw, Save, Search, Star, Trash2, Volume2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
 import type { Editor } from "@tiptap/react";
@@ -66,6 +66,7 @@ interface RecordEditorPageProps {
   onResetReview?: (recordId: string) => Promise<void> | void;
   onRemoveReview?: (recordId: string) => Promise<void> | void;
   onExportRecord?: (recordId: string) => Promise<string> | string;
+  onOpenVoiceRecall?: (record: RecordBlock) => void;
   isNewRecord?: boolean;
   onListDecisionBlockArchives?: (recordId: string) => Promise<DecisionBlockArchive[]>;
 }
@@ -160,6 +161,7 @@ export const RecordEditorPage = ({
   onResetReview,
   onRemoveReview,
   onExportRecord,
+  onOpenVoiceRecall,
   isNewRecord = false,
   onListDecisionBlockArchives,
 }: RecordEditorPageProps) => {
@@ -928,6 +930,12 @@ export const RecordEditorPage = ({
           </div>
         ) : (
           <div className="record-action-row">
+            {onOpenVoiceRecall && (
+              <button type="button" className="secondary-button collapsible-action" onClick={() => onOpenVoiceRecall(record)}>
+                <Mic size={17} />
+                语音复述
+              </button>
+            )}
             {onAddToReview && (
               <button
                 type="button"
@@ -1000,6 +1008,12 @@ export const RecordEditorPage = ({
                     <button type="button" onClick={() => void exportCurrentRecord()} disabled={exporting}>
                       <Download size={16} />
                       {exporting ? "导出中..." : "导出此日志"}
+                    </button>
+                  )}
+                  {onOpenVoiceRecall && (
+                    <button type="button" onClick={() => { onOpenVoiceRecall(record); closeMoreActions(); }}>
+                      <Mic size={16} />
+                      语音复述
                     </button>
                   )}
                   <button type="button" onClick={() => void Promise.resolve(toggleFavorite()).finally(closeMoreActions)}>

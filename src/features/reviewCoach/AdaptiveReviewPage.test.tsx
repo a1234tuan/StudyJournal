@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdaptiveReviewPage } from "./AdaptiveReviewPage";
 import { coachTestBlock, coachTestBlueprint, coachTestTask, coachTestTurn, completeCoachTestSnapshot } from "./reviewCoachTestFixtures";
@@ -8,6 +8,28 @@ const record = { id: "record-1", type: "record" as const, date: "2026-09-07", or
 const props = { taskId: coachTestTask.id, records: [record], onBack: vi.fn(), onGenerateTurn: vi.fn(), onRequestHint: vi.fn(), onSubmitAnswer: vi.fn(), onSkipTurn: vi.fn(), onReportInvalid: vi.fn(), onFinish: vi.fn(), onFinishVerification: vi.fn(), onDefer: vi.fn(), onAbandon: vi.fn() };
 
 describe("AdaptiveReviewPage", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("requires explicit transcript confirmation before submitting one voice answer", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+    fireEvent.change(screen.getByLabelText("语音回答转写"), { target: { value: "  入队时立即标记访问  " } });
+    expect(screen.getByRole("button", { name: "提交回答" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "确认转写" }));
+    expect(screen.getByRole("button", { name: "提交回答" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("语音回答转写"), { target: { value: "修改后必须重新确认" } });
+    expect(screen.getByRole("button", { name: "提交回答" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "确认转写" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+
+    await waitFor(() => expect(props.onSubmitAnswer).toHaveBeenCalledTimes(1));
+    expect(props.onSubmitAnswer).toHaveBeenCalledWith(coachTestTurn.id, "修改后必须重新确认");
+  });
+
   it("hides answer criteria and source until the user submits", () => {
     const snapshot = completeCoachTestSnapshot();
     snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };

@@ -4,11 +4,23 @@
 
 - Canonical open-source branch: `main`. The pre-publication history remains in the legacy repository on `feature/review-effect-coach-v2`.
 - Product boundary: `docs/新的方案.md`.
-- Database version: schema 20. Store definitions live in `src/db/reviewCoachSchema.ts`; schema 19 finalizes confirmed legacy facts and removes the six old Coach projection/execution tables, while schema 20 adds the device-local `reviewAnnotationDrafts` store.
+- Database version: schema 21. Store definitions live in `src/db/reviewCoachSchema.ts`; schema 19 finalizes confirmed legacy facts and removes the six old Coach projection/execution tables, schema 20 adds device-local `reviewAnnotationDrafts`, and schema 21 adds the three device-local voice-recall stores.
 - AI cockpit implementation is complete: Stages 0-8 were completed and verified on 2026-09-07, and Stage 9 automated release acceptance is complete. Physical-device upgrade and controlled real-account Firebase quota sign-off remain release gates; do not describe the release itself as signed off until they pass.
 - Product UI migration is complete through final automated acceptance. `src/styles/visual-v2.css` is the active visual layer; `reading` is the default visual theme and `modern` is the alternative. The visual theme is device-local and independent from the existing light/dark/system setting; do not add it to the database or cloud-sync contract.
 - The UI migration preserves formal create/save/rating semantics and routes Review Coach through `Review -> Learning Coach`. All caught errors rendered by React pages/components must pass through `src/lib/uiError.ts`; `src/lib/uiErrorSurface.test.ts` prevents raw `error.message` regressions.
 - The 2026-09-08 review-workspace follow-up adds compact primary-page headers, process-lifetime cross-tab rating undo, and a first-stage read-only annotation surface. The annotation toolbar is viewport-fixed and dynamically avoids visible rating controls.
+- The 2026-09-08 real-time voice-recall work is complete through implementation Stage 6 automated hardening. The Review-owned production workspace, contextual record/current-card entry, local summary/history, confirmed Coach voice-answer path, local-only sync/backup proofs, untrusted-content serialization, and release documentation are implemented. `?preview=voice-recall` remains the isolated Mock call-control prototype; its bright-default continuous-caption and fixed four-control visual baseline is complete across Desktop/Android-narrow, with a dark call palette retained as an option. Real Provider and physical-device checks remain release gates. See `docs/realtime-voice-recall-implementation.md`.
+
+## Voice Recall Boundaries
+
+- Voice recall is an `ASR -> LLM -> TTS` active-recall medium, not a video-call feature or a third learning truth system.
+- `voiceRecallSessions`, `voiceRecallTurns`, and `voiceRecallLocalHistory` are local-only schema 21 stores. They never enter Firebase, ZIP/streaming/native backup, knowledge export, record transfer, or cloud mutation bookkeeping.
+- Full restore clears transient sessions/turns but preserves pre-existing local history. Cloud pull/no-op sync preserves all three stores. Local history itself is not portable; durable preservation must go through an explicitly created journal record.
+- `userMuted` and `systemCaptureGate` are independent. Navigation, backgrounding, and view unmount pause capture/playback without ending the session; recovery always resumes paused.
+- `NativeVoiceCapture` is separate from `NativeAudioRecorder`, and the two Android microphone paths must remain mutually exclusive.
+- The deterministic `voice-mock-cn@1` template is verified for automation. `voice-default-cn@1` and every real Provider profile remain candidate-only until controlled account and physical-device acceptance; never claim model, voice, quota, cost, browser-direct support, or streaming behavior from configuration alone.
+- Web permits only Mock, a user-controlled relay, or a profile explicitly validated as `browserDirectSupported`. Provider credentials and account-specific overrides remain device-local.
+- Voice practice never writes FSRS or auto-rates a review card. A user-confirmed Coach transcript uses the existing `ReviewCoachOrchestrator.submitQuizAnswer` path with one answer per formal turn; a voice summary becomes a journal only after explicit confirmation.
 
 ## Review Annotation Boundaries
 
@@ -60,7 +72,7 @@ git diff --check
 
 Use deterministic mocks in automated tests. Real AI providers are limited to explicit, controlled acceptance runs and must never replace deterministic CI coverage.
 
-The current automated acceptance baseline is `119` Vitest files / `796` tests, `32` Playwright tests across Desktop and Android-narrow projects, and `3` isolated Firebase Emulator tests. Physical Android keyboard/IME, system back, image gestures, real DeepSeek, and controlled real-account Firebase quota checks remain manual release gates.
+The current automated acceptance baseline is `125` Vitest files / `837` tests, `38` Playwright tests across Desktop and Android-narrow projects, and `4` isolated Firebase Emulator tests. Physical Android keyboard/IME, system back, image gestures, real DeepSeek, real voice Providers/audio behavior, and controlled real-account Firebase quota checks remain manual release gates.
 
 For local Stage 3 UI acceptance, run `npm run build`, start `npm run preview -- --host 127.0.0.1 --port 4177`, and open `http://127.0.0.1:4177/?preview=stage3`. This localhost-only query seeds an isolated `BFS Stage3 Preview` record with an overdue review, block feedback, and an analysis-queue item; it is gated out of normal URLs and native shells.
 

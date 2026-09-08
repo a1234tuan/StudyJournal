@@ -257,6 +257,7 @@ protocol.registerSchemesAsPrivileged([
 app.setName("学习日志");
 
 let mainWindow;
+let voiceCaptureActive = false;
 const desktopBackupWriteSessions = new Map();
 const desktopBackupFlushRequests = new Map();
 let closeAfterDesktopBackup = false;
@@ -539,6 +540,15 @@ const closeMainWindowAfterBackup = () => {
 };
 
 ipcMain.handle("study-journal:desktop-backup-bind", bindDesktopBackupFolder);
+ipcMain.handle("study-journal:voice-capabilities", () => ({
+  rendererCapture: true,
+  pcmSampleRates: [16000, 24000, 48000],
+  protocolProxy: true,
+}));
+ipcMain.handle("study-journal:voice-capture-active", (_event, active) => {
+  voiceCaptureActive = Boolean(active);
+  return { active: voiceCaptureActive };
+});
 ipcMain.handle("study-journal:desktop-ocr-recognize", (event, options) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error("桌面 OCR 请求来源无效。");
@@ -887,6 +897,10 @@ const createMainWindow = () => {
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("minimize", () => {
+    if (voiceCaptureActive) {
+      voiceCaptureActive = false;
+      mainWindow?.webContents.send("study-journal:voice-suspend", { reason: "minimize" });
+    }
     void requestDesktopBackupFlush("minimize");
   });
   mainWindow.on("close", (event) => {
@@ -946,6 +960,12 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId(APP_ID);
     registerAppProtocol();
     await applyProxy(readProxyUrl());
+    session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+      permission === "media" && requestingOrigin.startsWith(`${APP_SCHEME}://${APP_HOST}`));
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      const allowed = permission === "media" && webContents.getURL().startsWith(`${APP_SCHEME}://${APP_HOST}/`);
+      callback(allowed);
+    });
     createMainWindow();
 
     if (dataPathSetup.status === "migrated") {

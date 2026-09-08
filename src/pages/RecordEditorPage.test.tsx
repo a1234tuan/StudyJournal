@@ -647,9 +647,11 @@ describe("RecordEditorPage", () => {
 
   it("keeps edit visible in preview and exposes secondary preview actions from the more menu", async () => {
     const onAddToReview = vi.fn();
+    const onOpenVoiceRecall = vi.fn();
     const { onGetDraft } = renderEditor({
       initialEditing: false,
       onAddToReview,
+      onOpenVoiceRecall,
     });
 
     await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
@@ -657,8 +659,11 @@ describe("RecordEditorPage", () => {
     expect(screen.getByRole("button", { name: "返回" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /编辑/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更多操作" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "语音复述" }));
+    expect(onOpenVoiceRecall).toHaveBeenCalledWith(record);
 
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getAllByRole("button", { name: "语音复述" })).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "收藏记录" })).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: /加入复习/ }).at(-1)!);
 

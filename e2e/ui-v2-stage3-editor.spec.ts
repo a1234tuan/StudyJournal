@@ -69,7 +69,7 @@ for (const theme of ["reading", "modern"] as const) {
     expect(toolbarAlignment.maximumIconOffset).toBeLessThanOrEqual(1.5);
     await assertNoHorizontalOverflow(page);
     await editor.fill("在 BFS 中，一个节点可能同时与多个已经访问到的父节点相邻。\n\n首次发现时必须先标记 visited，再加入队列，并同时记录 predecessor。\n\n这条不变量保证每个节点最多入队一次，也保证首次发现路径不会被后续父节点覆盖。");
-    await expect(page.getByText(/本机草稿/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("status")).toContainText(/正在保存本机草稿|草稿已存于本机/, { timeout: 10_000 });
     await page.locator("html").evaluate((element) => element.style.setProperty("--font-scale", "1.25"));
     await assertNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`stage3-editor-${theme}.png`), fullPage: true });
