@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ActionableError } from "../lib/uiError";
+
 import type {
   AppSettings,
   Asset,
@@ -44,6 +46,7 @@ import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT, type AnalysisQueueStatus, type Revi
 import type { FeedbackInterpretation } from "../features/reviewCoach/domain";
 import { ReviewCoachOrchestrator } from "../features/reviewCoach/orchestrator";
 import { reviewCoachRepository } from "../features/reviewCoach/repository";
+import { voiceRecallRepository } from "../features/voiceRecall/repository";
 import { createFeedbackInterpretationGateway, defaultFeedbackInterpretationMetadata } from "../features/reviewCoach/aiGateway";
 import { processFeedbackInterpretationQueue } from "../features/reviewCoach/feedbackInterpretationWorker";
 import { getCurrentAiProvider } from "../lib/aiProviders";
@@ -288,6 +291,8 @@ export const useAppData = () => {
   const deleteBlock = useCallback(
     async (blockId: string) => {
       await storage.deleteBlock(blockId);
+      // Voice sessions/history that referenced this record are no longer resumable.
+      await voiceRecallRepository.markSourceUnavailable({ recordId: blockId }).catch(() => undefined);
       await refresh();
       await markAutoBackupDirty("delete-block");
     },
@@ -306,6 +311,7 @@ export const useAppData = () => {
   const permanentlyDeleteBlock = useCallback(
     async (blockId: string) => {
       await storage.permanentlyDeleteBlock(blockId);
+      await voiceRecallRepository.markSourceUnavailable({ recordId: blockId }).catch(() => undefined);
       await refresh();
       await markAutoBackupDirty("permanent-delete-block");
     },
@@ -417,7 +423,7 @@ export const useAppData = () => {
     const currentSettings = await storage.getSettings();
     const provider = getCurrentAiProvider(currentSettings.ai);
     const apiKey = provider ? (await storage.getAiSecret?.(provider.id))?.apiKey : undefined;
-    if (!provider || !apiKey?.trim()) throw new Error("请先在设置中配置当前 AI 供应商和 API Key。");
+    if (!provider || !apiKey?.trim()) throw new ActionableError("请先在设置中配置当前 AI 供应商和 API Key。");
     const stamp = nowISO();
     const currentRoleConfig = reviewCoachSnapshot.aiRoleConfigs.find((item) => item.role === "session-planner" && !item.deletedAt);
     await reviewCoachRepository.saveAiRoleConfig({
@@ -510,22 +516,28 @@ export const useAppData = () => {
     const currentSettings = await storage.getSettings();
     const provider = getCurrentAiProvider(currentSettings.ai);
     const apiKey = provider ? (await storage.getAiSecret?.(provider.id))?.apiKey : undefined;
-    if (!provider || !apiKey?.trim()) throw new Error("请先在设置中配置当前 AI 供应商和 API Key。");
+    if (!provider || !apiKey?.trim()) throw new ActionableError("请先在设置中配置当前 AI 供应商和 API Key。");
     const stamp = nowISO();
     const roleSpecs = [
       { role: "turn-generator" as const, promptVersion: defaultQuizExecutionMetadata.quizTurnPromptVersion },
       { role: "question-quality-reviewer" as const, promptVersion: defaultQuizExecutionMetadata.questionQualityPromptVersion },
       { role: "answer-evaluator" as const, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion },
     ];
+    let quizTimeoutMs = 60_000;
     for (const spec of roleSpecs) {
       const existing = reviewCoachSnapshot.aiRoleConfigs.find((item) => item.role === spec.role && !item.deletedAt);
+      // The persisted timeout is authoritative so the stored config is not a lie.
+      const timeoutMs = existing?.timeoutMs ?? quizTimeoutMs;
+      if (spec.role === "turn-generator") quizTimeoutMs = timeoutMs;
       await reviewCoachRepository.saveAiRoleConfig({
         id: existing?.id ?? `ai-role:${spec.role}`, role: spec.role, providerId: provider.id, model: provider.model, enabled: true,
         promptVersion: spec.promptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, schemaVersion: defaultQuizExecutionMetadata.schemaVersion,
-        timeoutMs: 60_000, maxRetries: 1, maxConcurrency: 1, createdAt: existing?.createdAt ?? stamp, updatedAt: stamp,
+        // Quiz calls are single-attempt; the orchestrator's second pass is a
+        // question-quality regeneration, not a network retry.
+        timeoutMs, maxRetries: 0, maxConcurrency: 1, createdAt: existing?.createdAt ?? stamp, updatedAt: stamp,
       });
     }
-    const gateway = createQuizExecutionGateway({ provider, apiKey, timeoutMs: 60_000 });
+    const gateway = createQuizExecutionGateway({ provider, apiKey, timeoutMs: quizTimeoutMs });
     return {
       provider,
       orchestrator: new ReviewCoachOrchestrator({
@@ -539,7 +551,7 @@ export const useAppData = () => {
     };
   }, [reviewCoachSnapshot.aiRoleConfigs]);
 
-  const generateAdaptiveQuizTurn = useCallback(async (taskId: string) => {
+  const generateAdaptiveQuizTurn = useCallback(async (taskId: string, signal?: AbortSignal) => {
     const task = reviewCoachSnapshot.adaptiveReviewTasks.find((item) => item.id === taskId);
     const record = task ? recordBlocks.find((item) => item.id === task.recordId) : undefined;
     if (!task || !record) throw new Error("当前任务的学习记录不存在。");
@@ -551,6 +563,7 @@ export const useAppData = () => {
         promptVersion: defaultQuizExecutionMetadata.quizTurnPromptVersion,
         qualityPromptVersion: defaultQuizExecutionMetadata.questionQualityPromptVersion,
         policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId(),
+        signal,
       });
     } finally {
       await refresh();
@@ -565,10 +578,10 @@ export const useAppData = () => {
     return result;
   }, [refresh]);
 
-  const submitAdaptiveQuizAnswer = useCallback(async (turnId: string, answerText: string) => {
+  const submitAdaptiveQuizAnswer = useCallback(async (turnId: string, answerText: string, signal?: AbortSignal) => {
     const { provider, orchestrator } = await createQuizOrchestrator();
     try {
-      return await orchestrator.submitQuizAnswer({ turnId, answerText, provider: provider.providerName, model: provider.model, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId() });
+      return await orchestrator.submitQuizAnswer({ turnId, answerText, provider: provider.providerName, model: provider.model, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId(), signal });
     } finally {
       await refresh();
       await markAutoBackupDirty("review-coach-quiz-answer");

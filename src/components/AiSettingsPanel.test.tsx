@@ -97,6 +97,31 @@ describe("AiSettingsPanel", () => {
     expect(screen.getByText(/多数中转站需要在 Base URL 末尾加 \/v1/)).toBeInTheDocument();
   });
 
+  it("does not clear a stored key when saving before the key load resolves", async () => {
+    storageMock.getAiSecret.mockImplementation(() => new Promise(() => undefined));
+    const baseUrlInput = await openSettingsPanel();
+    fireEvent.change(baseUrlInput, { target: { value: "https://chatapi.onechats.top" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /保存 AI 设置/ }));
+
+    await waitFor(() => expect(storageMock.saveSettings).toHaveBeenCalled());
+    expect(storageMock.clearAiSecret).not.toHaveBeenCalled();
+    expect(storageMock.saveAiSecret).not.toHaveBeenCalled();
+  });
+
+  it("saves an edited key without clearing it", async () => {
+    storageMock.getAiSecret.mockResolvedValue({ id: "custom", apiKey: "old-key", updatedAt: "2026-01-01T00:00:00.000Z" });
+    await openSettingsPanel();
+    const keyInput = await screen.findByLabelText(/API Key/);
+    await waitFor(() => expect(keyInput).toHaveValue("old-key"));
+
+    fireEvent.change(keyInput, { target: { value: "new-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存 AI 设置/ }));
+
+    await waitFor(() => expect(storageMock.saveAiSecret).toHaveBeenCalledWith("new-key", "custom"));
+    expect(storageMock.clearAiSecret).not.toHaveBeenCalled();
+  });
+
   it("tests the current provider connection without saving settings first", async () => {
     await openSettingsPanel();
     fireEvent.change(screen.getByLabelText(/API Key/), { target: { value: "sk-test" } });

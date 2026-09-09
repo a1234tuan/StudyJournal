@@ -76,8 +76,6 @@
 .primary-button,
 .secondary-button,
 .subtle-button,
-.quick-insert button,
-.quick-insert label,
 .editor-file-button {
   min-height: 40px;
   border-radius: var(--radius-control);
@@ -133,7 +131,10 @@
     color var(--motion-fast) ease;
 }
 
-:is(button, [role="button"], .quick-insert label) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:is(button, [role="button"]) {
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -162,8 +163,6 @@
   .sidebar nav button,
   .subject-picker button,
   .editor-toolbar button,
-  .quick-insert button,
-  .quick-insert label,
   .editor-file-button,
   .surface-card-interactive,
   .record-card,
@@ -209,8 +208,6 @@
   .bottom-nav button,
   .subject-picker button,
   .editor-toolbar button,
-  .quick-insert button,
-  .quick-insert label,
   .editor-file-button,
   .surface-card-interactive,
   .record-card,
@@ -252,8 +249,6 @@
   .sidebar nav button,
   .subject-picker button,
   .editor-toolbar button,
-  .quick-insert button,
-  .quick-insert label,
   .editor-file-button,
   .list-row,
   .record-card-main,
@@ -410,8 +405,6 @@
     .sidebar nav button,
     .subject-picker button,
     .editor-toolbar button,
-    .quick-insert button,
-    .quick-insert label,
     .editor-file-button,
     .surface-card-interactive,
     .record-card,

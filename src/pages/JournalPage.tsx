@@ -150,7 +150,7 @@ export const JournalPage = ({
           {batchMessage && <p className="status-message">{batchMessage}</p>}
           <div className="record-list">
             {subjectRecords.map((record) => (
-              <div key={record.id} className={`selectable-record-row ${selectedRecordIds.includes(record.id) ? "selected" : ""}`}>
+              <div key={record.id} className={`selectable-record-row ${selecting ? "selecting" : ""} ${selectedRecordIds.includes(record.id) ? "selected" : ""}`}>
                 {selecting && (
                   <button type="button" className="record-select-button" onClick={() => toggleSelected(record.id)} aria-label="选择记录">
                     {selectedRecordIds.includes(record.id) ? <CheckSquare size={18} /> : <Square size={18} />}

@@ -50,3 +50,21 @@ export const formatUiError = (error: unknown, context: UiErrorContext): string =
   const normalized = normalizeUiError(error, context);
   return `${normalized.message}（诊断编号 ${normalized.diagnosticId}）`;
 };
+
+/** Errors that carry their own actionable fix (missing key, wrong Base URL,
+ * CORS). Only messages we author are shown verbatim; everything else keeps the
+ * generic wording plus a diagnostic id. */
+/** Use when the message itself tells the user what to configure. */
+export class ActionableError extends Error {
+  readonly actionable = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "ActionableError";
+  }
+}
+
+export const isActionableError = (error: unknown): error is Error =>
+  error instanceof Error && (error as { actionable?: boolean }).actionable === true;
+
+export const formatActionableError = (error: unknown, context: UiErrorContext): string =>
+  isActionableError(error) ? error.message : formatUiError(error, context);

@@ -6125,3 +6125,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+
+:root[data-theme="dark"] .record-tag-chip,
+:root[data-theme="dark"] .record-tag-editor-item {
+  background: hsl(var(--record-tag-hue) 34% 22%);
+  color: hsl(var(--record-tag-hue) 62% 82%);
+}

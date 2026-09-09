@@ -312,6 +312,14 @@ public final class PodcastTtsForegroundService extends Service {
         }
     }
 
+    /** Failures where another attempt can only waste quota (bad key, 4xx, or a
+     * download failure after a synthesis that was already billed). */
+    private static final class NonRetryableTtsError extends Exception {
+        NonRetryableTtsError(String message) {
+            super(message);
+        }
+    }
+
     private byte[] requestAudio(String providerId, String apiKey, String apiKeySecondary, String model, String voiceId, String region, String languageCode, String text, String unitId, String title, int partCurrent, int partTotal) throws Exception {
         Exception lastError = null;
         for (int attempt = 1; attempt <= 3; attempt += 1) {
@@ -359,7 +367,7 @@ public final class PodcastTtsForegroundService extends Service {
                             String detail = truncate(new String(bytes, StandardCharsets.UTF_8).replaceAll("\\s+", " ").trim(), 180);
                             String message = "Fish Audio 请求失败（" + code + "）：" + detail;
                             addDiagnostic(unitId, title, partCurrent, partTotal, attempt, code, requestId, message);
-                            if (code != 429 && code < 500) throw new IllegalStateException(message);
+                            if (code != 429 && code < 500) throw new NonRetryableTtsError(message);
                             lastError = new IllegalStateException(message);
                         }
                     }
@@ -368,6 +376,9 @@ public final class PodcastTtsForegroundService extends Service {
                     addDiagnostic(unitId, title, partCurrent, partTotal, attempt, 200, null, providerId + " 请求成功。");
                     return result;
                 }
+            } catch (NonRetryableTtsError error) {
+                addDiagnostic(unitId, title, partCurrent, partTotal, attempt, null, null, safeMessage(error));
+                throw error;
             } catch (Exception error) {
                 if (cancelled) throw new InterruptedException("已取消");
                 lastError = error;
@@ -403,7 +414,11 @@ public final class PodcastTtsForegroundService extends Service {
         byte[] respBytes = readAll(code >= 400 ? conn.getErrorStream() : conn.getInputStream());
         conn.disconnect();
         activeConnection = null;
-        if (code < 200 || code >= 300) throw new IllegalStateException("阿里云 TTS 请求失败（" + code + "）：" + truncate(new String(respBytes, StandardCharsets.UTF_8), 180));
+        if (code < 200 || code >= 300) {
+            String message = "阿里云 TTS 请求失败（" + code + "）：" + truncate(new String(respBytes, StandardCharsets.UTF_8), 180);
+            if (code != 429 && code < 500) throw new NonRetryableTtsError(message);
+            throw new IllegalStateException(message);
+        }
         JSONObject json = new JSONObject(new String(respBytes, StandardCharsets.UTF_8));
         String audioUrl = json.getJSONObject("output").getJSONObject("audio").getString("url");
         HttpURLConnection audioConn = (HttpURLConnection) new URL(audioUrl).openConnection();
@@ -414,7 +429,7 @@ public final class PodcastTtsForegroundService extends Service {
         byte[] audioBytes = readAll(audioCode >= 400 ? audioConn.getErrorStream() : audioConn.getInputStream());
         audioConn.disconnect();
         activeConnection = null;
-        if (audioCode < 200 || audioCode >= 300) throw new IllegalStateException("阿里云音频下载失败（" + audioCode + "）");
+        if (audioCode < 200 || audioCode >= 300) throw new NonRetryableTtsError("阿里云音频下载失败（" + audioCode + "）；语音已合成，不重复计费重试。");
         return audioBytes;
     }
 

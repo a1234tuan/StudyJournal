@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, Keyboard, Lightbulb, Loa
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { RecordBlock } from "../../types";
-import { formatUiError } from "../../lib/uiError";
+import { formatActionableError } from "../../lib/uiError";
 import type { VoiceCaptureAdapter } from "../voiceRecall/contracts";
 import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "../voiceRecall/nativeVoiceCapture";
 import { WebVoiceCaptureAdapter } from "../voiceRecall/webVoiceCapture";
@@ -13,9 +13,9 @@ interface AdaptiveReviewPageProps {
   snapshot: ReviewCoachFormalSnapshot;
   records: readonly RecordBlock[];
   onBack: () => void;
-  onGenerateTurn: (taskId: string) => Promise<unknown>;
+  onGenerateTurn: (taskId: string, signal?: AbortSignal) => Promise<unknown>;
   onRequestHint: (turnId: string, level: number) => Promise<unknown>;
-  onSubmitAnswer: (turnId: string, answer: string) => Promise<unknown>;
+  onSubmitAnswer: (turnId: string, answer: string, signal?: AbortSignal) => Promise<unknown>;
   onSkipTurn: (turnId: string) => Promise<unknown>;
   onReportInvalid: (turnId: string, reason: string) => Promise<unknown>;
   onFinish: (taskId: string, outcome: SubjectiveOutcome, reason?: string, confirmedConflict?: boolean) => Promise<unknown>;
@@ -54,6 +54,9 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
   const captureAdapterRef = useRef<VoiceCaptureAdapter>();
   const captureAbortRef = useRef<AbortController>();
   const capturedFramesRef = useRef(0);
+  // Leaving the page must cancel an in-flight paid generation, not just hide it.
+  const requestAbortRef = useRef<AbortController>(new AbortController());
+  useEffect(() => () => { requestAbortRef.current.abort(); }, []);
 
   const stopVoiceCapture = async () => {
     captureAbortRef.current?.abort();
@@ -90,7 +93,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
           preferredFormat: { encoding: "pcm-s16le", sampleRate: 16_000, channelCount: 1 },
         }, controller.signal)) capturedFramesRef.current += 1;
       } catch (error) {
-        if (!controller.signal.aborted) setMessage(formatUiError(error, "adaptive-review"));
+        if (!controller.signal.aborted) setMessage(formatActionableError(error, "adaptive-review"));
       } finally {
         if (captureAbortRef.current === controller) {
           captureAbortRef.current = undefined;
@@ -116,7 +119,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
       if (success) setMessage(success);
       return true;
     } catch (error) {
-      setMessage(formatUiError(error, "adaptive-review"));
+      setMessage(formatActionableError(error, "adaptive-review"));
       return false;
     } finally {
       setBusy(undefined);

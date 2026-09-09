@@ -142,11 +142,11 @@ body {
 }
 
 ::selection {
-  background: rgba(47, 107, 95, 0.25);
+  background: color-mix(in srgb, var(--color-primary) 28%, transparent);
 }
 
 :root[data-theme="dark"] ::selection {
-  background: rgba(139, 213, 183, 0.25);
+  background: color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {

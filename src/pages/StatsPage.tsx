@@ -14,7 +14,8 @@ interface StatsPageProps {
   reviewStats?: RecordReviewStats | null;
 }
 
-const COLORS = ["#2f6f5e", "#d29045", "#5e6f9f", "#a85858", "#6c7a4a"];
+// Theme tokens so the charts follow the active visual theme and dark mode.
+const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
 export const StatsPage = ({ blocks, assets, subjects, reviewStats }: StatsPageProps) => {
   const records = useMemo(() => getRecordBlocks(blocks), [blocks]);
@@ -96,7 +97,7 @@ export const StatsPage = ({ blocks, assets, subjects, reviewStats }: StatsPagePr
               <XAxis dataKey="date" />
               <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey="count" stroke="#2f6f5e" strokeWidth={3} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="count" stroke="var(--chart-1)" strokeWidth={3} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </article>
@@ -111,7 +112,7 @@ export const StatsPage = ({ blocks, assets, subjects, reviewStats }: StatsPagePr
               <XAxis dataKey="date" />
               <YAxis domain={[0, 100]} />
               <Tooltip />
-              <Line type="monotone" dataKey="rate" stroke="#d29045" strokeWidth={3} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="rate" stroke="var(--chart-2)" strokeWidth={3} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </article>

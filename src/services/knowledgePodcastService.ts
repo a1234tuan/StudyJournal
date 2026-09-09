@@ -24,6 +24,15 @@ export const FISH_AUDIO_PROVIDER_ID = "fish-audio";
 export const DEFAULT_FISH_MODEL = "s2.1-pro-free";
 export const PODCAST_MAX_SOURCE_RECORDS = 20;
 export const PODCAST_SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Per-request cap for one TTS part. Without it a stalled provider left the job
+ * stuck in "generating" until the user cancelled. */
+export const PODCAST_TTS_TIMEOUT_MS = 2 * 60 * 1000;
+
+/** Combines the caller's cancellation with a wall-clock cap. */
+const ttsRequestSignal = (signal?: AbortSignal): AbortSignal => {
+  const timeout = AbortSignal.timeout(PODCAST_TTS_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+};
 export const PODCAST_MIN_OUTPUT_TOKENS = 16_384;
 export const PODCAST_MAX_OUTPUT_TOKENS = 32_768;
 export const PODCAST_SPEECH_CHARACTERS_PER_MINUTE = 240;
@@ -543,7 +552,7 @@ export const generatePodcastScript = async (options: {
           thinkingMode: deepSeek ? "enabled" : undefined,
           reasoningEffort: deepSeek ? "high" : undefined,
           timeoutMs: PODCAST_SCRIPT_TIMEOUT_MS,
-          signal: options.signal,
+          signal: ttsRequestSignal(options.signal),
         },
       });
     } catch (error) {
@@ -586,7 +595,7 @@ export class FishAudioTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly apiKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "fish-audio", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, options.signal);
+    const hosted = await synthesizeOnHost({ providerId: "fish-audio", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let response: Response;
@@ -608,7 +617,7 @@ export class FishAudioTtsProvider implements TextToSpeechProvider {
             latency: "normal",
             chunk_length: 300,
           }),
-          signal: options.signal,
+          signal: ttsRequestSignal(options.signal),
         });
       } catch (error) {
         if (options.signal?.aborted) throw error;
@@ -635,7 +644,7 @@ export class AliyunTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly apiKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "aliyun", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, options.signal);
+    const hosted = await synthesizeOnHost({ providerId: "aliyun", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
     let response: Response;
     try {
@@ -643,7 +652,7 @@ export class AliyunTtsProvider implements TextToSpeechProvider {
         method: "POST",
         headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.profile.model, input: { text, voice: this.profile.voice }, parameters: { format: "mp3", sample_rate: 16000 } }),
-        signal: options.signal,
+        signal: ttsRequestSignal(options.signal),
       });
     } catch (error) {
       if (options.signal?.aborted) throw error;
@@ -656,7 +665,7 @@ export class AliyunTtsProvider implements TextToSpeechProvider {
     const json = await response.json() as { output?: { audio?: { url?: string } } };
     const url = json?.output?.audio?.url;
     if (!url) throw new Error("阿里云 TTS 未返回音频地址。");
-    const audioResponse = await fetch(url, { signal: options.signal });
+    const audioResponse = await fetch(url, { signal: ttsRequestSignal(options.signal) });
     if (!audioResponse.ok) throw new Error(`阿里云音频下载失败（${audioResponse.status}）。`);
     const blob = await audioResponse.blob();
     if (blob.size === 0) throw new Error("阿里云 TTS 返回了空音频。");
@@ -675,14 +684,14 @@ export class TencentTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly secretId: string, private readonly secretKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "tencent", apiKey: this.secretId, apiKeySecondary: this.secretKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3", region: this.profile.region }, options.signal);
+    const hosted = await synthesizeOnHost({ providerId: "tencent", apiKey: this.secretId, apiKeySecondary: this.secretKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3", region: this.profile.region }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
     const host = "tts.tencentcloudapi.com";
     const payload = JSON.stringify({ Text: text, SessionId: crypto.randomUUID(), VoiceType: Number(this.profile.voice) || 101001, Codec: "mp3", SampleRate: 16000 });
     const headers = await signTencentRequest({ secretId: this.secretId, secretKey: this.secretKey, host, action: "TextToVoice", version: "2019-08-23", region: this.profile.region ?? "ap-guangzhou", payload });
     let response: Response;
     try {
-      response = await fetch(`https://${host}`, { method: "POST", headers, body: payload, signal: options.signal });
+      response = await fetch(`https://${host}`, { method: "POST", headers, body: payload, signal: ttsRequestSignal(options.signal) });
     } catch (error) {
       if (options.signal?.aborted) throw error;
       throw new Error("浏览器无法直接访问腾讯云 TTS（可能被 CORS 拦截）。请使用桌面版或 Android 版。");
@@ -703,7 +712,7 @@ export class GoogleTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly apiKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "google", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3", languageCode: this.profile.languageCode }, options.signal);
+    const hosted = await synthesizeOnHost({ providerId: "google", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3", languageCode: this.profile.languageCode }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
     let response: Response;
     try {
@@ -711,7 +720,7 @@ export class GoogleTtsProvider implements TextToSpeechProvider {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input: { text }, voice: { languageCode: this.profile.languageCode ?? "cmn-CN", name: this.profile.voice }, audioConfig: { audioEncoding: "MP3", sampleRateHertz: 16000 } }),
-        signal: options.signal,
+        signal: ttsRequestSignal(options.signal),
       });
     } catch (error) {
       if (options.signal?.aborted) throw error;
@@ -731,7 +740,7 @@ export class DoubaoTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly apiKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "doubao", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, options.signal);
+    const hosted = await synthesizeOnHost({ providerId: "doubao", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
     const resourceId = this.profile.model.trim() || "seed-tts-2.0";
     const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -753,7 +762,7 @@ export class DoubaoTtsProvider implements TextToSpeechProvider {
             audio_params: { format: "mp3", sample_rate: 16000 },
           },
         }),
-        signal: options.signal,
+        signal: ttsRequestSignal(options.signal),
       });
     } catch (error) {
       if (options.signal?.aborted) throw error;

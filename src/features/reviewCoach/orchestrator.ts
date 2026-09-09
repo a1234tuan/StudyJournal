@@ -15,6 +15,7 @@ import type {
   TaskOutcomeEvent,
   TaskPriorityTier,
 } from "./domain";
+import { AiRequestError } from "../../services/aiClientService";
 import { calculateDelayedVerificationSchedule, isVerificationDue, isVerificationEligible } from "./verificationPolicy";
 import type {
   AnswerEvaluationAiResponse,
@@ -340,6 +341,9 @@ export class ReviewCoachOrchestrator {
           });
         }
         lastError = error;
+        // A bad key, wrong Base URL or schema mismatch will fail identically on
+        // every attempt; retrying only burns quota across the whole queue.
+        if (error instanceof AiRequestError && !error.retryable) break;
       }
     }
     const failed: FeedbackInterpretation = {
@@ -518,6 +522,7 @@ export class ReviewCoachOrchestrator {
             return { batch, blueprints, tasks, paused: true };
           }
           lastError = error;
+          if (error instanceof AiRequestError && !error.retryable) break;
         }
       }
       if (!completed) {

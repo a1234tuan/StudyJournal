@@ -32,10 +32,6 @@ const buildBackupMeta = (state?: AutoBackupSettings): string => {
   return `${enabled} · ${time}${size}`;
 };
 
-const buildBackupDescription = (state?: AutoBackupSettings): string => {
-  return state?.folderName ? `备份位置：${state.folderName}` : "管理数据备份、恢复导入和自动备份设置";
-};
-
 const buildAiMeta = (settings: AppSettings): string => {
   const config = normalizeAiConfig(
     settings.ai,
@@ -127,7 +123,6 @@ export const MorePage = ({
           className="more-summary-row"
           icon={<Download size={19} />}
           title="备份与恢复"
-          description={undefined}
           meta={buildBackupMeta(autoBackupState)}
           trailing={<ChevronRight size={17} />}
           onClick={onOpenBackup}

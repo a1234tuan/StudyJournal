@@ -5,7 +5,7 @@ import type { AiProviderProfile, RecordBlock } from "../../types";
 import type { AdaptiveReviewTask, AnalysisBatch, ReviewCoachFormalSnapshot } from "./domain";
 import { maxAnalysisInputTokensForProvider, planAnalysisBatches, type AnalysisPlanningBlock } from "./analysisPlanner";
 import { replayInterventionEffectSummaries } from "./replay";
-import { formatUiError } from "../../lib/uiError";
+import { formatActionableError } from "../../lib/uiError";
 
 interface ReviewCoachWorkbenchProps {
   planningBlocks: readonly AnalysisPlanningBlock[];
@@ -56,10 +56,13 @@ export const ReviewCoachWorkbench = ({
   const [switchTargetId, setSwitchTargetId] = useState<string>();
   const [deferTargetId, setDeferTargetId] = useState<string>();
 
+  // Keyed on candidateKey only: planningBlocks is rebuilt on every snapshot
+  // refresh, and re-seating on identity would silently re-check blocks the user
+  // excluded — and then pay to analyse them.
   useEffect(() => {
-    setSelectedIds(new Set(planningBlocks.map((item) => item.decisionBlockId)));
+    setSelectedIds(new Set(candidateKey ? candidateKey.split("|") : []));
     setConfirming(false);
-  }, [candidateKey, planningBlocks]);
+  }, [candidateKey]);
 
   const selectedBlocks = useMemo(
     () => planningBlocks.filter((item) => selectedIds.has(item.decisionBlockId)),
@@ -102,7 +105,7 @@ export const ReviewCoachWorkbench = ({
       setSwitchTargetId(undefined);
       setDeferTargetId(undefined);
     } catch (error) {
-      setMessage(formatUiError(error, "adaptive-review"));
+      setMessage(formatActionableError(error, "adaptive-review"));
     } finally {
       setBusyAction(undefined);
     }

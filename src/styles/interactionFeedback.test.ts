@@ -31,7 +31,7 @@ describe("interaction feedback styles", () => {
   });
 
   it("normalizes tap highlights and separates pointer focus from keyboard focus", () => {
-    const tapHighlight = cssBlockFor(componentsCss, ':is(button, [role="button"], .quick-insert label)');
+    const tapHighlight = cssBlockFor(componentsCss, ':is(button, [role="button"])');
     const pointerFocus = cssBlockFor(componentsCss, ':is(button, [role="button"]):focus:not(:focus-visible)');
     const keyboardFocus = cssBlockFor(componentsCss, ':is(button, [role="button"]):focus-visible');
 

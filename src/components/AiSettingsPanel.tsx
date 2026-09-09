@@ -71,6 +71,11 @@ const imageInputModeOptions: Array<{
 export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) => {
   const [config, setConfig] = useState<AiProviderConfig>(() => withAiDefaults(settings));
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  // Only providers whose key was actually read (or explicitly edited) may have
+  // their secret written or cleared; otherwise saving before the async load
+  // finishes silently deletes a stored key.
+  const [loadedKeyIds, setLoadedKeyIds] = useState<Set<string>>(() => new Set());
+  const [dirtyKeyIds, setDirtyKeyIds] = useState<Set<string>>(() => new Set());
   const [showKey, setShowKey] = useState(false);
   const [message, setMessage] = useState("");
   const [open, setOpen] = useState(false);
@@ -82,10 +87,15 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
   useEffect(() => {
     const nextConfig = withAiDefaults(settings);
     setConfig(nextConfig);
+    setLoadedKeyIds(new Set());
+    setDirtyKeyIds(new Set());
     void Promise.all(
       nextConfig.providers.map(async (provider) => [provider.id, (await storage.getAiSecret?.(provider.id))?.apiKey ?? ""] as const),
     )
-      .then((entries) => setApiKeys(Object.fromEntries(entries)))
+      .then((entries) => {
+        setApiKeys(Object.fromEntries(entries));
+        setLoadedKeyIds(new Set(entries.map(([id]) => id)));
+      })
       .catch(() => setApiKeys(Object.fromEntries(nextConfig.providers.map((provider) => [provider.id, ""]))));
   }, [settings]);
 
@@ -106,6 +116,7 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
       providers: [...current.providers, provider],
     }));
     setApiKeys((current) => ({ ...current, [provider.id]: "" }));
+    setDirtyKeyIds((current) => new Set(current).add(provider.id));
   };
 
   const removeProvider = (id: string) => {
@@ -149,6 +160,7 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
     await storage.saveSettings({ ...settings, ai: nextConfig });
     await Promise.all(
       providers.map((provider) => {
+        if (!loadedKeyIds.has(provider.id) && !dirtyKeyIds.has(provider.id)) return Promise.resolve();
         const key = apiKeys[provider.id]?.trim();
         return key ? storage.saveAiSecret?.(key, provider.id) : storage.clearAiSecret?.(provider.id);
       }),
@@ -294,7 +306,10 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
                         <input
                           value={apiKeys[provider.id] ?? ""}
                           type={showKey ? "text" : "password"}
-                          onChange={(event) => setApiKeys((current) => ({ ...current, [provider.id]: event.target.value }))}
+                          onChange={(event) => {
+                            setApiKeys((current) => ({ ...current, [provider.id]: event.target.value }));
+                            setDirtyKeyIds((current) => new Set(current).add(provider.id));
+                          }}
                           placeholder="sk-... / nvapi-..."
                         />
                         <button type="button" onClick={() => setShowKey((value) => !value)} aria-label="切换密钥显示">

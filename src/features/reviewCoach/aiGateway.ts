@@ -34,6 +34,12 @@ export const parseJsonContent = (content: string): unknown => {
   }
 };
 
+/** Bounds so a large block or a long interpretation history cannot blow the
+ * model's context (the interpretation call has no retrieval budget). */
+export const FEEDBACK_INTERPRETATION_MAX_BLOCK_CHARACTERS = 4_000;
+export const FEEDBACK_INTERPRETATION_MAX_COMMENT_CHARACTERS = 1_000;
+export const FEEDBACK_INTERPRETATION_MAX_HISTORY_ITEMS = 5;
+
 export const buildFeedbackInterpretationPrompt = (input: FeedbackInterpretationPromptInput): string => [
   "请把用户对学习决策块的原始评论整理成结构化理解。只能依据给出的决策块和评论，不得补造背景。",
   "必须只输出 JSON，不要 Markdown，不要代码围栏。",
@@ -45,9 +51,9 @@ export const buildFeedbackInterpretationPrompt = (input: FeedbackInterpretationP
     decisionBlockId: input.decisionBlockId,
     recordId: input.recordId,
     contentVersion: input.contentVersion,
-    originalComment: input.comment,
-    decisionBlockContent: input.decisionBlockContent,
-    historicalTrend: input.historicalTrend ?? [],
+    originalComment: input.comment.slice(0, FEEDBACK_INTERPRETATION_MAX_COMMENT_CHARACTERS),
+    decisionBlockContent: input.decisionBlockContent.slice(0, FEEDBACK_INTERPRETATION_MAX_BLOCK_CHARACTERS),
+    historicalTrend: (input.historicalTrend ?? []).slice(-FEEDBACK_INTERPRETATION_MAX_HISTORY_ITEMS),
   }, null, 2),
 ].join("\n");
 
@@ -60,6 +66,9 @@ export const createFeedbackInterpretationGateway = (options: FeedbackInterpretat
       prompt: buildFeedbackInterpretationPrompt(input as FeedbackInterpretationPromptInput),
       request: {
         structuredOutput: true,
+        // Structured JSON must not compete with reasoning tokens: verified on
+        // 2026-09-09 that a reasoning model otherwise returns an empty body.
+        thinkingMode: "disabled",
         timeoutMs: options.timeoutMs,
         signal,
         maxTokens: Math.min(options.provider.maxTokens, 900),

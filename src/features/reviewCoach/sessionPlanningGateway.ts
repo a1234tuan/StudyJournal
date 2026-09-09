@@ -58,6 +58,7 @@ export const createSessionPlanningGateway = (options: SessionPlanningGatewayOpti
       prompt: buildSessionPlanningPrompt(input as SessionPlanningPromptInput),
       request: {
         structuredOutput: true,
+        thinkingMode: "disabled",
         timeoutMs: options.timeoutMs,
         signal,
         maxTokens: Math.min(options.provider.maxTokens, 6_000),

@@ -36,6 +36,9 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
   const [open, setOpen] = useState(true);
   const [config, setConfig] = useState<TtsProviderConfig>(() => normalizeTtsConfig(settings.tts));
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  // See AiSettingsPanel: never write or clear a secret that was not loaded or edited.
+  const [loadedKeyIds, setLoadedKeyIds] = useState<Set<string>>(() => new Set());
+  const [dirtyKeyIds, setDirtyKeyIds] = useState<Set<string>>(() => new Set());
   const [secondaryKeys, setSecondaryKeys] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
@@ -43,6 +46,8 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
   useEffect(() => {
     const nextConfig = normalizeTtsConfig(settings.tts);
     setConfig(nextConfig);
+    setLoadedKeyIds(new Set());
+    setDirtyKeyIds(new Set());
     void Promise.all(
       nextConfig.providers.map(async (p) => {
         const secret = await storage.getAiSecret?.(p.id);
@@ -52,6 +57,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
       .then((entries) => {
         setApiKeys(Object.fromEntries(entries.map(([id, s]) => [id, s?.apiKey ?? ""])));
         setSecondaryKeys(Object.fromEntries(entries.map(([id, s]) => [id, s?.apiKeySecondary ?? ""])));
+        setLoadedKeyIds(new Set(entries.map(([id]) => id)));
       })
       .catch(() => {
         setApiKeys(Object.fromEntries(nextConfig.providers.map((p) => [p.id, ""])));
@@ -74,6 +80,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
       providers: [...current.providers, profile],
     }));
     setApiKeys((current) => ({ ...current, [profile.id]: "" }));
+    setDirtyKeyIds((current) => new Set(current).add(profile.id));
     setSecondaryKeys((current) => ({ ...current, [profile.id]: "" }));
   };
 
@@ -107,6 +114,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
     await storage.saveSettings({ ...settings, tts: nextConfig });
     await Promise.all(
       providers.map(async (p) => {
+        if (!loadedKeyIds.has(p.id) && !dirtyKeyIds.has(p.id)) return;
         const key = apiKeys[p.id]?.trim();
         const secondary = secondaryKeys[p.id]?.trim();
         if (key) await storage.saveAiSecret?.(key, p.id, secondary || undefined);
@@ -232,7 +240,10 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                         <input
                           type={showKey ? "text" : "password"}
                           value={apiKeys[profile.id] ?? ""}
-                          onChange={(e) => setApiKeys((c) => ({ ...c, [profile.id]: e.target.value }))}
+                          onChange={(e) => {
+                            setApiKeys((c) => ({ ...c, [profile.id]: e.target.value }));
+                            setDirtyKeyIds((c) => new Set(c).add(profile.id));
+                          }}
                           placeholder={profile.providerId === "fish-audio" ? "sk-..." : profile.providerId === "tencent" ? "AKIDxxxxxxxx" : "API Key"}
                         />
                         <button
