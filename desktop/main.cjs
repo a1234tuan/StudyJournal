@@ -258,6 +258,8 @@ app.setName("学习日志");
 
 let mainWindow;
 let voiceCaptureActive = false;
+/** In-flight TTS syntheses, keyed by the renderer-supplied request id. */
+const desktopTtsRequests = new Map();
 const desktopBackupWriteSessions = new Map();
 const desktopBackupFlushRequests = new Map();
 let closeAfterDesktopBackup = false;
@@ -549,16 +551,62 @@ ipcMain.handle("study-journal:voice-capture-active", (_event, active) => {
   voiceCaptureActive = Boolean(active);
   return { active: voiceCaptureActive };
 });
+// Voice ASR needs a WebSocket with custom auth headers, which the renderer cannot
+// open. The main process owns the socket and streams frames to the renderer.
+const desktopVoiceSockets = new Map();
+
+ipcMain.handle("study-journal:voice-asr-open", (event, options) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error("语音识别请求来源无效。");
+  }
+  const sessionId = randomUUID();
+  const socket = new WebSocket(String(options?.url ?? ""), {
+    headers: Object.fromEntries(Object.entries(options?.headers ?? {}).map(([key, value]) => [key, String(value)])),
+  });
+  socket.binaryType = "arraybuffer";
+  const emit = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("study-journal:voice-asr-event", { sessionId, ...payload });
+    }
+  };
+  socket.addEventListener("open", () => emit({ kind: "open" }));
+  socket.addEventListener("message", (messageEvent) => {
+    const raw = messageEvent.data;
+    const data = typeof raw === "string"
+      ? Buffer.from(raw, "utf8")
+      : Buffer.from(raw instanceof ArrayBuffer ? raw : raw?.buffer ?? new ArrayBuffer(0));
+    emit({ kind: "message", data });
+  });
+  socket.addEventListener("error", () => emit({ kind: "error", message: "语音识别连接失败。" }));
+  socket.addEventListener("close", (closeEvent) => {
+    desktopVoiceSockets.delete(sessionId);
+    emit({ kind: "close", code: closeEvent.code, reason: closeEvent.reason });
+  });
+  desktopVoiceSockets.set(sessionId, socket);
+  return { sessionId };
+});
+
+ipcMain.handle("study-journal:voice-asr-send", (_event, sessionId, data) => {
+  const socket = desktopVoiceSockets.get(String(sessionId));
+  if (!socket || socket.readyState !== 1) return { sent: false };
+  socket.send(data);
+  return { sent: true };
+});
+
+ipcMain.handle("study-journal:voice-asr-close", (_event, sessionId) => {
+  const socket = desktopVoiceSockets.get(String(sessionId));
+  if (!socket) return { closed: false };
+  try { socket.close(); } catch { /* already closed */ }
+  desktopVoiceSockets.delete(String(sessionId));
+  return { closed: true };
+});
 ipcMain.handle("study-journal:desktop-ocr-recognize", (event, options) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error("桌面 OCR 请求来源无效。");
   }
   return recognizePaddleOcr(options);
 });
-ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
-  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-    throw new Error("TTS 请求来源无效。");
-  }
+const synthesizeDesktopTts = async (options, signal) => {
   const providerId = typeof options?.providerId === "string" ? options.providerId : "fish-audio";
   const apiKey = typeof options?.apiKey === "string" ? options.apiKey.trim() : "";
   const apiKeySecondary = typeof options?.apiKeySecondary === "string" ? options.apiKeySecondary.trim() : "";
@@ -584,6 +632,7 @@ ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
       // providers ship with — lowering it here shrinks every generated podcast asset before it
       // ever reaches storage or cloud sync, without touching already-synced audio.
       body: JSON.stringify({ req_params: { text, speaker: voiceId, audio_params: { format: "mp3", sample_rate: 16000 } } }),
+      signal,
     });
     const payload = await resp.text();
     if (!resp.ok) throw new Error(`豆包 TTS 请求失败（${resp.status}）：${payload.replace(/\s+/g, " ").slice(0, 240)}`);
@@ -597,12 +646,13 @@ ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: aliyunModel, input: { text, voice: voiceId }, parameters: { format: "mp3", sample_rate: 16000 } }),
+      signal,
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(`阿里云 TTS 请求失败（${resp.status}）：${JSON.stringify(json).slice(0, 200)}`);
     const audioUrl = json?.output?.audio?.url;
     if (!audioUrl) throw new Error("阿里云 TTS 未返回音频链接。");
-    const audioResp = await net.fetch(audioUrl);
+    const audioResp = await net.fetch(audioUrl, { signal });
     if (!audioResp.ok) throw new Error(`阿里云音频下载失败（${audioResp.status}）`);
     const buffer = Buffer.from(await audioResp.arrayBuffer());
     return { data: buffer.toString("base64"), mimeType: "audio/mpeg" };
@@ -642,6 +692,7 @@ ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
         "X-TC-Region": region,
       },
       body: payload,
+      signal,
     });
     const json = await resp.json();
     if (!resp.ok || json?.Response?.Error) throw new Error(`腾讯云 TTS 请求失败：${JSON.stringify(json?.Response?.Error ?? json).slice(0, 200)}`);
@@ -655,6 +706,7 @@ ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: { text }, voice: { languageCode, name: voiceId }, audioConfig: { audioEncoding: "MP3", sampleRateHertz: 16000 } }),
+      signal,
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(`Google TTS 请求失败（${resp.status}）：${JSON.stringify(json).slice(0, 200)}`);
@@ -670,10 +722,35 @@ ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
     method: "POST",
     headers: { Authorization: `Bearer ${fishToken}`, "Content-Type": "application/json", Accept: "audio/mpeg", model: fishModel },
     body: JSON.stringify({ text, reference_id: voiceId, format: "mp3", normalize: true, mp3_bitrate: 64, latency: "normal", chunk_length: 300 }),
+    signal,
   });
   const buffer = Buffer.from(await response.arrayBuffer());
   if (!response.ok) throw new Error(`Fish Audio 请求失败（${response.status}）：${buffer.toString("utf8").slice(0, 200)}`);
   return { data: buffer.toString("base64"), mimeType: "audio/mpeg" };
+};
+
+ipcMain.handle("study-journal:tts-synthesize", async (event, options) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error("TTS 请求来源无效。");
+  }
+  // Cancelling from the renderer must stop the paid synthesis, not just drop the
+  // resolved value: the controller is aborted via study-journal:tts-cancel.
+  const requestId = typeof options?.requestId === "string" ? options.requestId : "";
+  const controller = new AbortController();
+  if (requestId) desktopTtsRequests.set(requestId, controller);
+  try {
+    return await synthesizeDesktopTts(options, controller.signal);
+  } finally {
+    if (requestId) desktopTtsRequests.delete(requestId);
+  }
+});
+
+ipcMain.handle("study-journal:tts-cancel", (_event, requestId) => {
+  const controller = desktopTtsRequests.get(String(requestId));
+  if (!controller) return { cancelled: false };
+  controller.abort();
+  desktopTtsRequests.delete(String(requestId));
+  return { cancelled: true };
 });
 ipcMain.handle("study-journal:desktop-backup-status", desktopBackupStatus);
 ipcMain.handle("study-journal:desktop-backup-ensure", async () => {

@@ -7,6 +7,7 @@ export const VOICE_RECALL_LIMITS = {
   maxSessionTurns: 160,
   maxHistorySummaryCharacters: 12_000,
   completedSessionRetentionDays: 7,
+  maxHistoryEntries: 200,
 } as const;
 
 const serializedSize = (value: unknown): number => new Blob([JSON.stringify(value)]).size;
@@ -106,6 +107,12 @@ export class VoiceRecallRepository {
   async saveHistory(history: VoiceRecallLocalHistory) {
     validateHistory(history);
     await this.database.voiceRecallLocalHistory.put(structuredClone(history));
+    // Bound local growth: drop the oldest summaries beyond the cap.
+    const total = await this.database.voiceRecallLocalHistory.count();
+    if (total > VOICE_RECALL_LIMITS.maxHistoryEntries) {
+      const oldest = await this.database.voiceRecallLocalHistory.orderBy("savedAt").limit(total - VOICE_RECALL_LIMITS.maxHistoryEntries).primaryKeys();
+      await this.database.voiceRecallLocalHistory.bulkDelete(oldest);
+    }
     return history;
   }
 

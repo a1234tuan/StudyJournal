@@ -54,7 +54,7 @@ describe("voice provider adapters", () => {
     });
 
     expect(resolved).toMatchObject({
-      templateVersion: 2,
+      templateVersion: upgraded.version,
       asr: { endpoint: "https://device.invalid/asr" },
       llm: { model: "device-model" },
       tts: { id: "voice-tts-doubao-seed-20", voice: "device-voice" },

@@ -180,10 +180,12 @@ export const BUILT_IN_VOICE_TEMPLATES: readonly VoiceProviderTemplate[] = [
   },
   {
     templateId: "voice-default-cn",
-    version: 1,
+    version: 2,
     status: "candidate",
     minimumAppVersion: "0.1.6",
-    asrProfileId: "voice-asr-doubao-streaming",
+    // Aliyun Paraformer is the ASR leg verified end-to-end against the live
+    // service; the Doubao profile stays available but needs an activated app.
+    asrProfileId: "voice-asr-aliyun-paraformer",
     llmProfileId: "deepseek-v4-flash",
     ttsProfileId: "voice-tts-fish-s21",
   },

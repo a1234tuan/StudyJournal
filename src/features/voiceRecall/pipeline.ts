@@ -3,6 +3,7 @@ import type {
   AsrStreamEvent,
   AsrStreamRequest,
   LlmStreamAdapter,
+  LlmStreamEvent,
   TtsStreamAdapter,
   VoiceAudioFrame,
   VoiceTeacherMessage,
@@ -22,6 +23,23 @@ export interface VoiceRecallPipelineEvents {
   onAudio?: (chunk: Uint8Array, generation: number) => void | Promise<void>;
 }
 
+const emptyUsage = (): VoiceUsageTotals => ({ asrSeconds: 0, llmInputTokens: 0, llmOutputTokens: 0, ttsCharacters: 0 });
+
+const mergeUsage = (...totals: VoiceUsageTotals[]): VoiceUsageTotals => totals.reduce<VoiceUsageTotals>(
+  (merged, item) => ({
+    asrSeconds: merged.asrSeconds + item.asrSeconds,
+    llmInputTokens: merged.llmInputTokens + item.llmInputTokens,
+    llmOutputTokens: merged.llmOutputTokens + item.llmOutputTokens,
+    ttsCharacters: merged.ttsCharacters + item.ttsCharacters,
+  }),
+  emptyUsage(),
+);
+
+/**
+ * ASR -> LLM -> sentence-level TTS. Split into `transcribe` and `respond` so the
+ * UI can let the user confirm the transcript before the model sees it; `runTurn`
+ * keeps the single-shot behaviour for callers that do not need that pause.
+ */
 export class VoiceRecallPipeline {
   constructor(
     private readonly asr: AsrStreamAdapter,
@@ -29,18 +47,15 @@ export class VoiceRecallPipeline {
     private readonly tts: TtsStreamAdapter,
   ) {}
 
-  async runTurn(input: {
+  async transcribe(input: {
     sessionId: string;
     turnId: string;
     operationId: string;
     frames: AsyncIterable<VoiceAudioFrame>;
     format: AsrStreamRequest["format"];
-    messages: readonly VoiceTeacherMessage[];
-    voice: string;
-    generation: number;
     signal: AbortSignal;
-    events?: VoiceRecallPipelineEvents;
-  }): Promise<VoiceRecallPipelineResult> {
+    onEvent?: (event: AsrStreamEvent) => void;
+  }): Promise<{ transcript: string; usage: VoiceUsageTotals }> {
     const usage = new VoiceUsageMeter();
     let transcript = "";
     for await (const event of this.asr.transcribe({
@@ -52,16 +67,25 @@ export class VoiceRecallPipeline {
       format: input.format,
       frames: input.frames,
     })) {
-      input.events?.onAsrEvent?.(event);
+      input.onEvent?.(event);
       if (event.type === "final") transcript = event.text.trim();
       if (event.type === "completed") usage.add({ asrSeconds: event.usageSeconds });
     }
     if (!transcript) throw new Error("ASR 没有返回可确认的最终转写");
+    return { transcript, usage: usage.snapshot() };
+  }
 
-    const messages: VoiceTeacherMessage[] = [
-      ...input.messages,
-      { role: "user", content: transcript, contentBoundary: "untrusted-learning-content" },
-    ];
+  async respond(input: {
+    sessionId: string;
+    turnId: string;
+    operationId: string;
+    messages: readonly VoiceTeacherMessage[];
+    voice: string;
+    generation: number;
+    signal: AbortSignal;
+    events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
+  }): Promise<{ teacherText: string; usage: VoiceUsageTotals }> {
+    const usage = new VoiceUsageMeter();
     const sentenceBuffer = new SpeakableSentenceBuffer();
     let teacherText = "";
     let ttsTail = Promise.resolve();
@@ -86,19 +110,54 @@ export class VoiceRecallPipeline {
       turnId: input.turnId,
       operationId: `${input.operationId}:llm`,
       signal: input.signal,
-      messages,
-    })) {
-      if (event.type === "token") {
-        teacherText += event.text;
-        input.events?.onTeacherToken?.(event.text);
-        for (const sentence of sentenceBuffer.append(event.text)) speak(sentence);
-      } else if (event.type === "usage") {
-        usage.add({ llmInputTokens: event.inputTokens, llmOutputTokens: event.outputTokens });
+      messages: input.messages,
+    } satisfies Parameters<LlmStreamAdapter["complete"]>[0])) {
+      const llmEvent = event as LlmStreamEvent;
+      if (llmEvent.type === "token") {
+        teacherText += llmEvent.text;
+        input.events?.onTeacherToken?.(llmEvent.text);
+        for (const sentence of sentenceBuffer.append(llmEvent.text)) speak(sentence);
+      } else if (llmEvent.type === "usage") {
+        usage.add({ llmInputTokens: llmEvent.inputTokens, llmOutputTokens: llmEvent.outputTokens });
       }
     }
     const trailing = sentenceBuffer.flush();
     if (trailing) speak(trailing);
     await ttsTail;
-    return { transcript, teacherText, usage: usage.snapshot() };
+    return { teacherText, usage: usage.snapshot() };
+  }
+
+  async runTurn(input: {
+    sessionId: string;
+    turnId: string;
+    operationId: string;
+    frames: AsyncIterable<VoiceAudioFrame>;
+    format: AsrStreamRequest["format"];
+    messages: readonly VoiceTeacherMessage[];
+    voice: string;
+    generation: number;
+    signal: AbortSignal;
+    events?: VoiceRecallPipelineEvents;
+  }): Promise<VoiceRecallPipelineResult> {
+    const asr = await this.transcribe({
+      sessionId: input.sessionId,
+      turnId: input.turnId,
+      operationId: input.operationId,
+      frames: input.frames,
+      format: input.format,
+      signal: input.signal,
+      onEvent: input.events?.onAsrEvent,
+    });
+    const llm = await this.respond({
+      sessionId: input.sessionId,
+      turnId: input.turnId,
+      operationId: input.operationId,
+      messages: [...input.messages, { role: "user", content: asr.transcript, contentBoundary: "untrusted-learning-content" }],
+      voice: input.voice,
+      generation: input.generation,
+      signal: input.signal,
+      events: input.events,
+    });
+    return { transcript: asr.transcript, teacherText: llm.teacherText, usage: mergeUsage(asr.usage, llm.usage) };
   }
 }

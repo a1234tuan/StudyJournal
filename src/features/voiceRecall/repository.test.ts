@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { StudyJournalDatabase } from "../../db/database";
 import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "./localTypes";
-import { VoiceRecallRepository } from "./repository";
+import { VOICE_RECALL_LIMITS, VoiceRecallRepository } from "./repository";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -151,4 +151,20 @@ describe("VoiceRecallRepository", () => {
     expect(await repository.listHistory()).toEqual([expect.objectContaining({ sourceUnavailable: true })]);
     database.close();
   });
+
+  it("caps the local history so it cannot grow without bound", async () => {
+    const { database, repository } = await openRepository();
+    const total = VOICE_RECALL_LIMITS.maxHistoryEntries + 3;
+    for (let index = 0; index < total; index += 1) {
+      await repository.saveHistory({
+        ...history(),
+        id: `history-${index}`,
+        savedAt: new Date(Date.parse("2026-09-08T08:00:00.000Z") + index * 1_000).toISOString(),
+      });
+    }
+    const list = await repository.listHistory();
+    expect(list).toHaveLength(VOICE_RECALL_LIMITS.maxHistoryEntries);
+    expect(list[0].id).toBe(`history-${total - 1}`);
+    database.close();
+  }, 30_000);
 });

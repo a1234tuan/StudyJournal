@@ -257,6 +257,16 @@ export const VoiceRecallSummaryView = ({ theme, summary, turnCount, historySaved
   </main>
 );
 
+/** The ASR socket opens per turn, so the header must not claim a persistent
+ * network connection. It reports the session state instead. */
+const connectionLabel = (status: VoiceRecallState["status"]): string => {
+  if (status === "failed") return "已断开";
+  if (status === "connecting" || status === "reconnecting") return "正在连接";
+  if (status === "paused") return "已暂停";
+  if (status === "ending" || status === "ended") return "已结束";
+  return "通话中";
+};
+
 export const VoiceRecallCallView = ({
   state,
   theme,
@@ -294,7 +304,7 @@ export const VoiceRecallCallView = ({
       <header className="vr-call-header">
         <button className="vr-icon-button" type="button" aria-label="返回" onClick={onBack}><ArrowLeft /></button>
         <div className="vr-scene-pill"><LayoutGrid /><span><strong>学习复述</strong><small>{elapsed} · {selectedModeLabel}</small></span></div>
-        <div className="vr-header-actions"><span className={`vr-connection ${state.status === "failed" ? "is-error" : ""}`}>{state.status === "failed" ? <WifiOff /> : <Wifi />}{state.status === "failed" ? "已断开" : "已连接"}</span><button className="vr-icon-button" type="button" aria-label="更多通话选项" onClick={onOpenDetails}><MoreHorizontal /></button></div>
+        <div className="vr-header-actions"><span className={`vr-connection ${state.status === "failed" ? "is-error" : ""}`}>{state.status === "failed" ? <WifiOff /> : <Wifi />}{connectionLabel(state.status)}</span><button className="vr-icon-button" type="button" aria-label="更多通话选项" onClick={onOpenDetails}><MoreHorizontal /></button></div>
       </header>
 
       <section className="vr-conversation" aria-live="polite">

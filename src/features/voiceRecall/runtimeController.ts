@@ -1,9 +1,18 @@
-import type { VoiceAudioFrame, VoiceCaptureAdapter, VoiceCaptureOptions, VoiceRecallSessionRequest } from "./contracts";
+import type {
+  AsrStreamEvent,
+  AsrStreamRequest,
+  VoiceAudioFrame,
+  VoiceCaptureAdapter,
+  VoiceCaptureOptions,
+  VoiceRecallSessionRequest,
+  VoiceTeacherMessage,
+} from "./contracts";
 import { VoicePlaybackQueue, type VoicePlaybackSink } from "./playbackQueue";
 import { VoiceRecallCancellationTree } from "./cancellation";
 import { VoiceAudioFocusManager } from "./audioFocus";
 import { createVoiceRecallState, transitionVoiceRecallState, type VoiceRecallAction, type VoiceRecallState } from "./domain";
 import type { VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
+import type { VoiceRecallPipeline, VoiceRecallPipelineEvents } from "./pipeline";
 import { VoiceRecallRepository, voiceRecallRepository } from "./repository";
 
 type RuntimeListener = (state: VoiceRecallState | undefined) => void;
@@ -15,7 +24,7 @@ export class VoiceRecallRuntimeController {
   private state?: VoiceRecallState;
   private readonly listeners = new Set<RuntimeListener>();
   private cancellation = new VoiceRecallCancellationTree();
-  private readonly playback: VoicePlaybackQueue;
+  private playback: VoicePlaybackQueue;
   private capture?: VoiceCaptureAdapter;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private captureTask?: Promise<void>;
@@ -113,7 +122,12 @@ export class VoiceRecallRuntimeController {
     return this.state;
   }
 
-  async startCapture(adapter: VoiceCaptureAdapter, options: VoiceCaptureOptions, onFrame: (frame: VoiceAudioFrame) => void) {
+  async startCapture(
+    adapter: VoiceCaptureAdapter,
+    options: VoiceCaptureOptions,
+    onFrame: (frame: VoiceAudioFrame) => void,
+    onError?: (error: unknown) => void,
+  ) {
     if (!this.state || !this.session) throw new Error("当前没有活动的语音复述会话");
     await this.stopCapture();
     this.capture = adapter;
@@ -124,7 +138,12 @@ export class VoiceRecallRuntimeController {
         onFrame(frame);
       }
     })();
-    this.captureTask.catch(() => undefined);
+    // Surface a real capture failure (dead microphone) instead of swallowing it,
+    // but ignore the abort we caused ourselves.
+    this.captureTask.catch((error) => {
+      if (turnSignal.aborted) return;
+      onError?.(error);
+    });
   }
 
   async stopCapture() {
@@ -133,6 +152,67 @@ export class VoiceRecallRuntimeController {
     this.capture = undefined;
     await this.captureTask?.catch(() => undefined);
     this.captureTask = undefined;
+  }
+
+  /** Swap in the real audio sink once the TTS provider (and its encoding) is known. */
+  setPlaybackSink(sink: VoicePlaybackSink) {
+    const previous = this.playback;
+    this.playback = new VoicePlaybackQueue(sink);
+    void previous.interrupt();
+  }
+
+  enqueueAudio(chunk: Uint8Array) {
+    return this.playback.enqueue(chunk);
+  }
+
+  interruptPlayback() {
+    return this.playback.interrupt();
+  }
+
+  waitForPlayback() {
+    return this.playback.waitUntilIdle();
+  }
+
+  /** Phase 1 of a turn: captured audio -> confirmed transcript. */
+  async transcribeTurn(input: {
+    pipeline: VoiceRecallPipeline;
+    frames: AsyncIterable<VoiceAudioFrame>;
+    format: AsrStreamRequest["format"];
+    onEvent?: (event: AsrStreamEvent) => void;
+  }) {
+    if (!this.session) throw new Error("当前没有活动的语音复述会话");
+    const turnSignal = this.cancellation.beginTurn();
+    return input.pipeline.transcribe({
+      sessionId: this.session.id,
+      turnId: crypto.randomUUID(),
+      operationId: crypto.randomUUID(),
+      frames: input.frames,
+      format: input.format,
+      signal: turnSignal,
+      onEvent: input.onEvent,
+    });
+  }
+
+  /** Phase 2 of a turn: confirmed transcript -> streamed reply + real playback. */
+  async respondTurn(input: {
+    pipeline: VoiceRecallPipeline;
+    messages: readonly VoiceTeacherMessage[];
+    voice: string;
+    events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
+  }) {
+    if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
+    await this.playback.interrupt();
+    const turnSignal = this.cancellation.beginTurn();
+    return input.pipeline.respond({
+      sessionId: this.session.id,
+      turnId: crypto.randomUUID(),
+      operationId: crypto.randomUUID(),
+      messages: input.messages,
+      voice: input.voice,
+      generation: this.state.generation,
+      signal: turnSignal,
+      events: input.events,
+    });
   }
 
   async pause() {

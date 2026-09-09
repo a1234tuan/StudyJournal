@@ -17,6 +17,7 @@ interface NativeVoiceCapturePlugin {
   stop(): Promise<void>;
   status(): Promise<{ capturing: boolean; paused: boolean; sampleRate?: number }>;
   addListener(eventName: "audioFrame", listener: (event: NativeVoiceFrameEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "captureError", listener: (event: { message?: string }) => void): Promise<PluginListenerHandle>;
 }
 
 const NativeVoiceCapture = registerPlugin<NativeVoiceCapturePlugin>("NativeVoiceCapture");
@@ -34,6 +35,7 @@ export const canUseNativeVoiceCapture = (): boolean =>
 export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
   readonly id = "android-native-pcm";
   private listener?: PluginListenerHandle;
+  private errorListener?: PluginListenerHandle;
   private stopCurrent?: () => void;
 
   async requestPermission(): Promise<"granted" | "denied" | "prompt"> {
@@ -45,6 +47,7 @@ export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
     const values: VoiceAudioFrame[] = [];
     let wake: (() => void) | undefined;
     let done = false;
+    let failure: Error | undefined;
     this.stopCurrent = () => { done = true; wake?.(); };
     this.listener = await NativeVoiceCapture.addListener("audioFrame", (event) => {
       values.push({
@@ -56,6 +59,14 @@ export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
       wake?.();
       wake = undefined;
     });
+    // A dead microphone (AudioRecord failure) must surface as an error instead of
+    // leaving the UI showing "listening" forever.
+    this.errorListener = await NativeVoiceCapture.addListener("captureError", (event) => {
+      failure = new Error(event?.message?.trim() || "麦克风采集中断，请检查权限或重新开始通话。");
+      done = true;
+      wake?.();
+      wake = undefined;
+    });
     await NativeVoiceCapture.start({ sampleRate: options.preferredFormat.sampleRate, frameSize: 2048 });
     signal.addEventListener("abort", () => { void this.stop(); }, { once: true });
     while (!done) {
@@ -63,6 +74,7 @@ export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
       if (value) yield value;
       else await new Promise<void>((resolve) => { wake = resolve; });
     }
+    if (failure) throw failure;
   }
 
   async pause() {
@@ -74,6 +86,8 @@ export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
     this.stopCurrent = undefined;
     await this.listener?.remove();
     this.listener = undefined;
+    await this.errorListener?.remove();
+    this.errorListener = undefined;
     if (canUseNativeVoiceCapture()) await NativeVoiceCapture.stop().catch(() => undefined);
   }
 }

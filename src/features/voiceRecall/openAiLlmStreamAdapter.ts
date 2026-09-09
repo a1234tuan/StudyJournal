@@ -50,6 +50,10 @@ export class OpenAiCompatibleLlmStreamAdapter implements LlmStreamAdapter {
           max_tokens: this.profile.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
+          // Voice replies must start fast and stay short. Verified 2026-09-09:
+          // deepseek-v4-pro spends its whole budget on reasoning and returns an
+          // empty body unless thinking is disabled.
+          thinking: { type: "disabled" },
         }),
         signal: timeout.signal,
       });

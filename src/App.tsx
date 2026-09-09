@@ -2,9 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import {
-  BarChart3,
   ArrowLeft,
-  BrainCircuit,
   CalendarDays,
   CalendarCheck,
   ClipboardCheck,
@@ -83,6 +81,8 @@ import {
   restoreWebNavigationSnapshot,
 } from "./lib/webNavigationHistory";
 import { reviewCoachRepository } from "./features/reviewCoach/repository";
+import { voiceRecallRuntime } from "./features/voiceRecall/runtimeController";
+import { voiceRecallRepository } from "./features/voiceRecall/repository";
 import { readVisualTheme, writeVisualTheme, type VisualTheme } from "./lib/visualTheme";
 
 const sameIds = (left: string[], right: string[]) =>
@@ -90,7 +90,21 @@ const sameIds = (left: string[], right: string[]) =>
 
 const DESKTOP_MIGRATION_SEEN_KEY = "study-journal-desktop-migration-seen";
 
+/** More sub-routes whose page renders its own back control. The global web back
+ * row must be suppressed for these, otherwise two competing back affordances
+ * appear (one of them an unlabelled icon). */
+const MORE_SUB_ROUTES_WITH_OWN_BACK: readonly Exclude<MoreSubRoute, null>[] = [
+  "recordings",
+  "ai",
+  "podcasts",
+  "aiTools",
+  "aiExport",
+  "templates",
+];
+
 const isVoiceRecallProductionPreview = () => typeof window !== "undefined"
+  && !Capacitor.isNativePlatform()
+  && !isDesktopPlatform()
   && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost")
   && new URLSearchParams(window.location.search).get("preview") === "voice-recall-production";
 
@@ -539,6 +553,16 @@ export const App = () => {
   }, [visualTheme, app.settings?.theme]);
 
   useEffect(() => {
+    if (!app.initialized) {
+      return;
+    }
+    // Voice-recall maintenance: repair sessions interrupted by a crash and drop
+    // transient sessions past the documented retention window.
+    void voiceRecallRuntime.initialize().catch(() => undefined);
+    void voiceRecallRepository.cleanupCompleted().catch(() => undefined);
+  }, [app.initialized]);
+
+  useEffect(() => {
     if (!app.initialized || !isDesktopPlatform() || localStorage.getItem(DESKTOP_MIGRATION_SEEN_KEY)) {
       return;
     }
@@ -652,6 +676,22 @@ export const App = () => {
         return;
       }
 
+      // Immersive sessions report depth 0, but Back should leave the session
+      // rather than dump the user on 今天 with no explanation.
+      if (activeTab === "today" && tabMemory.today.adaptiveTaskId) {
+        clearBackHint();
+        closeAdaptiveTask();
+        return;
+      }
+      if (activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId) {
+        clearBackHint();
+        updateNavigationState((current) => ({
+          ...current,
+          tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, currentRecordId: undefined } },
+        }));
+        return;
+      }
+
       if (getTabDepth(activeTab, tabMemory) > 0) {
         clearBackHint();
         popCurrentTabDepth();
@@ -689,7 +729,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, popCurrentTabDepth, switchTab, tabMemory]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, popCurrentTabDepth, switchTab, tabMemory, updateNavigationState]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -1391,6 +1431,7 @@ export const App = () => {
             assets={app.assets}
             subjects={app.subjects}
             templates={app.templates}
+            settings={settings}
             onRouteChange={updateVoiceRecallRoute}
             onBack={closeVoiceRecall}
             onCreateJournal={createJournalFromVoiceRecall}
@@ -1547,7 +1588,7 @@ export const App = () => {
     && !(activeTab === "journal" && tabMemory.journal.searchOpen)
     && !(activeTab === "journal" && tabMemory.journal.selectedSubject)
     && !(activeTab === "categories" && (tabMemory.categories.activeSubject || tabMemory.categories.managing))
-    && !(activeTab === "more" && (tabMemory.more.subRoute === "recordings" || tabMemory.more.subRoute === "ai" || tabMemory.more.subRoute === "podcasts" || tabMemory.more.subRoute === "aiTools" || tabMemory.more.subRoute === "aiExport"));
+    && !(activeTab === "more" && tabMemory.more.subRoute !== null && MORE_SUB_ROUTES_WITH_OWN_BACK.includes(tabMemory.more.subRoute));
 
   return (
     <PlaybackProvider>

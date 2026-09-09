@@ -1,32 +1,5 @@
+import { createAsyncQueue, type AsyncQueue } from "./asyncQueue";
 import type { VoiceAudioFrame, VoiceCaptureAdapter, VoiceCaptureOptions } from "./contracts";
-
-class AsyncFrameQueue implements AsyncIterable<VoiceAudioFrame> {
-  private values: VoiceAudioFrame[] = [];
-  private waiters: Array<(value: IteratorResult<VoiceAudioFrame>) => void> = [];
-  private closed = false;
-
-  push(frame: VoiceAudioFrame) {
-    const waiter = this.waiters.shift();
-    if (waiter) waiter({ done: false, value: frame });
-    else this.values.push(frame);
-  }
-
-  close() {
-    this.closed = true;
-    for (const waiter of this.waiters.splice(0)) waiter({ done: true, value: undefined });
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<VoiceAudioFrame> {
-    return {
-      next: () => {
-        const value = this.values.shift();
-        if (value) return Promise.resolve({ done: false, value });
-        if (this.closed) return Promise.resolve({ done: true, value: undefined });
-        return new Promise((resolve) => this.waiters.push(resolve));
-      },
-    };
-  }
-}
 
 const floatToPcm16 = (input: Float32Array): Uint8Array => {
   const output = new Int16Array(input.length);
@@ -43,7 +16,7 @@ export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
   private context?: AudioContext;
   private source?: MediaStreamAudioSourceNode;
   private processor?: ScriptProcessorNode;
-  private queue?: AsyncFrameQueue;
+  private queue?: AsyncQueue<VoiceAudioFrame>;
 
   async requestPermission(): Promise<"granted" | "denied" | "prompt"> {
     if (!navigator.mediaDevices?.getUserMedia) return "denied";
@@ -64,7 +37,7 @@ export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
     this.context = new AudioContext({ sampleRate: options.preferredFormat.sampleRate });
     this.source = this.context.createMediaStreamSource(this.stream);
     this.processor = this.context.createScriptProcessor(2048, 1, 1);
-    this.queue = new AsyncFrameQueue();
+    this.queue = createAsyncQueue<VoiceAudioFrame>();
     let sequence = 0;
     this.processor.onaudioprocess = (event) => this.queue?.push({
       sequence: sequence++,

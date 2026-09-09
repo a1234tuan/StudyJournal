@@ -46,12 +46,27 @@ declare global {
           format: "mp3";
           region?: string;
           languageCode?: string;
+          requestId?: string;
         }) => Promise<{ data: string; mimeType?: string }>;
+        cancel: (requestId: string) => Promise<{ cancelled: boolean }>;
       }>;
       voice: Readonly<{
         getCapabilities: () => Promise<{ rendererCapture: boolean; pcmSampleRates: number[]; protocolProxy: boolean }>;
         setCaptureActive: (active: boolean) => Promise<{ active: boolean }>;
         onSuspendRequested: (listener: (reason: "minimize" | "focus-lost") => void) => () => void;
+      }>;
+      voiceAsr: Readonly<{
+        open: (options: { url: string; headers: Record<string, string> }) => Promise<{ sessionId: string }>;
+        send: (sessionId: string, data: Uint8Array) => Promise<{ sent: boolean }>;
+        close: (sessionId: string) => Promise<{ closed: boolean }>;
+        onEvent: (listener: (payload: {
+          sessionId: string;
+          kind: "open" | "message" | "error" | "close";
+          data?: Uint8Array;
+          code?: number;
+          reason?: string;
+          message?: string;
+        }) => void) => () => void;
       }>;
       proxy: Readonly<{
         getProxy: () => Promise<{ proxyUrl: string }>;

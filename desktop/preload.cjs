@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("studyJournalDesktop", Object.freeze({
   }),
   tts: Object.freeze({
     synthesize: (options) => ipcRenderer.invoke("study-journal:tts-synthesize", options),
+    cancel: (requestId) => ipcRenderer.invoke("study-journal:tts-cancel", requestId),
   }),
   voice: Object.freeze({
     getCapabilities: () => ipcRenderer.invoke("study-journal:voice-capabilities"),
@@ -42,6 +43,16 @@ contextBridge.exposeInMainWorld("studyJournalDesktop", Object.freeze({
     onSuspendRequested: (listener) => {
       voiceSuspendListeners.add(listener);
       return () => voiceSuspendListeners.delete(listener);
+    },
+  }),
+  voiceAsr: Object.freeze({
+    open: (options) => ipcRenderer.invoke("study-journal:voice-asr-open", options),
+    send: (sessionId, data) => ipcRenderer.invoke("study-journal:voice-asr-send", sessionId, data),
+    close: (sessionId) => ipcRenderer.invoke("study-journal:voice-asr-close", sessionId),
+    onEvent: (listener) => {
+      const handler = (_event, payload) => listener(payload);
+      ipcRenderer.on("study-journal:voice-asr-event", handler);
+      return () => ipcRenderer.removeListener("study-journal:voice-asr-event", handler);
     },
   }),
   proxy: Object.freeze({
