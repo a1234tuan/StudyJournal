@@ -18,9 +18,11 @@
 - [x] 复习卡片切换后批注草稿重新定位，旧笔迹不会渲染到新卡。
 - [x] AI 问答与教练调用具备超时、取消与确定性失败不重试的保护。
 
-每次发布候选必须重新执行仓库 `AGENTS.md` 中的 Vitest、Playwright、Firebase Emulator、构建、Electron 语法、Android Java 编译和 `git diff --check` 命令。线上验收测试（需密钥，未提供时跳过）也要在受控账号下单独执行。
+每次发布候选必须重新执行仓库 `AGENTS.md` 中的 Vitest、Playwright、Firebase Emulator、构建、Electron 语法、Android Java 编译和 `git diff --check` 命令。普通测试显式排除 **/*.live.test.ts；线上验收必须在账户所有者轮换凭据并单独批准调用次数、额度后分批执行，不能因为环境中已有密钥而默认获得授权。
 
 ## 真实 Provider 门槛
+
+以下已勾选项仅为 2026-09-09 修复前的历史单次验证，不代表本次冻结包通过验收。本次没有调用付费服务；轮换凭据、批准调用额度后须重新验证。
 
 - [x] 阿里云 ASR：鉴权、实时帧协议与单次会话生命周期已验证（`aliyunAsrTransport.live.test.ts`，2026-09-09）。
 - [x] DeepSeek → Fish Audio 回复链：首 token、句界流式合成与真实音频分片已验证（`voicePipeline.live.test.ts`，2026-09-09）。
@@ -32,7 +34,7 @@
 
 ## 真机门槛
 
-- [ ] 安静、道路背景、撞击、喷嚏和多人背景讲话；记录自动模式误触发率，长按/点击模式可兜底。
+- [ ] 安静与背景噪声下的手动点击/按住录音；验证 90 秒提示、120 秒只结束录音并转写，不自动提交 LLM。
 - [ ] 手机扬声器回声、有线耳机、蓝牙耳机和音频设备切换。
 - [ ] 锁屏、切后台、系统返回、来电、网络切换和弱网恢复。
 - [ ] 桌面端完整 5 轮通话：打断、暂停/恢复、异常重连；取消后抓包确认连接确实断开（Android `NativeAiPlugin.cancel` 与桌面 `tts-cancel`）。

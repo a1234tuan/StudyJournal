@@ -2,6 +2,8 @@
 
 ## Current Baseline
 
+- The 2026-09-09 second-audit repair is a code/package candidate freeze, not production acceptance. See `docs/second-audit-repair-acceptance.md` and `docs/release-freeze-2026-09-09.md`. Keep live tests explicitly excluded from ordinary validation; physical-device and separately approved paid-provider gates remain open.
+
 - Canonical open-source branch: `main`. The pre-publication history remains in the legacy repository on `feature/review-effect-coach-v2`.
 - Product boundary: `docs/新的方案.md`.
 - Database version: schema 21. Store definitions live in `src/db/reviewCoachSchema.ts`; schema 19 finalizes confirmed legacy facts and removes the six old Coach projection/execution tables, schema 20 adds device-local `reviewAnnotationDrafts`, and schema 21 adds the three device-local voice-recall stores.
@@ -65,7 +67,8 @@ When changing decision-block or review-coach behavior, verify all affected paths
 ## Verification
 
 ```powershell
-npm run test
+npm run test -- --exclude "**/*.live.test.ts"
+npm run test:voice-host
 npm run test:e2e
 npm run test:firebase
 npm run build
@@ -74,7 +77,7 @@ git diff --check
 
 Use deterministic mocks in automated tests. Real AI providers are limited to explicit, controlled acceptance runs and must never replace deterministic CI coverage.
 
-The current automated acceptance baseline is `140` Vitest files / `889` tests (two of them opt-in live acceptance runs that are skipped without provider keys), `44` Playwright tests across Desktop and Android-narrow projects, and `4` isolated Firebase Emulator tests. Physical Android keyboard/IME, system back, image gestures, real-device audio behaviour, and controlled real-account Firebase quota checks remain manual release gates.
+The current automated acceptance baseline is `142` deterministic Vitest files / `920` tests (the two additional opt-in live files are explicitly excluded from ordinary acceptance), `44` Playwright tests across Desktop and Android-narrow projects, and `4` isolated Firebase Emulator tests. The local host protocol gates also include two Node WebSocket tests and one Android OkHttp MockWebServer test. Physical Android keyboard/IME, system back, image gestures, real-device audio behaviour, and controlled real-account Firebase quota checks remain manual release gates. See `docs/second-audit-repair-acceptance.md` for R1–R15 and credential setup.
 
 For local Stage 3 UI acceptance, run `npm run build`, start `npm run preview -- --host 127.0.0.1 --port 4177`, and open `http://127.0.0.1:4177/?preview=stage3`. This localhost-only query seeds an isolated `BFS Stage3 Preview` record with an overdue review, block feedback, and an analysis-queue item; it is gated out of normal URLs and native shells.
 

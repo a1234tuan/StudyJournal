@@ -5,7 +5,7 @@
 - `voice-mock-cn@1`：确定性开发与自动化验收模板，不会访问真实 Provider。
 - `voice-default-cn@2`：候选模板，组合**阿里云 Paraformer 实时 ASR**、DeepSeek LLM 和 Fish Audio TTS。ASR 与 TTS 链路已于 2026-09-09 用受控账号完成真实服务验证（见 `STUDYJOURNAL_FIX_PLAN.md`）；豆包流式 ASR 与豆包 TTS 因 App ID 未开通/凭据不匹配暂不可用，保留为备选。真机与量产验收仍未完成，模板保持 `candidate`。
 - Web：只允许 Mock、自建中继，或明确通过 `browserDirectSupported` 校验的配置。浏览器中不得长期暴露 Provider 密钥。实测：阿里云 ASR 需自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish Audio preflight 无 CORS 头，因此 Web 端不提供真实语音链路。
-- Desktop/Android：真实链路仍需各 Provider 的宿主传输、凭据和受控连接测试。桌面端已实现主进程 WebSocket 代理（`study-journal:voice-asr-*`）与 TTS 宿主合成；Android 端 ASR 传输尚未接入。
+- Desktop/Android：真实链路仍需各 Provider 的宿主传输、凭据和受控连接测试。桌面端已实现主进程 WebSocket 代理（`study-journal:voice-asr-*`）与 TTS 宿主合成；Android 端已通过 NativeVoiceAsrPlugin 接入 OkHttp WebSocket；text/binary 帧有本地服务端自动化验证，真实设备仍待验收。
 
 ## 模板与本机覆盖
 
@@ -18,12 +18,14 @@
 - API Key 只保存在本机，不写入源码、日志、截图、测试夹具、备份或云同步。
 - 连接测试使用专门测试账号、短请求和低额限制。
 - 错误诊断只记录允许字段和本机估算，不记录完整 Prompt、学习正文、Authorization 或 Provider 原始响应。
-- HTTP 401/403 提示凭据或权限问题；429 提示额度/限流；超时、重试和熔断只在输出前按策略执行。
+- HTTP 401/403 提示凭据或权限问题；429 提示额度/限流。普通语音轮次不自动重发付费请求，由用户明确重试；教练仅对可重试错误执行有界、可取消的退避。
+- ASR 在语音开始页保存本机密钥；LLM 与 Fish Audio 按选中的 profile ID 查找密钥。旧 default 槽位无法明确归属时重新创建独立配置，不删除原密钥。
+- 当前 Fish 句级合成不支持自定义外发端点；填写非官方端点会阻止启动。服务配置变化需重新确认披露。
 
 ## 上线前配置步骤
 
 1. 在目标平台配置设备本机凭据和必要的可信中继/宿主传输。
-2. 分别验证 ASR 首个 final、LLM 首 token、TTS 首音频分片和取消。
+2. 经单独批准额度后，验证 ASR 多句累计转写、用户校对确认、LLM 首 token、TTS 句级合成播放和取消。
 3. 核对外发说明与实际请求字段一致。
 4. 核对供应商账单、并发、数据保留和内容安全策略。
 5. 完成 `voice-recall-release-checklist.md` 后，才调整模板验证状态。

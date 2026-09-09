@@ -24,7 +24,8 @@ npm run dev
 提交 Pull Request 前运行：
 
 ```powershell
-npm run test
+npm run test -- --exclude "**/*.live.test.ts"
+npm run test:voice-host
 npm run test:e2e
 npm run test:firebase
 npm run build

@@ -1,6 +1,7 @@
 # Real-time 语音主动回忆实现基线
 
 > 状态：阶段 0–7 完成；真实 ASR / LLM / TTS 链路已用受控账号验证，Android 真机与计费核对仍是量产门槛
+> 二次审计修复：本轮采用手动录音、校对确认、句级 TTS；详细配置和 R1–R15 验收见 docs/second-audit-repair-acceptance.md。旧 live 记录不替代本轮设备与账户验收。
 > 基线日期：2026-09-09
 > 产品边界：第一版是实时语音主动回忆，不是视频通话，也不是独立聊天中心。
 
@@ -10,7 +11,7 @@
 
 - `src/features/voiceRecall/domain.ts` 冻结主状态机：`idle -> preflight -> connecting -> listening -> finalizing-asr -> thinking -> speaking`，并支持 `paused`、`reconnecting`、`ending`、`failed`、`ended`。
 - `userMuted` 与 `systemCaptureGate` 是正交状态；系统播放结束不能解除用户静音。
-- 自动轮次、长按说话、点击录音是互斥输入模式，只能在通话前或暂停时切换。
+- 生产默认点击录音，保留长按说话；旧自动轮次会话按手动模式恢复。结束录音后必须校对确认，不根据停顿自动发送。
 - `src/features/voiceRecall/contracts.ts` 提供协议无关的采集、ASR、LLM、TTS 异步事件接口。
 - localhost 隔离预览地址为 `http://127.0.0.1:4177/?preview=voice-recall`。它只使用模拟状态，不请求麦克风或真实 Provider。
 - 原型覆盖双视觉主题、Desktop/Android 窄屏、外发清单、静音、字幕开关、打断、错误、重连、返回/结束动作面板和安全区控制。通话页默认采用明亮声场，以连续对话字幕为主体、紧凑声纹表达运行状态，并把静音、字幕、当前轮次动作和结束固定为四键控制；深色声场保留为设备内备选。
@@ -25,7 +26,7 @@
 - `voiceRecallSessions`/`voiceRecallTurns` 是临时检查点；完整备份恢复会清除它们。`voiceRecallLocalHistory` 是用户主动保留的本机摘要，完整恢复默认保留，但它本身不来自备份。
 - 三张表均不进入 Firebase、ZIP/流式/native backup、知识导出、记录转移或 cloud mutation。
 - `VoiceRecallRuntimeController` 持有进程内活动会话、采集、播放、检查点节流与三次本机写入重试；页面卸载或失去焦点只暂停，不等同结束。
-- `TurnEndpointController` 集中管理 1.8 秒普通停顿、4 秒未完句延长和 45 秒长轮次提示，不把参数散落到组件。
+- `TurnEndpointController` 仅保留为原型辅助，不接入当前生产自动发送。生产录音在 90 秒提示、120 秒结束并进入待确认转写。
 - `VoicePlaybackQueue` 使用递增 generation 丢弃打断后的晚到音频；`VoiceRecallCancellationTree` 分离会话、轮次和请求取消。
 - Web/Electron 使用 `WebVoiceCaptureAdapter` 输出单声道 PCM16 帧。Electron 主进程只允许应用自身 origin 请求 media 权限，并在窗口最小化时通知暂停。
 - Android 使用独立 `NativeVoiceCapture`/`VoiceCaptureController`，通过 `AudioRecord` 输出 PCM16 帧；它与普通 `NativeAudioRecorder` 双向互斥。
@@ -37,13 +38,13 @@
 - `FishAudioTtsStreamAdapter` 消费 HTTP 音频分片；现有播客整段合成接口不变。
 - `TransportAsrStreamAdapter` 把豆包/阿里云的鉴权、帧协议和宿主实现隔离在 `VoiceAsrTransport`，领域流水线不依赖 WebSocket/SSE。
 - 提供缓冲式现有 TTS Provider 降级和系统朗读兜底。
-- 提供请求超时、输出前有限重试、熔断、连接测试、本机用量统计和脱敏诊断原语。
+- 提供请求超时、显式用户重试、熔断、连接测试、本机用量统计和脱敏诊断原语。
 - 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 组合阿里云 Paraformer ASR、用户配置的 LLM 与 Fish Audio TTS，三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包语音因测试应用未开通流式服务保留为备选。
 - Web 默认只允许 Mock、自建中继或明确 `browserDirectSupported` 的配置。候选豆包、阿里云和 Fish Audio 模板禁止 Web 长期密钥直连。
 
 ### 阶段 3：生产工作区与本机历史
 
-- `VoiceRecallWorkspace` 已由“复习”一级流程承载，支持资料范围和自由主题、三种互斥输入模式、外发说明确认、暂停/恢复、确认转写、摘要和本机历史。
+- `VoiceRecallWorkspace` 已由“复习”一级流程承载，支持资料范围和自由主题、两种手动输入模式、外发说明确认、暂停/恢复、确认转写、摘要和本机历史。
 - 麦克风采集是真实 PCM；阶段 7 之前 ASR 与教师回复是本地模拟，现已替换为真实 Provider 链路（见阶段 7），转写仍必须由用户确认后才发送给模型。
 - `VoiceRecallRepository.commitTurn` 在同一事务中写入确认轮次并推进 `nextSequence`，拒绝乱序或复用序号。
 - 本机摘要不会自动成为正式学习事实；只有“确认创建并编辑”才通过现有日志创建入口生成记录。
@@ -80,7 +81,7 @@
 - 工作区删除 `createTeacherReply` 与伪造转写；采集帧经 `AsyncQueue` 交给真实 ASR，partial 实时上屏，`finalizing-asr` 阶段承载「转写校对」，用户确认后由 `buildVoiceTeacherMessages` 组装提示词交给真实 LLM。
 - 状态真实化：波形与「正在识别」由**真实采集状态**驱动；主按钮文案与实际动作一致；连接指示改为会话状态（通话中 / 正在连接 / 已暂停 / 已断开）；披露文案显示**实际运行的模型**。
 - 成本护栏：语音 LLM `max_tokens` 钳制到 320 并强制 `thinking: { type: "disabled" }`（`deepseek-v4-pro` 否则会把预算耗在推理上并返回空正文）；教练提示词限 80 字回复、6k 字符材料、最近 3 轮；TTS 每个请求 2 分钟超时。
-- 采集健壮性：原生 `captureError` 被消费并中止采集，异常经 `startCapture(onError)` 上报；`startSession` 重置转写/回复草稿/历史标记；启动时修复中断会话并清理过期临时会话；删除记录时把相关语音来源标记为不可用；本机历史上限 200 条。
+- 采集健壮性：原生 `captureError` 被消费并中止采集，异常经 `startCapture(onError)` 上报；`startSession` 重置转写/回复草稿/历史标记；启动时修复中断会话并清理过期临时会话；删除记录时把相关语音来源标记为不可用；本机保留历史不再按数量淘汰，按 savedAt + id 稳定分页，每页 50 条。
 
 **已验证（2026-09-09，受控账号）**
 
@@ -135,7 +136,7 @@
 
 ## 6. 回归命令
 
-2026-09-09 真实链路接入后的项目基线：Vitest `140` 个文件 / `889` 项测试（其中 2 项为需密钥的线上验收，未提供时跳过），Playwright `44/44`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译与 `git diff --check` 均通过。
+2026-09-09 真实链路接入时的历史基线（不是二次审计后的计数）：Vitest `140` 个文件 / `889` 项测试（其中 2 项为需密钥的线上验收，未提供时跳过），Playwright `44/44`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译与 `git diff --check` 均通过。
 
 ```powershell
 npm run test

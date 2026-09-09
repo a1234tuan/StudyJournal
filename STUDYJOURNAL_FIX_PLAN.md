@@ -1,5 +1,7 @@
 # StudyJournal 修复计划
 
+> 2026-09-09 二次审计修复以 8fc0692 为基线继续实施，保留原菜单与路由修复。当前行为、R1–R15 对应记录、配置步骤和未关闭门禁见 docs/second-audit-repair-acceptance.md。下文原批次及真实账号结果是历史记录，不代表本轮已获得新的付费验收授权。
+
 **依据**：`STUDYJOURNAL_AUDIT_REPORT.md`（2026-09-09，基线 commit `5f3cdc0`）
 **范围**：P0（1 项）+ P1（10 项）+ P2（20 项）
 **P0 方向**：**接入真实 Provider**（不做“仅标注为演示”的临时方案）

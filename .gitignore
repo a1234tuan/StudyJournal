@@ -29,3 +29,4 @@ codex-objects/
 android/app/google-services.json
 functions/lib/
 .firebase/
+audit/second-review/implementation-*.txt

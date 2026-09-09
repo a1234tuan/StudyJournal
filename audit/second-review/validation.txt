@@ -1,0 +1,333 @@
+StudyJournal second audit evidence
+Date: 2026-09-09 Asia/Shanghai
+Baseline: 5f3cdc0
+Audited HEAD / remote main: 8fc0692fb7365d9b6a29f320d08396abc4d959f4
+Paid provider calls: none; *.live.test.ts explicitly excluded
+Original tracked files changed by auditor: none
+
+=== vitest ===
+ ✓ src/styles/richEditorStyles.test.ts (1 test) 4ms
+ ✓ src/components/ui.test.tsx (2 tests) 44ms
+ ✓ src/lib/visualTheme.test.ts (2 tests) 6ms
+ ✓ src/services/desktopLifecycleService.test.ts (1 test) 5ms
+ ✓ src/lib/dailyMotto.test.ts (2 tests) 5ms
+ ✓ src/lib/markdown.test.ts (1 test) 3ms
+ ✓ src/services/autoBackupAdapter.test.ts (1 test) 6ms
+ ✓ src/lib/ttsProviders.test.ts (3 tests) 5ms
+ ✓ src/lib/date.test.ts (2 tests) 5ms
+ ✓ src/pages/TemplateLibraryPage.test.tsx (1 test) 287ms
+
+ Test Files  138 passed (138)
+      Tests  887 passed (887)
+   Start at  18:42:43
+   Duration  42.67s (transform 17.17s, setup 26.44s, collect 223.45s, tests 92.78s, environment 175.74s, prepare 25.33s)
+
+=== build ===
+dist/assets/cynefin-VYW2F7L2-CBnSW1T2.js                            690.83 kB │ gzip: 155.11 kB
+dist/assets/index-dsRxWg0h.js                                     2,389.57 kB │ gzip: 682.29 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 33.34s
+
+PWA v0.21.2
+mode      generateSW
+precache  104 entries (7775.34 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-9c191d2f.js
+
+=== e2e ===
+  ok 43 [android-narrow] › e2e\ui-v2-stage4-review.spec.ts:75:1 › keeps rating undo across tabs and exposes annotation tools (6.3s)
+
+  44 passed (1.4m)
+
+=== firebase ===
+ ✓ firebase-emulator/cloud-sync-emulator.test.ts (4 tests) 1958ms
+   ✓ Stage 9 Firebase incremental-sync acceptance > isolates each user's Firestore and Storage namespace 806ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  18:56:24
+   Duration  3.37s (transform 109ms, setup 0ms, collect 1.07s, tests 1.96s, environment 0ms, prepare 98ms)
+
++  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  storage: Stopping Storage Emulator
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator
+
+=== Independent regression probes: exit 1 expected on audited code ===
+
+ RUN  v2.1.9 D:/StudyJournal-Source
+
+stderr | audit/second-review/probes.test.tsx > Second audit: credential and accounting integration > R11 saves nonzero measured usage in local history
+Warning: An update to VoiceRecallWorkspace inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at VoiceRecallWorkspace (D:\StudyJournal-Source\src\features\voiceRecall\VoiceRecallWorkspace.tsx:59:3)
+    at Harness (D:\StudyJournal-Source\audit\second-review\probes.test.tsx:132:22)
+
+ ❯ audit/second-review/probes.test.tsx (11 tests | 11 failed) 920ms
+   × Second audit: credential and accounting integration > R10 resolves a user-created Fish profile credential from TTS settings 28ms
+     → promise rejected "VoiceConfigurationError: 缺少 Fish Audio 的密…" instead of resolving
+   × Second audit: credential and accounting integration > R11 saves nonzero measured usage in local history 321ms
+     → expected +0 to be 8 // Object.is equality
+   × Second audit: host protocol and coach cancellation > R8 preserves text control messages across the host bridge 1ms
+     → expected Uint8Array[ 123, 34, 104, 101, …(-64) ] to be '{"header":{"action":"run-task"}}' // Object.is equality
+   × Second audit: host protocol and coach cancellation > R9 passes the abort signal from coach generation and aborts on unmount 16ms
+     → expected undefined to be an instance of AbortSignal
+   × Second audit: desired behavior regression probes (no network) > R1 includes the CURRENT confirmed answer in the LLM request 106ms
+     → expected false to be true // Object.is equality
+   × Second audit: desired behavior regression probes (no network) > R2 retains all finalized ASR sentences 1ms
+     → expected '第二句。' to contain '第一句。'
+   × Second audit: desired behavior regression probes (no network) > R3 cancel-current-turn aborts the actual provider signal 169ms
+     → expected false to be true // Object.is equality
+   × Second audit: desired behavior regression probes (no network) > R4 mute stops capture instead of only changing its label 134ms
+     → expected "stopCapture" to be called at least once
+   × Second audit: desired behavior regression probes (no network) > R5 remount reconstructs the production session before resuming 133ms
+     → expected "startCapture" to be called once, but got 0 times
+   × Second audit: desired behavior regression probes (no network) > R6 websocket task-start acknowledgement is bounded after socket open 4ms
+     → expected false to be true // Object.is equality
+   × Second audit: desired behavior regression probes (no network) > R7 rating tombstone rejects a delayed nonempty autosave 5ms
+     → expected [ { id: 'stroke', kind: 'pen', …(7) } ] to deeply equal []
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: credential and accounting integration > R10 resolves a user-created Fish profile credential from TTS settings
+AssertionError: promise rejected "VoiceConfigurationError: 缺少 Fish Audio 的密…" instead of resolving
+ ❯ audit/second-review/probes.test.tsx:49:323
+
+
+Caused by: VoiceConfigurationError: 缺少 Fish Audio 的密钥，请在“更多 → TTS 设置”中填写。
+ ❯ Module.createProductionVoiceSession src/features/voiceRecall/productionPipeline.ts:141:25
+ ❯ audit/second-review/probes.test.tsx:49:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: credential and accounting integration > R11 saves nonzero measured usage in local history
+AssertionError: expected +0 to be 8 // Object.is equality
+
+- Expected
++ Received
+
+- 8
++ 0
+
+ ❯ audit/second-review/probes.test.tsx:66:43
+     64|     await waitFor(async () => expect(await repository.listHistory()).t…
+     65|     const history = (await repository.listHistory())[0];
+     66|     expect(history.usage.llmOutputTokens).toBe(8);
+       |                                           ^
+     67|     expect(history.usage.ttsCharacters).toBe(4);
+     68|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: host protocol and coach cancellation > R8 preserves text control messages across the host bridge
+AssertionError: expected Uint8Array[ 123, 34, 104, 101, …(-64) ] to be '{"header":{"action":"run-task"}}' // Object.is equality
+
+- Expected:
+"{\"header\":{\"action\":\"run-task\"}}"
+
++ Received:
+Uint8Array [
+  123,
+  34,
+  104,
+  101,
+  97,
+  100,
+  101,
+  114,
+  34,
+  58,
+  123,
+  34,
+  97,
+  99,
+  116,
+  105,
+  111,
+  110,
+  34,
+  58,
+  34,
+  114,
+  117,
+  110,
+  45,
+  116,
+  97,
+  115,
+  107,
+  34,
+  125,
+  125,
+]
+
+ ❯ audit/second-review/probes.test.tsx:81:35
+     79|     const control = JSON.stringify({ header: { action: "run-task" } });
+     80|     socket.send(control);
+     81|     expect(send.mock.calls[0][1]).toBe(control);
+       |                                   ^
+     82|   });
+     83|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: host protocol and coach cancellation > R9 passes the abort signal from coach generation and aborts on unmount
+AssertionError: expected undefined to be an instance of AbortSignal
+ ❯ audit/second-review/probes.test.tsx:96:20
+     94|     const signal = onGenerateTurn.mock.calls[0][1];
+     95|     view.unmount();
+     96|     expect(signal).toBeInstanceOf(AbortSignal);
+       |                    ^
+     97|     expect(signal?.aborted).toBe(true);
+     98|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R1 includes the CURRENT confirmed answer in the LLM request
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ audit/second-review/probes.test.tsx:137:152
+    135|     submitText("UNIQUE_CURRENT_ANSWER_20260909");
+    136|     await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    137|     expect(request.mock.calls[0][0].messages.some((message) => message…
+       |                                                                                                                                                        ^
+    138|   });
+    139|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R2 retains all finalized ASR sentences
+AssertionError: expected '第二句。' to contain '第一句。'
+
+Expected: "第一句。"
+Received: "第二句。"
+
+ ❯ audit/second-review/probes.test.tsx:143:31
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R3 cancel-current-turn aborts the actual provider signal
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ audit/second-review/probes.test.tsx:161:24
+    159|     await act(async () => { release?.(); });
+    160|     expect(runtime.snapshot?.status).toBe("listening");
+    161|     expect(wasAborted).toBe(true);
+       |                        ^
+    162|   });
+    163|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R4 mute stops capture instead of only changing its label
+AssertionError: expected "stopCapture" to be called at least once
+ ❯ audit/second-review/probes.test.tsx:172:18
+    170|     fireEvent.click(screen.getByRole("button", { name: "静音", exact: …
+    171|     await screen.findByRole("button", { name: "已静音", exact: true });
+    172|     expect(stop).toHaveBeenCalled();
+       |                  ^
+    173|   });
+    174|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R5 remount reconstructs the production session before resuming
+AssertionError: expected "startCapture" to be called once, but got 0 times
+ ❯ audit/second-review/probes.test.tsx:184:21
+    182|     fireEvent.click(screen.getByRole("button", { name: "开始回答" }));
+    183|     await act(async () => { await Promise.resolve(); });
+    184|     expect(capture).toHaveBeenCalledOnce();
+       |                     ^
+    185|   });
+    186|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R6 websocket task-start acknowledgement is bounded after socket open
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ audit/second-review/probes.test.tsx:197:21
+    195|     await vi.advanceTimersByTimeAsync(100);
+    196|     controller.abort();
+    197|     expect(settled).toBe(true);
+       |                     ^
+    198|   });
+    199|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+ FAIL  audit/second-review/probes.test.tsx > Second audit: desired behavior regression probes (no network) > R7 rating tombstone rejects a delayed nonempty autosave
+AssertionError: expected [ { id: 'stroke', kind: 'pen', …(7) } ] to deeply equal []
+
+- Expected
++ Received
+
+- Array []
++ Array [
++   Object {
++     "anchorIndex": 0,
++     "color": "black",
++     "createdAt": "2026-09-09T11:00:25.392Z",
++     "id": "stroke",
++     "kind": "pen",
++     "opacity": 1,
++     "points": Array [
++       Object {
++         "x": 0,
++         "y": 0,
++       },
++     ],
++     "updatedAt": "2026-09-09T11:00:25.392Z",
++     "width": 2,
++   },
++ ]
+
+ ❯ audit/second-review/probes.test.tsx:210:31
+    208|       await reviewAnnotationRepository.upsertDraft(draft);
+    209|       const after = await reviewAnnotationRepository.getDraft(recordId…
+    210|       expect(after?.elements).toEqual([]);
+       |                               ^
+    211|     } finally {
+    212|       await db.reviewAnnotationDrafts.delete(draft.id);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+
+ Test Files  1 failed (1)
+      Tests  11 failed (11)
+   Start at  19:00:21
+   Duration  4.13s (transform 618ms, setup 93ms, collect 2.21s, tests 920ms, environment 527ms, prepare 95ms)
