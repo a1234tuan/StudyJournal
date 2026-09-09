@@ -37,9 +37,18 @@ export const synthesizeOnHost = async (options: TtsSynthesisOptions, signal?: Ab
   const desktopTts = typeof window !== "undefined" ? window.studyJournalDesktop?.tts : undefined;
   if (desktopTts) {
     if (signal?.aborted) throw new DOMException("TTS cancelled", "AbortError");
-    const result = await desktopTts.synthesize(options);
-    if (signal?.aborted) throw new DOMException("TTS cancelled", "AbortError");
-    return base64ToBlob(result.data, result.mimeType);
+    // Cancelling only rejects the renderer promise; tell the main process to
+    // abort the in-flight request so a cancelled synthesis is not billed.
+    const requestId = `tts-${crypto.randomUUID()}`;
+    const cancelOnAbort = () => { void desktopTts.cancel(requestId).catch(() => undefined); };
+    signal?.addEventListener("abort", cancelOnAbort, { once: true });
+    try {
+      const result = await desktopTts.synthesize({ ...options, requestId });
+      if (signal?.aborted) throw new DOMException("TTS cancelled", "AbortError");
+      return base64ToBlob(result.data, result.mimeType);
+    } finally {
+      signal?.removeEventListener("abort", cancelOnAbort);
+    }
   }
   return undefined;
 };

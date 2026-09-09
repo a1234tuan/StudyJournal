@@ -95,7 +95,13 @@ test("keeps rating undo across tabs and exposes annotation tools", async ({ page
   expect(viewport).not.toBeNull();
   expect(toolbarBox!.y).toBeGreaterThanOrEqual(0);
   expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(viewport!.height);
-  await expect(page.locator(".review-bottom-controls")).toHaveCount(0);
+  // The rating controls stay available while annotating; the toolbar docks above
+  // them instead of hiding or covering them.
+  const ratingBar = page.locator(".review-bottom-controls");
+  await expect(ratingBar).toBeVisible();
+  const ratingBox = await ratingBar.boundingBox();
+  expect(ratingBox).not.toBeNull();
+  expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(ratingBox!.y + 1);
 
   await page.getByRole("button", { name: "浏览", exact: true }).click();
   await page.getByRole("button", { name: "关闭批注工具" }).click();

@@ -6,9 +6,11 @@ import {
   buildUserPromptWithImages,
   buildSessionMemorySummary,
   calculateAiRequestBudget,
+  DEFAULT_AI_REQUEST_TIMEOUT_MS,
   normalizeAiChatCompletionsUrl,
   parseOpenAiCompletionResult,
   selectRecentChatContext,
+  sendChatCompletion,
   sendChatCompletionDetailed,
   testAiProviderConnection,
 } from "./aiClientService";
@@ -435,5 +437,56 @@ describe("buildAiMessages", () => {
       history: [],
       prompt: "测试",
     })).toThrow("至少 2K token");
+  });
+});
+
+describe("AI chat request timeout and cancellation", () => {
+  const chatProvider = {
+    id: "deepseek",
+    providerName: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    model: "deepseek-v4-pro",
+    temperature: 0.7,
+    maxTokens: 4096,
+    contextWindowTokens: 65_536,
+  };
+
+  it("stops waiting after the default timeout instead of hanging the composer forever", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })));
+      const pending = sendChatCompletion({ provider: chatProvider, apiKey: "test", history: [], prompt: "你好" });
+      const assertion = expect(pending).rejects.toThrow(`等待超过 ${DEFAULT_AI_REQUEST_TIMEOUT_MS / 1000} 秒`);
+      await vi.advanceTimersByTimeAsync(DEFAULT_AI_REQUEST_TIMEOUT_MS + 1);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards the caller's AbortSignal so a send can be cancelled", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      const fail = () => reject(new DOMException("aborted", "AbortError"));
+      if (init.signal?.aborted) {
+        fail();
+        return;
+      }
+      init.signal?.addEventListener("abort", fail);
+      queueMicrotask(() => controller.abort());
+    })));
+
+    const pending = sendChatCompletion({
+      provider: chatProvider,
+      apiKey: "test",
+      history: [],
+      prompt: "你好",
+      signal: controller.signal,
+    });
+
+    await expect(pending).rejects.toThrow();
+    expect(controller.signal.aborted).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 import {
   createInitialReviewLibraryState,
   createInitialTabMemory,
+  MORE_SUB_ROUTE_VALUES,
   type MoreSubRoute,
   type RecordReferenceNavigationEntry,
   type ReviewCardFilter,
@@ -36,20 +37,6 @@ export type RestoredWebNavigationSnapshot = Omit<WebNavigationSnapshot, "tabMemo
 };
 
 const TAB_KEYS: readonly TabKey[] = ["today", "journal", "categories", "review", "more"];
-const MORE_SUB_ROUTES: readonly MoreSubRoute[] = [
-  "stats",
-  "settings",
-  "ai",
-  "favorites",
-  "trash",
-  "backup",
-  "aiTools",
-  "ocrSettings",
-  "recordings",
-  "podcasts",
-  "guide",
-  null,
-];
 const REVIEW_CARD_FILTERS: readonly ReviewCardFilter[] = ["all", "unadded", "new", "due", "learning", "suspended", "mastered"];
 const REVIEW_CARD_SORTS: readonly ReviewCardSort[] = ["due", "created", "reviewed", "title"];
 const REVIEW_KINDS = ["all", "overview", "memory"] as const;
@@ -237,9 +224,15 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
     return null;
   }
   const reviewMode = value.review.mode === "manage" ? "manage" : value.review.mode === "queue" ? "queue" : null;
-  const subRoute = MORE_SUB_ROUTES.includes(value.more.subRoute as MoreSubRoute) ? value.more.subRoute as MoreSubRoute : undefined;
+  // An unrecognised sub-route degrades to the More root instead of discarding
+  // the whole snapshot, so one stale value cannot swallow the Back button.
+  const rawSubRoute = value.more.subRoute;
+  const subRoute: MoreSubRoute = typeof rawSubRoute === "string"
+    && (MORE_SUB_ROUTE_VALUES as readonly string[]).includes(rawSubRoute)
+    ? rawSubRoute as MoreSubRoute
+    : null;
   const recordings = value.more.recordingsState;
-  if (!reviewMode || subRoute === undefined || !isObject(recordings)) {
+  if (!reviewMode || !isObject(recordings)) {
     return null;
   }
 

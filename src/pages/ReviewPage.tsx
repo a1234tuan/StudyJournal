@@ -1017,6 +1017,7 @@ export const ReviewPage = ({
               </header>
               <div className={`review-learning-layout ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
                 <ReviewAnnotationSurface
+                  key={`${currentRecord.id}:${reviewOccurrenceKey(currentReview)}`}
                   recordId={currentRecord.id}
                   occurrenceKey={reviewOccurrenceKey(currentReview)}
                   contentRevision={currentRecord.updatedAt}
@@ -1268,7 +1269,7 @@ export const ReviewPage = ({
                 </details>
               )}
             </article>
-            {!annotationOpen && <section className={`review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
+            <section className={`review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
               <section className="review-rating-bar">
                 {ratingConfig.map((item) => {
                   const preview = ratingPreviews.get(item.rating as typeof ACTIVE_REVIEW_RATINGS[number]);
@@ -1295,7 +1296,7 @@ export const ReviewPage = ({
                   );
                 })}
               </section>
-            </section>}
+            </section>
           </section>
         )
       ) : (

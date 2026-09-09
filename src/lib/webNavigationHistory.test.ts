@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createInitialTabMemory } from "./tabNavigation";
+import { createInitialTabMemory, MORE_SUB_ROUTE_VALUES } from "./tabNavigation";
 import {
   createWebNavigationSnapshot,
   isCurrentWebNavigationSession,
@@ -41,6 +41,24 @@ describe("web navigation history snapshots", () => {
     });
     expect(restored?.tabMemory.journal.month).toBeInstanceOf(Date);
     expect(restored?.tabMemory.journal.referenceStack?.[0]).toMatchObject({ recordId: "record-a", scrollY: 248 });
+  });
+
+  it("restores every More sub-route and degrades an unknown one to the More root", () => {
+    for (const subRoute of MORE_SUB_ROUTE_VALUES) {
+      const memory = createInitialTabMemory();
+      memory.more.subRoute = subRoute;
+      const snapshot = createWebNavigationSnapshot("session-1", "more", memory, null, 0);
+      const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
+      expect(restored, `sub-route ${subRoute} must survive a browser Back`).not.toBeNull();
+      expect(restored?.tabMemory.more.subRoute).toBe(subRoute);
+    }
+
+    const stale = createInitialTabMemory();
+    stale.more.subRoute = "removed-route" as never;
+    const staleSnapshot = createWebNavigationSnapshot("session-1", "more", stale, null, 0);
+    const restoredStale = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(staleSnapshot)));
+    expect(restoredStale).not.toBeNull();
+    expect(restoredStale?.tabMemory.more.subRoute).toBeNull();
   });
 
   it("restores card-library scope, filters and sorting while accepting legacy snapshots", () => {

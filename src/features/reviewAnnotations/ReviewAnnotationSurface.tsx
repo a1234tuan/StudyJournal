@@ -70,9 +70,23 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
   const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number }>();
   const controlRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const [error, setError] = useState("");
+  const [dockBottom, setDockBottom] = useState(16);
 
   useEffect(() => {
     let active = true;
+    // Re-seat the draft whenever the target card changes. Keeping the previous
+    // card's elements would both render them over the new card and persist new
+    // strokes under the previous card's key (commit() spreads `current`).
+    setDraft((current) => (
+      current.recordId === recordId && current.reviewOccurrenceKey === occurrenceKey
+        ? current
+        : emptyDraft(recordId, occurrenceKey, contentRevision)
+    ));
+    setSelectedElementIds([]);
+    setDrawing(undefined);
+    setSelectionBox(undefined);
+    setEraserPointer(undefined);
+    interactionRef.current = undefined;
     void reviewAnnotationRepository.getDraft(recordId, occurrenceKey).then((saved) => {
       if (active && saved && !saved.pendingClear && saved.contentRevision === contentRevision) setDraft(saved);
     }).catch((reason) => active && setError(formatUiError(reason, "review-annotation")));
@@ -88,9 +102,30 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
     return () => observer.disconnect();
   }, [recordId]);
 
+  // Keep the fixed toolbar above the sticky rating controls instead of hiding
+  // them: measure the rating bar and dock clear of it.
   useEffect(() => {
-    if (!open) return;
-    return undefined;
+    if (!open) return undefined;
+    const ratingControls = document.querySelector<HTMLElement>(".review-bottom-controls");
+    const measure = () => {
+      if (!ratingControls) {
+        setDockBottom(16);
+        return;
+      }
+      const rect = ratingControls.getBoundingClientRect();
+      const overlapsViewport = rect.top < window.innerHeight && rect.bottom > 0;
+      setDockBottom(overlapsViewport ? Math.max(16, window.innerHeight - rect.top + 8) : 16);
+    };
+    measure();
+    const observer = ratingControls && typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : undefined;
+    if (ratingControls) observer?.observe(ratingControls);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -300,7 +335,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
       title={open ? "关闭批注" : "打开批注"}
       onClick={() => setOpen((value) => !value)}
     ><Pencil size={18} /></button>
-    {open && <div className="review-annotation-toolbar" role="toolbar" aria-label="批注工具栏">
+    {open && <div className="review-annotation-toolbar" role="toolbar" aria-label="批注工具栏" style={{ bottom: `calc(${dockBottom}px + env(safe-area-inset-bottom))` }}>
       <span className="review-annotation-current" aria-live="polite">当前：<strong>{toolLabels[tool]}</strong></span>
       <button type="button" aria-label="浏览" aria-pressed={tool === "pointer"} className={tool === "pointer" ? "active" : ""} onClick={() => setTool("pointer")} title="浏览"><MousePointer2 size={17} /></button>
       <button type="button" aria-label="画笔" aria-pressed={tool === "pen"} className={tool === "pen" ? "active" : ""} onClick={() => setTool("pen")} title="画笔"><Pencil size={17} /></button>

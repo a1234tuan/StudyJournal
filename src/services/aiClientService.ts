@@ -26,6 +26,27 @@ export interface AiConnectionTestResult {
   content: string;
 }
 
+/** Default wall-clock cap for a chat completion. Callers may override it (the
+ * podcast script builder uses 5 minutes); without it a stalled connection left
+ * the composer disabled until the user reloaded the app. */
+export const DEFAULT_AI_REQUEST_TIMEOUT_MS = 120_000;
+
+/** Carries whether a retry can possibly succeed, so callers stop re-billing
+ * requests that failed for a deterministic reason (bad key, wrong Base URL,
+ * schema mismatch, CORS). */
+export class AiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly status?: number,
+    /** True when the message tells the user exactly what to fix. */
+    readonly actionable = false,
+  ) {
+    super(message);
+    this.name = "AiRequestError";
+  }
+}
+
 export interface AiCompletionRequestOptions {
   structuredOutput?: boolean;
   thinkingMode?: "enabled" | "disabled";
@@ -149,7 +170,7 @@ export const calculateAiRequestBudget = (options: {
 }): AiRequestBudget => {
   const provider = options.provider;
   if (!provider) {
-    throw new Error("请先在“更多 → AI 设置”里配置 AI 供应商。");
+    throw new AiRequestError("请先在“更多 → AI 设置”里配置 AI 供应商。", false, undefined, true);
   }
   const contextWindowTokens = provider.contextWindowTokens ?? DEFAULT_AI_CONTEXT_WINDOW_TOKENS;
   const outputTokens = provider.maxTokens;
@@ -166,7 +187,7 @@ export const calculateAiRequestBudget = (options: {
   const available = contextWindowTokens - outputTokens - SYSTEM_AND_SAFETY_RESERVE_TOKENS - CONTEXT_PROMPT_RESERVE_TOKENS - historyTokens - summaryTokens - promptTokens;
   const retrievalTokens = Math.min(retrievalTargetTokens, Math.max(0, available));
   if (retrievalTokens < MIN_AI_RETRIEVAL_TOKENS) {
-    throw new Error("当前供应商的 Context Window 不能为知识库检索保留至少 2K token。请降低 Max Tokens，或在 AI 设置中提高 Context Window Tokens。");
+    throw new AiRequestError("当前供应商的 Context Window 不能为知识库检索保留至少 2K token。请降低 Max Tokens，或在 AI 设置中提高 Context Window Tokens。", false, undefined, true);
   }
   const selectedChunks = options.attachment?.selectedChunks?.length
     ? options.attachment.selectedChunks
@@ -328,7 +349,7 @@ const requestOpenAiChatCompletionDetailed = async (options: {
 
   const requestUrl = normalizeAiChatCompletionsUrl(provider.baseUrl);
   const timeoutController = new AbortController();
-  const timeoutMs = options.timeoutMs ?? 0;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS;
   let timedOut = false;
   const timeoutId = timeoutMs > 0 ? globalThis.setTimeout(() => {
     timedOut = true;
@@ -366,26 +387,31 @@ const requestOpenAiChatCompletionDetailed = async (options: {
           isLikelyHtmlResponse(text, contentType) ? "接口返回的是 HTML 页面，Base URL 可能缺少 /v1 或填成了网页入口。" : "接口返回的不是 JSON。",
           fallbackDetail ? `响应片段：${fallbackDetail}` : "",
         ].filter(Boolean).join(" ");
-      throw new Error(`${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`);
+      const retryableStatus = response.status === 408 || response.status === 429 || response.status >= 500;
+      const actionableStatus = response.status === 401 || response.status === 403 || response.status === 404;
+      throw new AiRequestError(`${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`, retryableStatus, response.status, actionableStatus);
     }
 
     if (!parsed.ok) {
       const hint = isLikelyHtmlResponse(text, contentType)
         ? "接口返回的是 HTML 页面，Base URL 可能缺少 /v1 或填成了网页入口。"
         : "接口返回的不是 JSON。";
-      throw new Error(
+      throw new AiRequestError(
         `${provider.providerName} AI 接口返回的不是 OpenAI 兼容 JSON，可能 Base URL 路径错误。${formatResponseMeta(response.status, contentType, requestUrl)}，${hint}响应片段：${fallbackDetail}`,
+        false,
+        response.status,
+        true,
       );
     }
 
     return parseOpenAiCompletionResult(parsed.value, response.headers.get("x-request-id") ?? response.headers.get("request-id") ?? undefined);
   } catch (error) {
     if (timedOut) {
-      throw new Error(`AI 请求等待超过 ${Math.round((options.timeoutMs ?? 0) / 1000)} 秒，已停止等待。`);
+      throw new AiRequestError(`AI 请求等待超过 ${Math.round(timeoutMs / 1000)} 秒，已停止等待。`, true);
     }
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof TypeError) {
-      throw new Error("Web 端请求失败，可能被第三方接口 CORS 限制。请在 Android 端使用，或配置允许跨域的代理 Base URL。");
+      throw new AiRequestError("Web 端请求失败，可能被第三方接口 CORS 限制。请在 Android 端使用，或配置允许跨域的代理 Base URL。", false, undefined, true);
     }
     throw error;
   } finally {
@@ -396,7 +422,7 @@ const requestOpenAiChatCompletionDetailed = async (options: {
 
 const requestOpenAiChatCompletion = async (options: Parameters<typeof requestOpenAiChatCompletionDetailed>[0]): Promise<string> => {
   const result = await requestOpenAiChatCompletionDetailed(options);
-  if (!result.content) throw new Error("AI 接口返回为空，或没有返回最终正文。");
+  if (!result.content) throw new AiRequestError("AI 接口返回为空，或没有返回最终正文。", false);
   return result.content;
 };
 
@@ -467,16 +493,18 @@ export const sendChatCompletion = async (options: {
   imageInputMode?: "vision" | "local-ocr" | "disabled";
   imageAttachments?: AiChatAttachment[];
   budget?: AiRequestBudget;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<string> => {
   const { provider, apiKey, attachment, history, prompt, memorySummary, imageInputMode, imageAttachments } = options;
   if (!provider) {
     throw new Error("请先在“更多 → AI 设置”里配置 AI 供应商。");
   }
   if (!apiKey?.trim()) {
-    throw new Error(`请先在“更多 → AI 设置”里填写 ${provider.providerName} 的 API Key。`);
+    throw new AiRequestError(`请先在“更多 → AI 设置”里填写 ${provider.providerName} 的 API Key。`, false, undefined, true);
   }
   if (!provider.model.trim()) {
-    throw new Error(`请先填写 ${provider.providerName} 的模型名称。`);
+    throw new AiRequestError(`请先填写 ${provider.providerName} 的模型名称。`, false, undefined, true);
   }
 
   const userContent = await buildUserPromptWithImages({
@@ -498,6 +526,8 @@ export const sendChatCompletion = async (options: {
     apiKey: apiKey.trim(),
     messages,
     maxTokens: budget.outputTokens,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
   });
 };
 

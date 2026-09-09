@@ -19,7 +19,9 @@ for (const theme of ["reading", "modern"] as const) {
 
     await page.getByRole("button", { name: "更多", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "更多" })).toBeVisible();
-    await page.getByRole("button", { name: /分类管理 按学科和标签/ }).click();
+    // More rows no longer carry a description, so "分类管理" is also the sidebar
+    // entry's name; scope to the More page to keep the target unambiguous.
+    await page.locator(".more-page").getByRole("button", { name: "分类管理", exact: true }).click();
     await expect(page.getByRole("heading", { name: "学科分类" })).toBeVisible();
     await noOverflow(page);
 

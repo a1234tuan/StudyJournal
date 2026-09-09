@@ -14,6 +14,11 @@
   --color-primary-strong: #88412b;
   --color-primary-soft: #f5e8e2;
   --color-accent: #9b681f;
+  --chart-1: #a45135;
+  --chart-2: #9b681f;
+  --chart-3: #5e6f9f;
+  --chart-4: #6c7a4a;
+  --chart-5: #8a5a7a;
   --color-accent-strong: #7d5014;
   --color-accent-soft: #f7eddb;
   --color-blue: #4e6f8d;
@@ -189,7 +194,7 @@ body {
 
 .today-compose-band {
   position: relative;
-  width: min(720px, 100%);
+  width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 48px;
   margin-bottom: 28px;
@@ -773,7 +778,7 @@ body {
   .record-editor-page.wide-content > .record-view-page { width: 100%; }
   .record-editor-head > .record-title-input { font-size: 1.55rem; }
   .record-editor-page .editor-toolbar {
-    top: calc(56px + env(safe-area-inset-top));
+    top: max(58px, calc(54px + env(safe-area-inset-top)));
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     margin-inline: -16px;
@@ -941,10 +946,14 @@ body {
   }
 
   .record-editor-page .record-editor-topbar {
+    /* Full-bleed, matching the toolbar below so both share one width basis
+       (100vw) and one inner padding (16px). No overflow clipping: the
+       "更多操作" dropdown is an absolutely positioned descendant and would be
+       clipped away; horizontal overflow is contained by overflow-x: clip. */
     width: calc(100% + 32px);
     max-width: none;
     margin-inline: -16px;
-    overflow: hidden;
+    padding-inline: 16px;
   }
 
   .record-editor-page > .record-editor-head,
@@ -959,14 +968,16 @@ body {
 
   .record-editor-page .record-action-row {
     justify-self: end;
-    overflow: hidden;
+    /* See .record-editor-topbar above: clipping here hides .record-more-menu. */
   }
 
   .record-editor-page .editor-toolbar {
-    width: 100%;
-    margin-inline: 0;
-    padding: 4px 0;
-    background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+    /* Full-bleed like the top bar: no transparent gutters for text to scroll
+       through, and the first button aligns with the back button. */
+    width: calc(100% + 32px);
+    margin-inline: -16px;
+    padding: 4px 16px;
+    background: color-mix(in srgb, var(--color-bg) 96%, transparent);
   }
 
   .record-editor-page .editor-toolbar-primary {

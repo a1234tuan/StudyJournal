@@ -33,6 +33,22 @@ for (const theme of ["reading", "modern"] as const) {
     await expect(editor).toBeVisible();
     await expect(page.getByLabel("选择学科")).toHaveCount(0);
     await page.getByRole("button", { name: "更多操作" }).click();
+    // The dropdown must be hit-testable, not merely present in the DOM: an
+    // ancestor with `overflow: hidden` still reports a bounding box, so
+    // selectOption/visibility checks alone cannot catch a clipped menu.
+    const moreMenuHitTest = await page.locator(".record-more-menu").evaluate((menu) => {
+      const controls = Array.from(menu.querySelectorAll<HTMLElement>("button, select"));
+      return controls.map((control) => {
+        const rect = control.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return {
+          label: (control.getAttribute("aria-label") || control.textContent || "").trim().slice(0, 14),
+          reachable: hit === control || Boolean(hit && control.contains(hit)),
+        };
+      });
+    });
+    expect(moreMenuHitTest.length).toBeGreaterThan(0);
+    expect(moreMenuHitTest.filter((control) => !control.reachable)).toEqual([]);
     await page.getByRole("combobox", { name: "日志学科" }).selectOption({ label: "数学" });
     await page.getByRole("button", { name: "收起更多操作" }).click();
     const mobileMoreTools = page.getByRole("button", { name: "展开更多编辑工具" });

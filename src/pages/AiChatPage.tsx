@@ -6,6 +6,7 @@ import {
   Bot,
   ChevronDown,
   CircleAlert,
+  CircleStop,
   Clock3,
   Copy,
   Download,
@@ -174,6 +175,9 @@ export const AiChatPage = ({
   const lastThreadMessageCountRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const sendAbortRef = useRef<AbortController>();
+
+  useEffect(() => () => { sendAbortRef.current?.abort(); }, []);
   const presets = useMemo(() => sortedPresets(settings), [settings]);
   const recommendedPresets = useMemo(() => presets.slice(0, 2), [presets]);
   const imageInputMode = settings.ai?.imageInputMode ?? "local-ocr";
@@ -494,6 +498,8 @@ export const AiChatPage = ({
       [userMessage.id]: savedPreparedImages,
     }));
 
+    const controller = new AbortController();
+    sendAbortRef.current = controller;
     try {
       const apiKey = provider ? (await storage.getAiSecret?.(provider.id))?.apiKey : undefined;
       const content = await sendChatCompletion({
@@ -506,6 +512,7 @@ export const AiChatPage = ({
         imageInputMode,
         imageAttachments: savedPreparedImages,
         budget: requestBudget,
+        signal: controller.signal,
       });
       const assistantMessage: AiChatMessage = {
         ...createBaseEntity(),
@@ -521,19 +528,24 @@ export const AiChatPage = ({
       setMessages([...visibleHistory, assistantMessage]);
       await refresh();
     } catch (error) {
-      const errorText = formatUiError(error, "ai-request");
-      const assistantMessage: AiChatMessage = {
-        ...createBaseEntity(),
-        sessionId: contextSession.id,
-        role: "assistant",
-        content: errorText,
-        error: errorText,
-      };
-      await storage.saveAiMessage?.(assistantMessage);
-      setMessages([...visibleHistory, assistantMessage]);
+      if (!controller.signal.aborted) {
+        const errorText = formatUiError(error, "ai-request");
+        const assistantMessage: AiChatMessage = {
+          ...createBaseEntity(),
+          sessionId: contextSession.id,
+          role: "assistant",
+          content: errorText,
+          error: errorText,
+        };
+        await storage.saveAiMessage?.(assistantMessage);
+        setMessages([...visibleHistory, assistantMessage]);
+      }
     } finally {
+      if (sendAbortRef.current === controller) {
+        sendAbortRef.current = undefined;
+      }
       setBusy(false);
-      setStatus("");
+      setStatus(controller.signal.aborted ? "已停止生成。" : "");
     }
   };
 
@@ -802,9 +814,15 @@ export const AiChatPage = ({
                 placeholder="问问 AI..."
                 rows={1}
               />
-              <button type="submit" className="ai-send-button" disabled={busy || (!input.trim() && pendingImages.length === 0)} aria-label="发送" title="发送">
-                {busy ? <RefreshCw size={18} className="spin" /> : <Send size={18} />}
-              </button>
+              {busy ? (
+                <button type="button" className="ai-send-button" onClick={() => sendAbortRef.current?.abort()} aria-label="停止生成" title="停止生成">
+                  <CircleStop size={18} />
+                </button>
+              ) : (
+                <button type="submit" className="ai-send-button" disabled={!input.trim() && pendingImages.length === 0} aria-label="发送" title="发送">
+                  <Send size={18} />
+                </button>
+              )}
             </form>
             {status && <p className="status-message">{status}</p>}
           </footer>

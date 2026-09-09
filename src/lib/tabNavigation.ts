@@ -1,23 +1,27 @@
 import type { AiKnowledgeScope, EntityId, RecordReviewKind, Subject } from "../types";
 
 export type TabKey = "today" | "journal" | "categories" | "review" | "more";
-export type MoreSubRoute =
-  | "stats"
-  | "settings"
-  | "ai"
-  | "favorites"
-  | "trash"
-  | "backup"
-  | "aiTools"
-  | "aiExport"
-  | "ocrSettings"
-  | "recordings"
-  | "podcasts"
-  | "templates"
-  | "guide"
-  | "ttsSettings"
-  | "podcastTemplates"
-  | null;
+/** Runtime list of every non-null More sub-route. Keep this as the single
+ * source of truth: web history restoration validates against it, so a route
+ * added only to the type union would silently break the browser Back button. */
+export const MORE_SUB_ROUTE_VALUES = [
+  "stats",
+  "settings",
+  "ai",
+  "favorites",
+  "trash",
+  "backup",
+  "aiTools",
+  "aiExport",
+  "ocrSettings",
+  "recordings",
+  "podcasts",
+  "templates",
+  "guide",
+  "ttsSettings",
+  "podcastTemplates",
+] as const;
+export type MoreSubRoute = (typeof MORE_SUB_ROUTE_VALUES)[number] | null;
 export type AiWorkspaceScreen = "chat" | "scope";
 export type PodcastWorkspaceScreen = "editor" | "scope";
 export type ReviewMode = "queue" | "manage";

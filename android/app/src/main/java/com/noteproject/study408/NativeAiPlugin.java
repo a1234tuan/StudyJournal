@@ -12,12 +12,18 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "NativeAi")
 public class NativeAiPlugin extends Plugin {
+    /** In-flight chat requests, keyed by the renderer-supplied request id, so a
+     * cancelled generation stops the paid request instead of running to completion. */
+    private final Map<String, HttpURLConnection> activeConnections = new ConcurrentHashMap<>();
+
     @PluginMethod
     public void chat(PluginCall call) {
         String baseUrl = call.getString("baseUrl", "");
@@ -30,6 +36,7 @@ public class NativeAiPlugin extends Plugin {
         String thinkingMode = call.getString("thinkingMode", "");
         String reasoningEffort = call.getString("reasoningEffort", "");
         int timeoutMs = call.getInt("timeoutMs", 120000);
+        String cancellationId = call.getString("requestId", "").trim();
 
         if (baseUrl.trim().isEmpty() || apiKey.trim().isEmpty() || model.trim().isEmpty()) {
             call.reject("AI 接口配置不完整。");
@@ -37,6 +44,7 @@ public class NativeAiPlugin extends Plugin {
         }
 
         execute(() -> {
+            HttpURLConnection connection = null;
             try {
                 JSONArray messages = new JSONArray(messagesJson);
                 JSONObject payload = new JSONObject();
@@ -55,7 +63,10 @@ public class NativeAiPlugin extends Plugin {
                 }
 
                 String requestUrl = normalizeChatUrl(baseUrl);
-                HttpURLConnection connection = openConnection(requestUrl, timeoutMs);
+                connection = openConnection(requestUrl, timeoutMs);
+                if (!cancellationId.isEmpty()) {
+                    activeConnections.put(cancellationId, connection);
+                }
                 connection.setRequestProperty("Authorization", "Bearer " + apiKey);
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 connection.setDoOutput(true);
@@ -114,8 +125,31 @@ public class NativeAiPlugin extends Plugin {
                 call.resolve(result);
             } catch (Exception error) {
                 call.reject(error.getMessage() != null ? error.getMessage() : "AI 请求失败。", error);
+            } finally {
+                if (!cancellationId.isEmpty()) {
+                    activeConnections.remove(cancellationId);
+                }
             }
         });
+    }
+
+    @PluginMethod
+    public void cancel(PluginCall call) {
+        String requestId = call.getString("requestId", "").trim();
+        JSObject result = new JSObject();
+        HttpURLConnection connection = requestId.isEmpty() ? null : activeConnections.remove(requestId);
+        if (connection == null) {
+            result.put("cancelled", false);
+            call.resolve(result);
+            return;
+        }
+        try {
+            connection.disconnect();
+        } catch (Exception ignored) {
+            // The request may already have completed; cancelling is best-effort.
+        }
+        result.put("cancelled", true);
+        call.resolve(result);
     }
 
     private String normalizeChatUrl(String baseUrl) {

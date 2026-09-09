@@ -15,7 +15,9 @@ interface NativeAiPlugin {
     thinkingMode?: "enabled" | "disabled";
     reasoningEffort?: "low" | "high" | "max";
     timeoutMs?: number;
+    requestId?: string;
   }): Promise<AiCompletionResult>;
+  cancel(options: { requestId: string }): Promise<{ cancelled: boolean }>;
 }
 
 const NativeAi = registerPlugin<NativeAiPlugin>("NativeAi");
@@ -32,14 +34,21 @@ export const runNativeAiChat = async (options: {
   messages: AiChatPayloadMessage[];
 } & Pick<AiCompletionRequestOptions, "structuredOutput" | "thinkingMode" | "reasoningEffort" | "timeoutMs" | "signal">): Promise<AiCompletionResult> => {
   const { signal, messages, ...nativeOptions } = options;
+  if (signal?.aborted) throw new DOMException("AI request cancelled", "AbortError");
+  const requestId = `ai-${crypto.randomUUID()}`;
   const nativePromise = NativeAi.chat({
     ...nativeOptions,
+    requestId,
     messagesJson: JSON.stringify(messages),
   });
   if (!signal) return nativePromise;
-  if (signal.aborted) throw new DOMException("AI request cancelled", "AbortError");
   return new Promise<AiCompletionResult>((resolve, reject) => {
-    const abort = () => reject(new DOMException("AI request cancelled", "AbortError"));
+    const abort = () => {
+      // Rejecting the renderer promise is not enough: the native HttpURLConnection
+      // would keep running and still be billed, so disconnect it as well.
+      void NativeAi.cancel({ requestId }).catch(() => undefined);
+      reject(new DOMException("AI request cancelled", "AbortError"));
+    };
     signal.addEventListener("abort", abort, { once: true });
     nativePromise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
