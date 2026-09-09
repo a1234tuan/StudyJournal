@@ -17,7 +17,12 @@ describe("tabNavigation", () => {
     };
 
     expect(getTabDepth("review", memory)).toBe(1);
-    expect(buildTabPageKey("review", memory)).toContain("voice-call-voice-session-1");
+    const callKey = buildTabPageKey("review", memory);
+    expect(callKey).toContain("voice");
+    expect(buildTabPageKey("review", {
+      ...memory,
+      review: { ...memory.review, voiceRecall: { ...memory.review.voiceRecall, screen: "summary" } },
+    })).toBe(callKey);
 
     const returned = popTabDepth(memory, "review");
     expect(returned.review.voiceRecall).toBeUndefined();

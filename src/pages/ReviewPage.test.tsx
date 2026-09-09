@@ -556,6 +556,7 @@ describe("ReviewPage", () => {
     expect(screen.getByText("BFS 队列")).toBeInTheDocument();
     expect(screen.queryByText("页表缓存")).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "已掌握" }));
     expect(screen.getByText("没有匹配的卡片")).toBeInTheDocument();
   });
@@ -605,7 +606,8 @@ describe("ReviewPage", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: /^新卡 1$/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    expect(screen.getByRole("button", { name: /^新卡$/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新卡" }));
     expect(screen.getByText("概率笔记")).toBeInTheDocument();
     expect(screen.queryByText("页表缓存")).not.toBeInTheDocument();

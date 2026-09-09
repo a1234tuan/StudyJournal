@@ -59,15 +59,21 @@ type ListRowProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   title: ReactNode;
   description?: ReactNode;
   meta?: ReactNode;
+  trailing?: ReactNode;
 };
 
-export const ListRow = ({ icon, title, description, meta, className = "", type = "button", ...props }: ListRowProps) => (
+export const ListRow = ({ icon, title, description, meta, trailing, className = "", type = "button", ...props }: ListRowProps) => (
   <button type={type} className={`list-row ${className}`.trim()} {...props}>
     {icon && <span className="list-row-icon">{icon}</span>}
     <span className="list-row-content">
       <strong>{title}</strong>
       {description && <small>{description}</small>}
     </span>
-    {meta && <span className="list-row-meta">{meta}</span>}
+    {(meta || trailing) && (
+      <span className="list-row-end">
+        {meta && <span className="list-row-meta">{meta}</span>}
+        {trailing && <span className="list-row-trailing" aria-hidden="true">{trailing}</span>}
+      </span>
+    )}
   </button>
 );

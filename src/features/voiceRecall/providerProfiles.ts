@@ -47,6 +47,18 @@ export interface VoiceProviderDeviceOverrides {
   tts?: Partial<Pick<VoiceTtsProviderProfile, "endpoint" | "model" | "voice" | "firstChunkTimeoutMs">>;
 }
 
+export interface VoiceProviderEditableConfig {
+  templateId: string;
+  asrEndpoint: string;
+  asrModel: string;
+  asrResourceId: string;
+  llmBaseUrl: string;
+  llmModel: string;
+  ttsEndpoint: string;
+  ttsModel: string;
+  ttsVoice: string;
+}
+
 export interface ResolvedVoiceProviderTemplate {
   templateId: string;
   templateVersion: number;
@@ -176,6 +188,61 @@ export const BUILT_IN_VOICE_TEMPLATES: readonly VoiceProviderTemplate[] = [
     ttsProfileId: "voice-tts-fish-s21",
   },
 ] as const;
+
+/** Templates exposed in the production UI. The deterministic mock remains an
+ * internal test fixture, but must not be presented as a user-facing service. */
+export const USER_VOICE_TEMPLATES: readonly VoiceProviderTemplate[] = BUILT_IN_VOICE_TEMPLATES.filter(
+  (template) => template.status !== "verified" || template.templateId !== "voice-mock-cn",
+);
+
+const VOICE_TEMPLATE_STORAGE_KEY = "study-journal.voice-recall.template";
+const VOICE_CONFIG_STORAGE_KEY = "study-journal.voice-recall.config";
+
+export const readVoiceProviderTemplateId = (): string => {
+  if (typeof window === "undefined") return "voice-default-cn";
+  const stored = window.localStorage.getItem(VOICE_TEMPLATE_STORAGE_KEY);
+  return stored && stored !== "voice-mock-cn" ? stored : "voice-default-cn";
+};
+
+export const writeVoiceProviderTemplateId = (templateId: string): void => {
+  if (typeof window !== "undefined") window.localStorage.setItem(VOICE_TEMPLATE_STORAGE_KEY, templateId);
+};
+
+export const readVoiceProviderConfig = (): VoiceProviderEditableConfig | undefined => {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(VOICE_CONFIG_STORAGE_KEY) ?? "null") as Partial<VoiceProviderEditableConfig> | null;
+    if (!value?.templateId) return undefined;
+    return {
+      templateId: value.templateId,
+      asrEndpoint: value.asrEndpoint ?? "",
+      asrModel: value.asrModel ?? "",
+      asrResourceId: value.asrResourceId ?? "",
+      llmBaseUrl: value.llmBaseUrl ?? "",
+      llmModel: value.llmModel ?? "",
+      ttsEndpoint: value.ttsEndpoint ?? "",
+      ttsModel: value.ttsModel ?? "",
+      ttsVoice: value.ttsVoice ?? "",
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+export const writeVoiceProviderConfig = (config: VoiceProviderEditableConfig): void => {
+  if (typeof window !== "undefined") window.localStorage.setItem(VOICE_CONFIG_STORAGE_KEY, JSON.stringify(config));
+};
+
+export const getVoiceProviderTemplateSummary = (template: VoiceProviderTemplate) => {
+  const asr = BUILT_IN_ASR_PROFILES.find((profile) => profile.id === template.asrProfileId);
+  const tts = BUILT_IN_VOICE_TTS_PROFILES.find((profile) => profile.id === template.ttsProfileId);
+  return {
+    statusLabel: template.status === "verified" ? "已验证" : template.status === "candidate" ? "待真实链路验证" : "已弃用",
+    asr: asr?.providerName ?? template.asrProfileId,
+    llm: template.llmProfileId,
+    tts: tts ? `${tts.providerName} · ${tts.voice}` : template.ttsProfileId,
+  };
+};
 
 export const createVoiceLlmProfile = (profile: AiProviderProfile): AiProviderProfile => ({ ...profile });
 

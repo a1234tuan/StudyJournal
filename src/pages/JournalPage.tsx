@@ -194,7 +194,7 @@ export const JournalPage = ({
               </div>
               <div className="journal-result-meta"><span>{visibleRecords.length} 条日志</span><span>最近更新</span></div>
               <section className="record-list journal-library-records">
-                {visibleRecords.length === 0 ? <div className="empty-state"><h2>这个范围还没有日志</h2><p>切换学科，或从今天页新建记录。</p></div> : renderedRecords.map((record) => <RecordCard key={record.id} record={record} onOpen={onOpenRecord} onAskAi={onAskAi} onToggleFavorite={(favorite) => onToggleFavorite(record, favorite)} reviewState={reviewStatesByRecord[record.id]} reviewLogs={reviewLogsByRecord[record.id]} onAddReview={() => onAddToReview(record.id)} />)}
+                {visibleRecords.length === 0 ? <div className="empty-state"><h2>这个范围还没有日志</h2></div> : renderedRecords.map((record) => <RecordCard key={record.id} record={record} onOpen={onOpenRecord} onAskAi={onAskAi} onToggleFavorite={(favorite) => onToggleFavorite(record, favorite)} reviewState={reviewStatesByRecord[record.id]} reviewLogs={reviewLogsByRecord[record.id]} onAddReview={() => onAddToReview(record.id)} />)}
               </section>
               {remainingRecordCount > 0 && (
                 <div className="journal-load-more">
@@ -209,7 +209,7 @@ export const JournalPage = ({
             <>
               <section className="journal-day-summary"><div><p className="eyebrow">按月浏览</p><h2>本月有记录日期</h2></div><p>仅显示当前月份中有日志记录的日期；切换月份可以回看更早的学习现场。</p></section>
               <section className="day-log-list">
-                {dates.length === 0 ? <div className="empty-state"><h2>本月还没有日志记录。</h2><p>切换月份查看历史，或者从今天页新建一条记录。</p></div> : dates.map((date) => <DayLogCard key={date} date={date} records={records.filter((record) => record.date === date)} subjects={subjects} onAskAi={onAskAi} open={selectedDate === date && !selectedSubject} onOpenChange={(open) => onSelectedDateChange(open ? date : undefined)} onOpenSubject={(nextDate, subject) => { onSelectedDateChange(nextDate); onSelectedSubjectChange(subject); }} />)}
+                {dates.length === 0 ? <div className="empty-state"><h2>本月还没有日志记录。</h2></div> : dates.map((date) => <DayLogCard key={date} date={date} records={records.filter((record) => record.date === date)} subjects={subjects} onAskAi={onAskAi} open={selectedDate === date && !selectedSubject} onOpenChange={(open) => onSelectedDateChange(open ? date : undefined)} onOpenSubject={(nextDate, subject) => { onSelectedDateChange(nextDate); onSelectedSubjectChange(subject); }} />)}
               </section>
               <MonthlyHeatmap month={month} blocks={blocks} selectedDate={selectedDate} onMonthChange={onMonthChange} onSelectDate={(date) => { onSelectedDateChange(date); onSelectedSubjectChange(undefined); }} />
             </>

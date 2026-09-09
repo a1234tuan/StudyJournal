@@ -108,7 +108,7 @@
 
 ## 6. 回归命令
 
-2026-09-08 阶段 0–6 收口回归结果：Vitest `125/125` 个文件、`837/837` 项测试，Desktop/Android-narrow Playwright `38/38`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译和 `git diff --check` 均通过。Stage 4 的当前卡片入口/返回及 Stage 5 的 Coach 转写确认均包含跨视口 E2E。
+2026-09-08 阶段 0–6 收口回归结果：Vitest `125/125` 个文件、`837/837` 项测试，Desktop/Android-narrow Playwright `38/38`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译和 `git diff --check` 均通过。2026-09-09 编辑器布局收口后，项目总基线为 Vitest `126/126` 个文件、`840/840` 项测试，Playwright `42/42`；Stage 4 的当前卡片入口/返回及 Stage 5 的 Coach 转写确认均包含跨视口 E2E。
 
 ```powershell
 npm run test

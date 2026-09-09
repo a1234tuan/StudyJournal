@@ -95,17 +95,16 @@ test("keeps rating undo across tabs and exposes annotation tools", async ({ page
   expect(viewport).not.toBeNull();
   expect(toolbarBox!.y).toBeGreaterThanOrEqual(0);
   expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(viewport!.height);
-  const ratingBox = await page.locator(".review-bottom-controls").boundingBox();
-  if (ratingBox && ratingBox.y < viewport!.height && ratingBox.y + ratingBox.height > 0) {
-    expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(ratingBox.y);
-  }
+  await expect(page.locator(".review-bottom-controls")).toHaveCount(0);
 
   await page.getByRole("button", { name: "浏览", exact: true }).click();
+  await page.getByRole("button", { name: "关闭批注工具" }).click();
+  await expect(page.locator(".review-bottom-controls")).toBeVisible();
   await page.getByRole("button", { name: "打开复习更多菜单" }).click();
   await page.getByRole("menuitem", { name: "语音复述当前卡片" }).click();
-  await expect(page.getByRole("heading", { name: "复述当前卡片" })).toBeVisible();
-  await expect(page.locator(".voice-context-source p")).toHaveText("BFS Stage3 Preview");
-  await expect(page.getByRole("button", { name: "开始闭卷复述" })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "把刚学过的内容讲出来" })).toBeVisible();
+  await expect(page.locator(".vr-setup-copy h2")).toHaveText("BFS Stage3 Preview");
+  await expect(page.getByRole("button", { name: "开始语音复述" })).toBeVisible();
   await page.getByRole("button", { name: "返回复习" }).click();
   await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
 

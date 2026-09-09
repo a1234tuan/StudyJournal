@@ -1,4 +1,4 @@
-import { ArrowRight, CalendarCheck, CalendarClock, ChevronDown, Plus, Star } from "lucide-react";
+import { CalendarCheck, CalendarClock, ChevronDown, Plus, Star } from "lucide-react";
 import { useState } from "react";
 
 import type { Block, ContentTemplate, DayEntry, RecordBlock, RecordReviewLog, RecordReviewState, Subject, SubjectConfig } from "../types";
@@ -95,8 +95,7 @@ export const TodayPage = ({
           onClick={async () => onOpenRecord(await onCreateRecord(today, subject, selectedTemplate?.contentHtml))}
         >
           <Plus size={20} />
-          <span><strong>新建 {subject} 记录</strong><small>{selectedTemplate?.title ?? "空白学习日志"}</small></span>
-          <ArrowRight size={18} />
+          <span><strong>新建 {subject} 记录</strong></span>
         </button>
         <details className="today-create-options">
           <summary aria-label="选择学科或模板" title="选择学科或模板"><ChevronDown size={19} /></summary>
@@ -139,7 +138,6 @@ export const TodayPage = ({
         {records.length === 0 ? (
           <div className="empty-state">
             <h2>今天还很干净。</h2>
-            <p>新建第一条记录，把刚学到的东西先放下来。</p>
           </div>
         ) : (
           records.map((record) => (

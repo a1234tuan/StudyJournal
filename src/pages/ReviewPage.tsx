@@ -13,6 +13,7 @@
   RefreshCw,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -331,7 +332,9 @@ export const ReviewPage = ({
   const [pendingUndoRestore, setPendingUndoRestore] = useState<ReviewUndoEntry | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [ratingError, setRatingError] = useState("");
+  const [annotationOpen, setAnnotationOpen] = useState(false);
   const [showAllDue, setShowAllDue] = useState(false);
+  const [libraryFiltersOpen, setLibraryFiltersOpen] = useState(false);
   const [blockFeedbackDrafts, setBlockFeedbackDrafts] = useState<Record<string, DecisionBlockFeedbackDraft>>({});
   const [queueNoteDrafts, setQueueNoteDrafts] = useState<Record<string, string>>({});
   const [interpretationDrafts, setInterpretationDrafts] = useState<Record<string, { stuckAt: string; preferredPractice: string }>>({});
@@ -408,6 +411,9 @@ export const ReviewPage = ({
     () => currentReviewLogs.filter(hasEvaluationText),
     [currentReviewLogs],
   );
+  useEffect(() => {
+    setAnnotationOpen(false);
+  }, [currentId]);
   const currentDecisionBlocks = useMemo(
     () => currentRecord ? extractDecisionBlocks(normalizeRecordContent(currentRecord), currentRecord.updatedAt) : [],
     [currentRecord],
@@ -938,35 +944,6 @@ export const ReviewPage = ({
         />
       )}
 
-      {!coachOpen && mode === "manage" && (
-        <section className="review-library-summary" aria-label="当前牌组摘要">
-          <button
-            type="button"
-            className={libraryState.filter === "due" ? "active" : ""}
-            onClick={() => updateLibraryState({ filter: libraryState.filter === "due" ? "all" : "due" })}
-            aria-pressed={libraryState.filter === "due"}
-          >
-            到期 <strong>{selectedScopeSummary.due}</strong>
-          </button>
-          <button
-            type="button"
-            className={libraryState.filter === "new" ? "active" : ""}
-            onClick={() => updateLibraryState({ filter: libraryState.filter === "new" ? "all" : "new" })}
-            aria-pressed={libraryState.filter === "new"}
-          >
-            新卡 <strong>{selectedScopeSummary.newCards}</strong>
-          </button>
-          <button
-            type="button"
-            className={libraryState.filter === "learning" ? "active" : ""}
-            onClick={() => updateLibraryState({ filter: libraryState.filter === "learning" ? "all" : "learning" })}
-            aria-pressed={libraryState.filter === "learning"}
-          >
-            复习中 <strong>{selectedScopeSummary.learning}</strong>
-          </button>
-        </section>
-      )}
-
       {!coachOpen && (mode === "queue" ? (
         !currentRecord ? (
           <section className="empty-state review-empty-state">
@@ -974,7 +951,7 @@ export const ReviewPage = ({
             <p>
               {hiddenDueCount > 0
                 ? `还有 ${hiddenDueCount} 条到期记录，已经超出今日建议量。`
-                : "你可以从日志卡片或卡片库里把重要笔记加入复习队列。"}
+                : ""}
             </p>
             <small>累计复习 {stats?.totalReviews ?? 0} 次</small>
             {hiddenDueCount > 0 && (
@@ -1043,6 +1020,8 @@ export const ReviewPage = ({
                   recordId={currentRecord.id}
                   occurrenceKey={reviewOccurrenceKey(currentReview)}
                   contentRevision={currentRecord.updatedAt}
+                  open={annotationOpen}
+                  onOpenChange={setAnnotationOpen}
                 >
                   <RichTextEditor
                     value={normalizeRecordContent(currentRecord)}
@@ -1289,7 +1268,7 @@ export const ReviewPage = ({
                 </details>
               )}
             </article>
-            <section className={`review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
+            {!annotationOpen && <section className={`review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
               <section className="review-rating-bar">
                 {ratingConfig.map((item) => {
                   const preview = ratingPreviews.get(item.rating as typeof ACTIVE_REVIEW_RATINGS[number]);
@@ -1316,7 +1295,7 @@ export const ReviewPage = ({
                   );
                 })}
               </section>
-            </section>
+            </section>}
           </section>
         )
       ) : (
@@ -1389,28 +1368,14 @@ export const ReviewPage = ({
                   aria-label="搜索标题、学科、标签"
                 />
               </label>
-              <select
-                value={libraryState.kindFilter}
-                onChange={(event) => updateLibraryState({ kindFilter: event.target.value as ReviewLibraryState["kindFilter"] })}
-                aria-label="复习类型"
-              >
-                <option value="all">全部类型</option>
-                <option value="overview">轻回看</option>
-                <option value="memory">记忆卡</option>
-              </select>
-              <select
-                value={libraryState.sort}
-                onChange={(event) => updateLibraryState({ sort: event.target.value as ReviewCardSort })}
-                aria-label="排序方式"
-              >
-                <option value="due">到期优先</option>
-                <option value="created">最近创建</option>
-                <option value="reviewed">最近复习</option>
-                <option value="title">标题</option>
-              </select>
+              <button type="button" className={`review-library-filter-trigger${libraryFiltersOpen ? " active" : ""}`} onClick={() => setLibraryFiltersOpen((value) => !value)} aria-expanded={libraryFiltersOpen} aria-controls="review-library-filters">
+                <SlidersHorizontal size={16} />筛选{(libraryState.filter !== "all" ? 1 : 0) + (libraryState.kindFilter !== "all" ? 1 : 0) + (libraryState.sort !== "due" ? 1 : 0) > 0 && <small>{(libraryState.filter !== "all" ? 1 : 0) + (libraryState.kindFilter !== "all" ? 1 : 0) + (libraryState.sort !== "due" ? 1 : 0)}</small>}
+              </button>
             </div>
-            <div className="review-library-filter-row">
-              <div className="review-filter-chips" role="group" aria-label="卡片状态筛选">
+            {libraryFiltersOpen && <div id="review-library-filters" className="review-library-filter-panel">
+              <label>类型<select value={libraryState.kindFilter} onChange={(event) => updateLibraryState({ kindFilter: event.target.value as ReviewLibraryState["kindFilter"] })} aria-label="复习类型"><option value="all">全部类型</option><option value="overview">轻回看</option><option value="memory">记忆卡</option></select></label>
+              <label>排序<select value={libraryState.sort} onChange={(event) => updateLibraryState({ sort: event.target.value as ReviewCardSort })} aria-label="排序方式"><option value="due">到期优先</option><option value="created">最近创建</option><option value="reviewed">最近复习</option><option value="title">标题</option></select></label>
+              <div className="review-library-filter-group"><span>状态</span><div className="review-filter-chips" role="group" aria-label="卡片状态筛选">
                 {([
                   ["all", "全部"],
                   ["unadded", "未加入"],
@@ -1430,17 +1395,14 @@ export const ReviewPage = ({
                     {label}
                   </button>
                 ))}
-              </div>
-              {(libraryState.filter !== "all" || libraryState.kindFilter !== "all" || libraryState.query || libraryState.sort !== "due") && (
-                <button
-                  type="button"
-                  className="review-clear-filters"
-                  onClick={() => updateLibraryState({ filter: "all", kindFilter: "all", query: "", sort: "due" })}
-                >
-                  清除筛选
-                </button>
-              )}
-            </div>
+              </div></div>
+              {(libraryState.filter !== "all" || libraryState.kindFilter !== "all" || libraryState.query || libraryState.sort !== "due") && <button type="button" className="review-clear-filters" onClick={() => updateLibraryState({ filter: "all", kindFilter: "all", query: "", sort: "due" })}>清除全部</button>}
+            </div>}
+            {(libraryState.filter !== "all" || libraryState.kindFilter !== "all" || libraryState.sort !== "due") && <div className="review-library-active-filters" aria-label="当前筛选条件">
+              {libraryState.kindFilter !== "all" && <button type="button" onClick={() => updateLibraryState({ kindFilter: "all" })}>{libraryState.kindFilter === "memory" ? "记忆卡" : "轻回看"} ×</button>}
+              {libraryState.sort !== "due" && <button type="button" onClick={() => updateLibraryState({ sort: "due" })}>{libraryState.sort === "created" ? "最近创建" : libraryState.sort === "reviewed" ? "最近复习" : "标题"} ×</button>}
+              {libraryState.filter !== "all" && <button type="button" onClick={() => updateLibraryState({ filter: "all" })}>{({ unadded: "未加入", new: "新卡", due: "到期", learning: "复习中", suspended: "已搁置", mastered: "已掌握" } as Record<string, string>)[libraryState.filter]} ×</button>}
+            </div>}
             <div className="review-library-result-meta">
               <strong>{reviewScopeLabel(libraryState.scope)}</strong>
               <span>{managedRecords.length} / {selectedScopeSummary.total} 张卡片</span>
@@ -1449,7 +1411,6 @@ export const ReviewPage = ({
               {managedRecords.length === 0 ? (
                 <div className="empty-state">
                   <h2>没有匹配的卡片</h2>
-                  <p>调整牌组范围或筛选条件，或者先从日志加入复习。</p>
                 </div>
               ) : managedRecords.map((record) => {
                 const review = reviewMap.get(record.id);

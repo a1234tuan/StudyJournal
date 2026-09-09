@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, BrainCircuit, Download, FileText, Headphones, Layers3, LayoutTemplate, Mic2, Settings, Trash2 } from "lucide-react";
+import { BarChart3, BookOpen, BrainCircuit, ChevronRight, Download, FileText, Headphones, Layers3, LayoutTemplate, Mic2, Settings, Trash2 } from "lucide-react";
 
 import type { AppSettings, AutoBackupSettings } from "../types";
 import { createDefaultAiPresets } from "../db/defaults";
@@ -80,23 +80,23 @@ export const MorePage = ({
           className="more-summary-row"
           icon={<BrainCircuit size={19} />}
           title="AI 问答"
-          description="直接进入 AI 问答界面"
           meta={buildAiMeta(settings)}
+          trailing={<ChevronRight size={17} />}
           onClick={onOpenAi}
         />
         <ListRow
           className="more-summary-row"
           icon={<Headphones size={19} />}
           title="知识播客"
-          description="把本地记录整理成可编辑、可回溯的知识音频"
+          trailing={<ChevronRight size={17} />}
           onClick={onOpenPodcasts}
         />
         <ListRow
           className="more-summary-row"
           icon={<FileText size={19} />}
           title="OCR 设置"
-          description="配置 PaddleOCR，用于图片全文检索和 AI 图片问答"
           meta="PaddleOCR"
+          trailing={<ChevronRight size={17} />}
           onClick={onOpenOcrSettings}
         />
       </div>
@@ -105,10 +105,10 @@ export const MorePage = ({
     <section className="more-section more-hub-section">
       <h2>应用</h2>
       <div className="more-list">
-        <ListRow icon={<Layers3 size={19} />} title="分类管理" description="按学科和标签浏览，并管理学科" onClick={onOpenCategories} />
-        <ListRow icon={<Mic2 size={19} />} title="录音库" description="集中查看、播放和整理录音笔记" onClick={onOpenRecordings} />
-        <ListRow icon={<LayoutTemplate size={19} />} title="模板" description="管理可复用的学习记录内容" onClick={onOpenTemplates} />
-        <ListRow icon={<BarChart3 size={19} />} title="统计" description="查看记录趋势和资源数量" onClick={onOpenStats} />
+        <ListRow icon={<Layers3 size={19} />} title="分类管理" trailing={<ChevronRight size={17} />} onClick={onOpenCategories} />
+        <ListRow icon={<Mic2 size={19} />} title="录音库" trailing={<ChevronRight size={17} />} onClick={onOpenRecordings} />
+        <ListRow icon={<LayoutTemplate size={19} />} title="模板" trailing={<ChevronRight size={17} />} onClick={onOpenTemplates} />
+        <ListRow icon={<BarChart3 size={19} />} title="统计" trailing={<ChevronRight size={17} />} onClick={onOpenStats} />
       </div>
     </section>
 
@@ -119,20 +119,21 @@ export const MorePage = ({
           className="more-summary-row"
           icon={<BookOpen size={19} />}
           title="使用教程"
-          description="从记录、复习、AI 功能到备份恢复的基本指南"
           meta="Guide"
+          trailing={<ChevronRight size={17} />}
           onClick={onOpenGuide}
         />
         <ListRow
           className="more-summary-row"
           icon={<Download size={19} />}
           title="备份与恢复"
-          description={buildBackupDescription(autoBackupState)}
+          description={undefined}
           meta={buildBackupMeta(autoBackupState)}
+          trailing={<ChevronRight size={17} />}
           onClick={onOpenBackup}
         />
-        <ListRow icon={<Trash2 size={19} />} title="回收站" description="恢复或永久删除 30 天内的记录" onClick={onOpenTrash} />
-        <ListRow icon={<Settings size={19} />} title="设置" description="目标日期、主题、字号和行距" onClick={onOpenSettings} />
+        <ListRow icon={<Trash2 size={19} />} title="回收站" trailing={<ChevronRight size={17} />} onClick={onOpenTrash} />
+        <ListRow icon={<Settings size={19} />} title="设置" trailing={<ChevronRight size={17} />} onClick={onOpenSettings} />
       </div>
     </section>
   </main>

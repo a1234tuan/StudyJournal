@@ -146,6 +146,17 @@ button:disabled {
   min-height: 0;
 }
 
+/* Scope pickers can be opened from Review as well as More. Keep the
+   transition frame and page at the viewport height so the record tab has a
+   real scroll surface instead of being clipped by the normal page flow. */
+.app-shell.ai-scope-active .page-transition-frame,
+.app-shell.ai-scope-active .page-transition-layer,
+.app-shell.ai-scope-active .content-area,
+.app-shell.ai-scope-active .content-area > .ai-scope-page.immersive {
+  height: 100%;
+  min-height: 0;
+}
+
 .app-shell.ai-chat-active .sidebar,
 .app-shell.ai-scope-active .sidebar {
   height: 100%;
@@ -4208,7 +4219,8 @@ button:disabled {
 }
 
 .ai-scope-page-records .ai-scope-page-content {
-  display: block;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
 }
 
@@ -4225,7 +4237,7 @@ button:disabled {
 
 .ai-scope-page-records .ai-scope-record-list {
   max-height: none;
-  min-height: auto;
+  min-height: 0;
   overflow: visible;
 }
 

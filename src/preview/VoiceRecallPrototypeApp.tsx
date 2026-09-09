@@ -33,7 +33,7 @@ import {
   type VoiceRecallState,
 } from "../features/voiceRecall/domain";
 import { BUILT_IN_ASR_PROFILES, BUILT_IN_VOICE_TEMPLATES, BUILT_IN_VOICE_TTS_PROFILES } from "../features/voiceRecall/providerProfiles";
-import "./voiceRecallPrototype.css";
+import "../features/voiceRecall/voiceRecallPresentation.css";
 
 type VisualTheme = "reading" | "modern";
 

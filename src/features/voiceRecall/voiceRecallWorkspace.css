@@ -58,3 +58,17 @@
   .voice-capture-actions .primary-button { margin-left: 0; }
   .voice-recall-topbar { align-items: flex-start; }
 }
+
+.vr-start-actions { display: inline-flex; align-items: center; justify-self: end; gap: 6px; }
+.vr-topic-editor { width: min(900px, calc(100% - 40px)); margin: 0 auto 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.vr-topic-editor label { display: grid; gap: 5px; color: var(--vr-muted); font-size: .78rem; }
+.vr-topic-editor input { min-height: 40px; padding: 0 10px; border: 1px solid var(--vr-line); border-radius: 6px; color: var(--vr-text); background: var(--vr-surface); }
+.vr-production-disclosure { padding-top: 0; border-top: 0; }
+.vr-production-disclosure .vr-confirm-check { color: var(--vr-muted); font-size: .75rem; font-weight: 500; }
+.vr-details-note { margin: 8px 0 0; color: var(--vr-call-muted); font-size: .72rem; line-height: 1.5; }
+.vr-transcript-confirm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 10px max(18px, calc((100vw - 760px) / 2)); color: var(--vr-call-text); background: var(--vr-call-lower); }
+.vr-transcript-confirm label { grid-column: 1 / -1; color: var(--vr-call-muted); font-size: .68rem; }
+.vr-transcript-confirm textarea { min-height: 48px; resize: none; padding: 8px 10px; border: 1px solid var(--vr-call-line); border-radius: 7px; color: var(--vr-call-text); background: var(--vr-call-surface-strong); font: inherit; }
+.vr-transcript-confirm button { display: inline-flex; min-height: 48px; align-items: center; gap: 6px; padding: 0 14px; border: 0; border-radius: 7px; color: var(--vr-call-surface-strong); background: var(--vr-call-accent); font-weight: 700; }
+.vr-transcript-confirm button svg { width: 17px; }
+@media (max-width: 700px) { .vr-topic-editor { grid-template-columns: 1fr; } .vr-start-actions .vr-theme-toggle { display: none; } }

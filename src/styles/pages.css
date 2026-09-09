@@ -391,7 +391,7 @@
 
 .review-mode-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 12px;
   padding: 4px;
@@ -402,12 +402,18 @@
 
 .review-mode-tabs button {
   min-height: 38px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-muted);
   font-weight: 800;
 }
+.review-mode-tabs button svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
 .review-mode-tabs button.active {
   background: var(--color-primary-soft);
@@ -1075,9 +1081,11 @@
     border-top: 1px solid var(--color-border);
   }
 
-  .review-library-toolbar {
-    grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
-  }
+  .review-library-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .review-library-filter-trigger { min-height: 38px; }
+  .review-library-filter-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .review-library-filter-panel .review-library-filter-group,
+  .review-library-filter-panel .review-clear-filters { grid-column: 1 / -1; }
 
   .review-search-box {
     grid-column: 1 / -1;
@@ -2394,8 +2402,9 @@
 }
 
 .review-mode-tabs {
-  display: flex;
-  gap: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
   margin-bottom: 10px;
   padding: 0;
   border: 0;
@@ -2406,6 +2415,11 @@
 
 .review-mode-tabs button {
   min-height: 36px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   position: relative;
   border: 0;
   border-radius: 0;
@@ -3525,7 +3539,7 @@
 
 @media (max-width: 480px) {
   .review-mode-tabs {
-    gap: 14px;
+    gap: 0;
   }
 
   .review-session-progress {
@@ -3723,6 +3737,16 @@
 .review-annotation-root {
   position: relative;
 }
+.review-library-filter-trigger { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: 0 10px; background: transparent; color: var(--color-text); white-space: nowrap; }
+.review-library-filter-trigger.active { border-color: var(--color-primary); color: var(--color-primary-strong); background: var(--color-primary-soft); }
+.review-library-filter-trigger small { min-width: 18px; padding: 1px 5px; border-radius: 999px; color: var(--color-on-primary, #fff); background: var(--color-primary); font-size: .68rem; }
+.review-library-filter-panel { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; padding: 8px 0; border-bottom: 1px solid var(--color-border); }
+.review-library-filter-panel > label { display: grid; gap: 3px; color: var(--color-muted); font-size: .72rem; }
+.review-library-filter-panel select { min-height: 34px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: 0 8px; color: var(--color-text); background: var(--color-surface); }
+.review-library-filter-group { display: grid; gap: 3px; min-width: 0; }
+.review-library-filter-group > span { color: var(--color-muted); font-size: .72rem; }
+.review-library-active-filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 0; }
+.review-library-active-filters button { min-height: 26px; border: 1px solid color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); border-radius: 999px; padding: 2px 8px; color: var(--color-primary-strong); background: var(--color-primary-soft); font-size: .74rem; }
 
 .review-annotation-entry {
   position: absolute;
@@ -3753,7 +3777,7 @@
   position: fixed;
   z-index: 26;
   right: auto;
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  bottom: max(10px, env(safe-area-inset-bottom));
   left: 50%;
   top: auto;
   width: min(860px, calc(100vw - 32px));
@@ -3770,6 +3794,8 @@
   background: var(--surface);
   box-shadow: var(--shadow-floating);
 }
+.review-annotation-toolbar::-webkit-scrollbar { display: none; }
+.review-annotation-toolbar { scrollbar-width: none; }
 
 .review-annotation-current {
   flex: 0 0 auto;
@@ -3783,7 +3809,11 @@
 .review-annotation-current strong {
   color: var(--color-text);
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.review-mode-tabs button svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
 .review-annotation-toolbar > button {
   flex: 0 0 36px;
@@ -3857,6 +3887,10 @@
   touch-action: none;
   cursor: crosshair;
 }
+.review-annotation-svg.drawing { pointer-events: auto; touch-action: none; }
+.review-annotation-selection rect { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1.5; stroke-dasharray: 5 3; pointer-events: all; cursor: move; }
+.review-annotation-selection circle { fill: var(--color-surface); stroke: var(--color-primary); stroke-width: 2; pointer-events: all; cursor: nwse-resize; }
+.review-annotation-selection-box { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 
 .review-annotation-error {
   position: sticky;
@@ -3884,6 +3918,12 @@
   border-color: transparent;
   background: transparent;
 }
+.review-annotation-control.text:not(:focus) { resize: none; outline: none; }
+.review-annotation-control:focus { outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent); outline-offset: 1px; }
+.review-annotation-eraser-cursor { position: fixed; z-index: 30; pointer-events: none; border: 1px solid var(--color-primary); border-radius: 50%; background: color-mix(in srgb, var(--color-primary) 12%, transparent); transform: translateZ(0); }
+.review-annotation-select-editor { position: fixed; z-index: 31; right: 16px; bottom: max(72px, calc(16px + env(safe-area-inset-bottom))); display: grid; gap: 7px; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
+.review-annotation-select-editor input { min-height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding-inline: 8px; background: var(--color-surface); color: var(--color-text); }
+.review-annotation-select-editor > div { display: flex; gap: 6px; justify-content: flex-end; }
 
 @media (max-width: 600px) {
   .review-annotation-toolbar {
@@ -3897,6 +3937,17 @@
     min-width: 78px;
   }
 }
+
+/* Scoped flat-list treatment for the review library and More hub. */
+.review-page .review-library .review-deck-panel,
+.review-page .review-library .review-library-card { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.review-page .review-library .review-deck-panel { border-bottom: 1px solid var(--color-border); }
+.review-page .review-library .review-library-list { gap: 0; border-top: 1px solid var(--color-border); }
+.review-page .review-library .review-library-card { border-bottom: 1px solid var(--color-border); padding-inline: 2px; }
+.review-page .review-library .review-library-toolbar select { border-width: 0 0 1px; border-radius: 0; background: transparent; }
+.more-page .more-list { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.more-page .more-list .list-row { border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: transparent; box-shadow: none; }
+.more-page .more-section { margin-inline: 0; }
 
 /* Primary workspace density */
 .primary-workspace-page {
@@ -3915,6 +3966,12 @@
   margin-top: 4px;
   line-height: 1.45;
 }
+
+.journal-page > .page-header {
+  flex-direction: row;
+  align-items: center;
+}
+.journal-page > .page-header .page-header-actions { align-self: center; }
 
 .today-page > .page-header {
   margin-bottom: 12px;
@@ -4017,4 +4074,7 @@
     min-width: 44px;
     padding-inline: 0;
   }
+
+  .journal-page > .page-header { flex-direction: row; align-items: center; }
+  .journal-page > .page-header h1 { font-size: 1.35rem; }
 }

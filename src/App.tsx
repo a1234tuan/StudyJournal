@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, SystemBars, SystemBarsStyle } from "@capacitor/core";
 import {
   BarChart3,
   ArrowLeft,
@@ -89,6 +89,10 @@ const sameIds = (left: string[], right: string[]) =>
   left.length === right.length && left.every((id, index) => id === right[index]);
 
 const DESKTOP_MIGRATION_SEEN_KEY = "study-journal-desktop-migration-seen";
+
+const isVoiceRecallProductionPreview = () => typeof window !== "undefined"
+  && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost")
+  && new URLSearchParams(window.location.search).get("preview") === "voice-recall-production";
 
 const isEditableElement = (target: EventTarget | Element | null) => {
   if (!(target instanceof Element)) {
@@ -194,8 +198,14 @@ type NavigationCommitOptions = {
 };
 
 export const App = () => {
-  const [activeTab, setActiveTab] = useState<TabKey>("today");
-  const [tabMemory, setTabMemory] = useState<TabMemory>(() => createInitialTabMemory());
+  const [activeTab, setActiveTab] = useState<TabKey>(() => isVoiceRecallProductionPreview() ? "review" : "today");
+  const [tabMemory, setTabMemory] = useState<TabMemory>(() => {
+    const memory = createInitialTabMemory();
+    if (isVoiceRecallProductionPreview()) {
+      memory.review.voiceRecall = { screen: "start", returnTab: "review", sourceKind: "review-home", recordIds: [] };
+    }
+    return memory;
+  });
   const [activeAiSessionId, setActiveAiSessionId] = useState<string | null>(null);
   const [aiReturnTab, setAiReturnTab] = useState<TabKey | null>(null);
   const [backToast, setBackToast] = useState("");
@@ -279,6 +289,30 @@ export const App = () => {
     },
     [clearBackHint, commitNavigation],
   );
+
+  const openMoreRoot = useCallback(() => {
+    clearBackHint();
+    const current = navigationStateRef.current;
+    commitNavigation({
+      ...current,
+      activeTab: "more",
+      tabMemory: {
+        ...current.tabMemory,
+        more: {
+          ...current.tabMemory.more,
+          subRoute: null,
+          recordId: undefined,
+          highlightAssetId: undefined,
+          recordEditing: undefined,
+          referenceStack: [],
+          restoreScrollY: undefined,
+          recordingsState: { query: "", searchOpen: false },
+          podcastId: undefined,
+          podcastScreen: "editor",
+        },
+      },
+    });
+  }, [clearBackHint, commitNavigation]);
 
   const openMoreSubRoute = useCallback(
     (subRoute: MoreSubRoute) => {
@@ -501,7 +535,8 @@ export const App = () => {
   useEffect(() => {
     document.documentElement.dataset.visualTheme = visualTheme;
     writeVisualTheme(visualTheme);
-  }, [visualTheme]);
+    if (Capacitor.isNativePlatform()) void SystemBars.setStyle({ style: app.settings?.theme === "dark" ? SystemBarsStyle.Light : SystemBarsStyle.Dark }).catch(() => undefined);
+  }, [visualTheme, app.settings?.theme]);
 
   useEffect(() => {
     if (!app.initialized || !isDesktopPlatform() || localStorage.getItem(DESKTOP_MIGRATION_SEEN_KEY)) {
@@ -1359,6 +1394,7 @@ export const App = () => {
             onRouteChange={updateVoiceRecallRoute}
             onBack={closeVoiceRecall}
             onCreateJournal={createJournalFromVoiceRecall}
+            visualTheme={visualTheme}
           />
         ) : currentRecord ? (
           renderRecordPage(currentRecord, tabMemory.review.highlightAssetId)
@@ -1486,11 +1522,13 @@ export const App = () => {
   const podcastScopeActive = activeTab === "more"
     && tabMemory.more.subRoute === "podcasts"
     && tabMemory.more.podcastScreen === "scope";
+  const reviewScopePickerActive = activeTab === "review"
+    && tabMemory.review.voiceRecall?.screen === "scope";
   const immersiveTaskActive = Boolean(
     (currentRecord && currentRecordState.recordEditing)
     || (activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
-    || (activeTab === "review" && tabMemory.review.voiceRecall?.screen === "call"),
+    || (activeTab === "review" && Boolean(tabMemory.review.voiceRecall)),
   );
 
   const shellClassName = [
@@ -1498,11 +1536,12 @@ export const App = () => {
     isDesktopPlatform() ? "desktop-app" : "",
     keyboardVisible ? "keyboard-open" : "",
     aiWorkspaceActive ? "ai-chat-active" : "",
-    podcastScopeActive ? "ai-scope-active" : "",
+    podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()
     && getTabDepth(activeTab, tabMemory) > 0
+    && !immersiveTaskActive
     && !currentRecord
     && !(activeTab === "today" && tabMemory.today.adaptiveTaskId)
     && !(activeTab === "journal" && tabMemory.journal.searchOpen)
@@ -1537,7 +1576,7 @@ export const App = () => {
                 key={`${item.tab}-${item.subRoute ?? "root"}`}
                 type="button"
                 className={active ? "active" : ""}
-                onClick={() => (item.subRoute ? openMoreSubRoute(item.subRoute) : switchTab(item.tab))}
+                onClick={() => item.subRoute ? openMoreSubRoute(item.subRoute) : item.tab === "more" ? openMoreRoot() : switchTab(item.tab)}
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
@@ -1614,7 +1653,7 @@ export const App = () => {
               key={item.tab}
               type="button"
               className={active ? "active" : ""}
-              onClick={() => switchTab(item.tab)}
+              onClick={() => item.tab === "more" ? openMoreRoot() : switchTab(item.tab)}
             >
               <Icon size={20} />
               <span>{item.label}</span>

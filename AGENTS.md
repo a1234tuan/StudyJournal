@@ -10,6 +10,7 @@
 - The UI migration preserves formal create/save/rating semantics and routes Review Coach through `Review -> Learning Coach`. All caught errors rendered by React pages/components must pass through `src/lib/uiError.ts`; `src/lib/uiErrorSurface.test.ts` prevents raw `error.message` regressions.
 - The 2026-09-08 review-workspace follow-up adds compact primary-page headers, process-lifetime cross-tab rating undo, and a first-stage read-only annotation surface. The annotation toolbar is viewport-fixed and dynamically avoids visible rating controls.
 - The 2026-09-08 real-time voice-recall work is complete through implementation Stage 6 automated hardening. The Review-owned production workspace, contextual record/current-card entry, local summary/history, confirmed Coach voice-answer path, local-only sync/backup proofs, untrusted-content serialization, and release documentation are implemented. `?preview=voice-recall` remains the isolated Mock call-control prototype; its bright-default continuous-caption and fixed four-control visual baseline is complete across Desktop/Android-narrow, with a dark call palette retained as an option. Real Provider and physical-device checks remain release gates. See `docs/realtime-voice-recall-implementation.md`.
+- The 2026-09-09 record-editor follow-up is complete through automated acceptance: mobile editor chrome shares one width basis, the tag field is a low-contrast labelled input, and expanded formatting/insertion tools use a compact grouped toolbar. These changes are scoped to `.record-editor-page` and do not alter record persistence or editor document semantics.
 
 ## Voice Recall Boundaries
 
@@ -72,7 +73,7 @@ git diff --check
 
 Use deterministic mocks in automated tests. Real AI providers are limited to explicit, controlled acceptance runs and must never replace deterministic CI coverage.
 
-The current automated acceptance baseline is `125` Vitest files / `837` tests, `38` Playwright tests across Desktop and Android-narrow projects, and `4` isolated Firebase Emulator tests. Physical Android keyboard/IME, system back, image gestures, real DeepSeek, real voice Providers/audio behavior, and controlled real-account Firebase quota checks remain manual release gates.
+The current automated acceptance baseline is `126` Vitest files / `840` tests, `42` Playwright tests across Desktop and Android-narrow projects, and `4` isolated Firebase Emulator tests. Physical Android keyboard/IME, system back, image gestures, real DeepSeek, real voice Providers/audio behavior, and controlled real-account Firebase quota checks remain manual release gates.
 
 For local Stage 3 UI acceptance, run `npm run build`, start `npm run preview -- --host 127.0.0.1 --port 4177`, and open `http://127.0.0.1:4177/?preview=stage3`. This localhost-only query seeds an isolated `BFS Stage3 Preview` record with an overdue review, block feedback, and an analysis-queue item; it is gated out of normal URLs and native shells.
 

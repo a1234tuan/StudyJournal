@@ -197,24 +197,31 @@ body {
 
 .today-compose-main {
   min-width: 0;
-  min-height: 70px;
+  min-height: 58px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 13px;
   border: 1px solid var(--color-border);
   border-right: 0;
   border-radius: var(--radius-control) 0 0 var(--radius-control);
-  padding: 12px 16px;
-  background: var(--color-surface);
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--color-primary-soft) 72%, var(--color-bg));
   color: var(--color-text);
   text-align: left;
 }
 
 .today-compose-main > span { min-width: 0; display: grid; gap: 3px; }
-.today-compose-main strong { font-size: 1rem; font-weight: 620; overflow-wrap: anywhere; }
+.today-compose-main strong { font-size: .98rem; font-weight: 590; overflow-wrap: anywhere; }
+:root:not([data-visual-theme="modern"]) .today-compose-main strong { font-family: var(--font-reading); font-weight: 560; }
 .today-compose-main small { color: var(--color-muted); }
-.today-create-options > summary { width: 48px; height: 70px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: 0 var(--radius-control) var(--radius-control) 0; background: var(--color-surface); cursor: pointer; list-style: none; }
+.today-create-options > summary { width: 48px; height: 58px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: 0 var(--radius-control) var(--radius-control) 0; background: color-mix(in srgb, var(--color-primary-soft) 72%, var(--color-bg)); cursor: pointer; list-style: none; }
+.today-compose-main:hover,
+.today-compose-main:focus-visible,
+.today-create-options > summary:hover,
+.today-create-options > summary:focus-visible { background: color-mix(in srgb, var(--color-primary-soft) 88%, var(--color-bg)); }
+.today-compose-main:active,
+.today-create-options > summary:active { background: color-mix(in srgb, var(--color-primary-soft) 96%, var(--color-primary) 4%); }
 .today-create-options > summary::-webkit-details-marker { display: none; }
 .today-create-options[open] > summary svg { transform: rotate(180deg); }
 .today-create-options > div { position: absolute; top: 76px; right: 0; z-index: 12; width: min(520px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .65fr); gap: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: 14px; background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
@@ -235,7 +242,8 @@ body {
 .today-coach-disclosure .review-coach-workbench { margin: 0; border-bottom: 0; }
 
 .today-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--color-border); padding-bottom: 9px; }
-.today-section-heading h2 { margin: 0; font-size: 1.05rem; font-weight: 620; }
+.today-section-heading h2 { margin: 0; font-size: 1.08rem; font-weight: 560; color: var(--color-text); }
+:root:not([data-visual-theme="modern"]) .today-section-heading h2 { font-family: var(--font-reading); }
 .today-section-heading small { color: var(--color-muted); }
 
 .record-list { gap: 0; }
@@ -245,7 +253,8 @@ body {
 .record-card-main { align-items: flex-start; padding: 14px 6px 14px 2px; }
 .record-card-icon { display: none; }
 .record-card-copy { gap: 5px; }
-.record-card-copy strong { font-size: .94rem; line-height: 1.48; font-weight: 590; white-space: normal; overflow-wrap: anywhere; }
+.record-card-copy strong { font-size: .94rem; line-height: 1.4; font-weight: 560; color: var(--color-text); white-space: normal; overflow-wrap: anywhere; }
+:root:not([data-visual-theme="modern"]) .record-card-copy strong { font-family: var(--font-reading); font-weight: 540; }
 .record-card-meta { color: var(--color-muted); font-size: .72rem; }
 .record-card-excerpt { display: -webkit-box; overflow: hidden; margin: 0; color: var(--color-muted); font-family: var(--font-reading); font-size: .82rem; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .record-card-actions { align-self: stretch; padding-right: 2px; }
@@ -286,8 +295,9 @@ body {
 .review-page { width: min(980px, 100%); }
 .review-page-header { margin-bottom: 18px; }
 .review-header-menu { display: flex; align-items: center; gap: 8px; }
-.review-mode-tabs { display: flex; gap: 22px; overflow-x: auto; border-bottom: 1px solid var(--color-border); scrollbar-width: none; }
-.review-mode-tabs button { flex: 0 0 auto; min-height: 44px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding-inline: 2px; background: transparent; color: var(--color-muted); }
+.review-mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; overflow: hidden; border-bottom: 1px solid var(--color-border); scrollbar-width: none; }
+.review-mode-tabs button { min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding-inline: 4px; background: transparent; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-mode-tabs button svg { flex: 0 0 auto; width: 16px; height: 16px; }
 .review-mode-tabs button.active { border-color: var(--color-primary); background: transparent; color: var(--color-text); font-weight: 620; }
 
 .review-page .review-coach-workbench { margin: 28px 0 0; border-bottom: 0; padding-bottom: 0; }
@@ -375,9 +385,24 @@ body {
 .more-list .list-row { min-height: 70px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; padding: 10px 2px; background: transparent; }
 .more-list .list-row:hover { background: color-mix(in srgb, var(--color-surface) 62%, transparent); }
 .more-list .list-row-icon { border-radius: var(--radius-control); }
-.more-list .list-row-content strong { overflow: visible; white-space: normal; font-weight: 600; }
+.more-list .list-row-content strong { overflow: visible; white-space: normal; font-weight: 570; }
 .more-list .list-row-content small { overflow: visible; white-space: normal; line-height: 1.45; }
-.more-list .list-row-meta { max-width: 210px; overflow-wrap: anywhere; text-align: right; font-size: .75rem; }
+.more-list .list-row-end { min-width: 0; align-self: center; justify-self: end; }
+.more-list .list-row-meta { min-width: 0; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: .75rem; }
+.more-list .list-row-trailing { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; color: var(--color-muted); }
+.more-list .list-row:hover .list-row-trailing,
+.more-list .list-row:focus-visible .list-row-trailing { color: var(--color-primary); }
+:root:not([data-visual-theme="modern"]) .more-section h2 { font-family: var(--font-reading); font-weight: 560; }
+.more-page .more-section { margin-top: 20px; margin-bottom: 12px; }
+.more-page .more-list .list-row { min-height: 54px; padding-block: 6px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+.more-page .more-list .list-row { gap: 10px; }
+.more-page .more-list .list-row-icon,
+.more-page .more-list .list-row-content,
+.more-page .more-list .list-row-end { align-self: center; }
+.more-page .more-list .list-row-content { min-height: 0; display: flex; align-items: center; }
+.more-page .more-list .list-row-content strong { line-height: 1.3; }
+.more-page .more-list .list-row-content small { display: none; }
+.more-page .more-list .list-row-icon { width: 34px; height: 34px; }
 
 .settings-panel { display: grid; gap: 16px; margin: 0; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; padding: 22px 2px; background: transparent; }
 .settings-panel + .settings-panel { margin-top: 18px; }
@@ -385,6 +410,46 @@ body {
 .settings-panel input:not([type="range"]),
 .settings-panel select { border-color: var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
 .settings-row { flex-wrap: wrap; }
+
+.today-page .today-compose-band { min-height: 58px; }
+.today-page .today-compose-main { padding-block: 10px; }
+.today-page .today-compose-main small { display: none; }
+.today-page .record-card { min-height: 68px; }
+.today-page .record-card-main { padding-block: 6px; }
+.journal-page .record-card { min-height: 74px; }
+.journal-page .record-card-main { padding-block: 8px; }
+.today-page .record-card-excerpt,
+.journal-page .record-card-excerpt { display: -webkit-box; -webkit-line-clamp: 1; }
+.today-page .record-card-copy,
+.journal-page .record-card-copy { gap: 2px; }
+.today-page .record-card-actions,
+.journal-page .record-card-actions { align-self: center; }
+:root:not([data-visual-theme="modern"]) .today-page .record-card-copy strong,
+:root:not([data-visual-theme="modern"]) .journal-page .record-card-copy strong { color: color-mix(in srgb, var(--color-text) 88%, var(--color-primary)); }
+:root:not([data-visual-theme="modern"]) .today-page .record-card-copy strong { font-weight: 575; }
+:root[data-visual-theme="modern"] .today-page .record-card-copy strong { font-weight: 620; }
+.today-page .record-card-copy strong { line-height: 1.34; }
+:root:not([data-visual-theme="modern"]) .settings-page h1,
+:root:not([data-visual-theme="modern"]) .backup-page h1,
+:root:not([data-visual-theme="modern"]) .knowledge-podcast-page h1,
+:root:not([data-visual-theme="modern"]) .template-library-page h1,
+:root:not([data-visual-theme="modern"]) .trash-page h1,
+:root:not([data-visual-theme="modern"]) .categories-page h1,
+:root:not([data-visual-theme="modern"]) .search-page h1,
+:root:not([data-visual-theme="modern"]) .recordings-page h1 { font-family: var(--font-reading); font-weight: 560; }
+:root:not([data-visual-theme="modern"]) .settings-page h2,
+:root:not([data-visual-theme="modern"]) .backup-page h2,
+:root:not([data-visual-theme="modern"]) .knowledge-podcast-page h2,
+:root:not([data-visual-theme="modern"]) .template-library-page h2,
+:root:not([data-visual-theme="modern"]) .trash-page h2,
+:root:not([data-visual-theme="modern"]) .categories-page h2,
+:root:not([data-visual-theme="modern"]) .search-page h2,
+:root:not([data-visual-theme="modern"]) .recordings-page h2 { font-family: var(--font-reading); font-weight: 560; }
+.today-page .empty-state p,
+.journal-page .empty-state p { display: none; }
+.review-page .review-empty-state p:empty,
+.review-page .review-library-list .empty-state p { display: none; }
+.review-page .review-library-list .empty-state { padding-block: 26px; }
 .settings-status { overflow-wrap: anywhere; }
 
 .backup-actions-section { margin-top: 26px; }
@@ -750,4 +815,216 @@ body {
   .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert > .structure-insert-menu { min-width: 40px; min-height: 40px; }
   .record-editor-page .rich-editor { padding-top: 22px; padding-bottom: 96px; font-size: 1rem; }
   .record-view-header h1 { font-size: 1.75rem; }
+}
+
+/* Record editor alignment and compact editing controls. Keep this scope local
+   to the writing surface so shared page/list components are unaffected. */
+.record-editor-page,
+.record-editor-page .editor-shell,
+.record-editor-page .rich-editor,
+.record-editor-page .record-editor-head {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: clip;
+}
+
+.record-editor-page .record-action-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.record-editor-page .record-editor-topbar {
+  box-sizing: border-box;
+}
+
+.record-editor-page .record-save-indicator {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-editor-page .record-tag-editor {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.record-editor-page .record-tag-label {
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: .72rem;
+  line-height: 1.25;
+}
+
+.record-editor-page .record-tag-input-wrap {
+  min-height: 30px;
+  gap: 4px;
+  padding: 3px 0 5px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.record-editor-page .record-tag-input-wrap:focus-within {
+  border-bottom-color: var(--color-primary);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--color-primary) 24%, transparent);
+}
+
+.record-editor-page .record-tag-input {
+  min-height: 24px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: .82rem;
+}
+
+.record-editor-page .record-tag-input::placeholder {
+  color: var(--color-muted);
+  opacity: .78;
+}
+
+.record-editor-page .record-tag-suggestions {
+  top: calc(100% + 2px);
+  right: 0;
+  left: 0;
+  max-height: 160px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-floating);
+}
+
+.record-editor-page .editor-toolbar {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+  background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+}
+
+.record-editor-page .editor-toolbar-primary,
+.record-editor-page .editor-toolbar-secondary,
+.record-editor-page .editor-toolbar-insert {
+  min-width: 0;
+  max-width: 100%;
+  gap: 2px;
+}
+
+.record-editor-page .editor-toolbar button,
+.record-editor-page .editor-file-button,
+.record-editor-page .editor-toolbar select {
+  box-sizing: border-box;
+}
+
+.record-editor-page .editor-toolbar button,
+.record-editor-page .editor-file-button {
+  padding-inline: 6px;
+}
+
+.record-editor-page .editor-toolbar-secondary,
+.record-editor-page .editor-toolbar-insert {
+  border-left-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+@media (max-width: 920px) {
+  .record-editor-page {
+    width: 100%;
+    max-width: 100%;
+    padding-inline: 16px;
+    overflow-x: clip;
+  }
+
+  .record-editor-page .record-editor-topbar {
+    width: calc(100% + 32px);
+    max-width: none;
+    margin-inline: -16px;
+    overflow: hidden;
+  }
+
+  .record-editor-page > .record-editor-head,
+  .record-editor-page > .editor-shell,
+  .record-editor-page > .draft-status,
+  .record-editor-page.wide-content > .record-editor-head,
+  .record-editor-page.wide-content > .editor-shell {
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
+  }
+
+  .record-editor-page .record-action-row {
+    justify-self: end;
+    overflow: hidden;
+  }
+
+  .record-editor-page .editor-toolbar {
+    width: 100%;
+    margin-inline: 0;
+    padding: 4px 0;
+    background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  }
+
+  .record-editor-page .editor-toolbar-primary {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: 100%;
+    gap: 2px;
+  }
+
+  .record-editor-page .editor-toolbar-primary > button,
+  .record-editor-page .editor-toolbar-primary > select {
+    width: 100%;
+    min-width: 0;
+    height: 38px;
+    min-height: 38px;
+    padding-inline: 2px;
+  }
+
+  .record-editor-page .editor-toolbar-primary .editor-heading-select {
+    min-width: 0;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-secondary,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
+    width: 100%;
+    gap: 3px;
+    padding: 5px 0 0;
+    border-top-color: color-mix(in srgb, var(--color-border) 68%, transparent);
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert {
+    padding-top: 3px;
+    border-top: 0;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-group-label {
+    grid-column: 1 / -1;
+    margin: 1px 0 0;
+    line-height: 1.2;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded button,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-file-button,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded select,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .decision-block-restore-control,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .structure-insert-menu {
+    min-width: 0;
+    width: 100%;
+    min-height: 38px;
+    height: 38px;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .structure-insert-menu {
+    display: inline-flex;
+    justify-content: center;
+  }
 }

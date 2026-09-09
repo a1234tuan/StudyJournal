@@ -1039,6 +1039,7 @@ export const RecordEditorPage = ({
           <section className="record-editor-head">
             <textarea className="record-title-input" rows={1} value={draft.title} onChange={(event) => update({ title: event.target.value })} aria-label="记录标题" disabled={interactionLocked} />
             <div className="record-tag-editor">
+              <span className="record-tag-label">标签</span>
               <div className="record-tag-input-wrap">
                 {draftTags.map((tag, index) => (
                   <span key={tag} className="record-tag-editor-item" style={recordTagStyle(draft.subject, tag)}>

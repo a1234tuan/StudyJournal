@@ -287,9 +287,10 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
     return `${tab}-${depth}-${recordPart}-${memory.categories.managing ? "manage" : memory.categories.activeSubject ?? "all"}`;
   }
   if (tab === "review") {
-    const voicePart = memory.review.voiceRecall
-      ? `voice-${memory.review.voiceRecall.screen}-${memory.review.voiceRecall.sessionId ?? "new"}`
-      : memory.review.mode;
+    // Voice recall owns its internal start/scope/call/summary transitions. A
+    // stable page key prevents PageTransition from remounting the workspace
+    // and pausing a session immediately after it connects.
+    const voicePart = memory.review.voiceRecall ? "voice" : memory.review.mode;
     return `${tab}-${depth}-${recordPart}-${voicePart}`;
   }
   if (tab === "today") {

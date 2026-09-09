@@ -318,6 +318,14 @@
   color: var(--color-muted);
 }
 
+.list-row-end {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .subject-picker-wrap {
   display: grid;
   gap: 10px;
