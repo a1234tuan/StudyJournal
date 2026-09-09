@@ -34,6 +34,46 @@ export interface AiCompletionRequestOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * 结构化 AI 请求错误：携带 HTTP 状态、是否可重试、是否超时，供调用方做重试分类与熔断决策。
+ * 仿照 voiceRecall/providerRuntime.ts 的 VoiceProviderError 设计，但用于通用 OpenAI 兼容调用。
+ */
+export class AiRequestError extends Error {
+  readonly httpStatus?: number;
+  readonly retryable: boolean;
+  readonly timedOut: boolean;
+
+  constructor(message: string, options: { httpStatus?: number; retryable?: boolean; timedOut?: boolean } = {}) {
+    super(message);
+    this.name = "AiRequestError";
+    this.httpStatus = options.httpStatus;
+    this.retryable = Boolean(options.retryable);
+    this.timedOut = Boolean(options.timedOut);
+  }
+}
+
+/** 单次请求兜底超时；调用方不显式传 timeoutMs 时使用，避免 fetch 永不返回。 */
+export const DEFAULT_AI_TIMEOUT_MS = 60_000;
+
+export const isAbortError = (error: unknown): boolean =>
+  (error instanceof DOMException && error.name === "AbortError")
+  || (error instanceof Error && error.name === "AbortError")
+  || (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError");
+
+/**
+ * 判定一次 AI 调用错误是否值得重试。
+ * - 主动取消：不可重试（由调用方自行处理为 pending）
+ * - AiRequestError：按其 retryable 标志
+ * - 其他未知错误（网络/CORS TypeError 已在 service 内转为 AiRequestError）：保守视为不可重试
+ */
+export const isRetryableAiError = (error: unknown): boolean => {
+  if (error instanceof AiRequestError) return error.retryable;
+  return false;
+};
+
+const classifyHttpStatus = (status: number): boolean =>
+  status === 408 || status === 429 || status >= 500;
+
 const SYSTEM_PROMPT = [
   "你是一个基于用户本地学习日志工作的学习助手。优先执行用户当前请求和所选预设，不要把所有任务固定成同一种回答流程。",
   "优先依据日志内容回答；日志没有的信息不要伪装成来自日志。需要补充通用知识时，请标明“日志外补充”。证据不足时直接说“不确定”或“日志中没有足够依据”。",
@@ -328,12 +368,12 @@ const requestOpenAiChatCompletionDetailed = async (options: {
 
   const requestUrl = normalizeAiChatCompletionsUrl(provider.baseUrl);
   const timeoutController = new AbortController();
-  const timeoutMs = options.timeoutMs ?? 0;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS;
   let timedOut = false;
-  const timeoutId = timeoutMs > 0 ? globalThis.setTimeout(() => {
+  const timeoutId = globalThis.setTimeout(() => {
     timedOut = true;
     timeoutController.abort();
-  }, timeoutMs) : undefined;
+  }, timeoutMs);
   const abortFromCaller = () => timeoutController.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   try {
@@ -366,28 +406,37 @@ const requestOpenAiChatCompletionDetailed = async (options: {
           isLikelyHtmlResponse(text, contentType) ? "接口返回的是 HTML 页面，Base URL 可能缺少 /v1 或填成了网页入口。" : "接口返回的不是 JSON。",
           fallbackDetail ? `响应片段：${fallbackDetail}` : "",
         ].filter(Boolean).join(" ");
-      throw new Error(`${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`);
+      throw new AiRequestError(
+        `${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`,
+        { httpStatus: response.status, retryable: classifyHttpStatus(response.status) },
+      );
     }
 
     if (!parsed.ok) {
       const hint = isLikelyHtmlResponse(text, contentType)
         ? "接口返回的是 HTML 页面，Base URL 可能缺少 /v1 或填成了网页入口。"
         : "接口返回的不是 JSON。";
-      throw new Error(
+      throw new AiRequestError(
         `${provider.providerName} AI 接口返回的不是 OpenAI 兼容 JSON，可能 Base URL 路径错误。${formatResponseMeta(response.status, contentType, requestUrl)}，${hint}响应片段：${fallbackDetail}`,
+        { httpStatus: response.status, retryable: false },
       );
     }
 
     return parseOpenAiCompletionResult(parsed.value, response.headers.get("x-request-id") ?? response.headers.get("request-id") ?? undefined);
   } catch (error) {
     if (timedOut) {
-      throw new Error(`AI 请求等待超过 ${Math.round((options.timeoutMs ?? 0) / 1000)} 秒，已停止等待。`);
+      throw new AiRequestError(`AI 请求等待超过 ${Math.round(timeoutMs / 1000)} 秒，已停止等待。`, { retryable: true, timedOut: true });
     }
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
+    if (error instanceof AiRequestError) throw error;
     if (error instanceof TypeError) {
-      throw new Error("Web 端请求失败，可能被第三方接口 CORS 限制。请在 Android 端使用，或配置允许跨域的代理 Base URL。");
+      // fetch 级网络/CORS 错误通常瞬时，值得重试一次再失败。
+      throw new AiRequestError("Web 端请求失败，可能被第三方接口 CORS 限制。请在 Android 端使用，或配置允许跨域的代理 Base URL。", { retryable: true });
     }
-    throw error;
+    if (error instanceof Error) {
+      throw new AiRequestError(error.message, { retryable: false });
+    }
+    throw new AiRequestError("AI 请求发生未知错误。", { retryable: false });
   } finally {
     if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abortFromCaller);
@@ -546,6 +595,7 @@ export const testAiProviderConnection = async (options: {
     apiKey: apiKey.trim(),
     maxTokens: 16,
     messages: [{ role: "user", content: "请只回复 OK。" }],
+    timeoutMs: 8_000,
   });
   return { requestUrl, content };
 };

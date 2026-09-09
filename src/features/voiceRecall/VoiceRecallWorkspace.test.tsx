@@ -148,7 +148,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
     await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
-    fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
+    fireEvent.click(screen.getByRole("button", { name: "键盘输入校对" }));
     fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "这是人工确认后的正式回答" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
 
@@ -171,6 +171,45 @@ describe("VoiceRecallWorkspace", () => {
       "计算机",
       expect.stringContaining("这是人工确认后的正式回答"),
     ));
+
+    view.unmount();
+    database.close();
+  });
+
+  it("routes the turn through the real Mock ASR→LLM→TTS pipeline and persists non-zero usage", async () => {
+    const { database, repository, Harness } = await openWorkspace();
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+
+    await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
+    fireEvent.click(screen.getByRole("button", { name: "键盘输入校对" }));
+    fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "主动回忆强化长期记忆" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
+
+    const sessions = await repository.listResumableSessions();
+    const turns = await waitFor(async () => {
+      const list = await repository.listTurns(sessions[0].id);
+      expect(list).toHaveLength(1);
+      return list;
+    });
+    // teacherText comes from the Mock LLM, not the removed createTeacherReply template.
+    expect(turns[0].teacherText).toContain("再举一个");
+    expect(turns[0].providerFinalText).not.toBe(turns[0].confirmedText);
+    expect(turns[0].playedCharacterCount).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
+    fireEvent.click(screen.getByRole("button", { name: /结束通话/ }));
+    await screen.findByRole("heading", { name: "本次复述摘要" });
+    fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
+    await waitFor(async () => expect(await repository.listHistory()).toHaveLength(1));
+    const history = (await repository.listHistory())[0];
+    // usage is accumulated from the real pipeline meter, no longer the all-zero stub.
+    expect(history.usage.llmOutputTokens).toBeGreaterThan(0);
+    expect(history.usage.ttsCharacters).toBeGreaterThan(0);
 
     view.unmount();
     database.close();

@@ -2668,8 +2668,8 @@
   gap: 6px 10px;
   margin-top: 8px;
   padding: 8px 10px;
-  border-left: 2px solid var(--accent-color, #4f46e5);
-  background: color-mix(in srgb, var(--accent-color, #4f46e5) 8%, transparent);
+  border-left: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   font-size: 0.85rem;
 }
 
@@ -3785,17 +3785,17 @@
   transform: translateX(-50%);
   min-height: 44px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  overflow-x: auto;
+  overflow-x: visible;
   padding: 4px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--surface);
   box-shadow: var(--shadow-floating);
 }
-.review-annotation-toolbar::-webkit-scrollbar { display: none; }
-.review-annotation-toolbar { scrollbar-width: none; }
 
 .review-annotation-current {
   flex: 0 0 auto;
@@ -3887,7 +3887,7 @@
   touch-action: none;
   cursor: crosshair;
 }
-.review-annotation-svg.drawing { pointer-events: auto; touch-action: none; }
+/* 注：drawing 态用 touch-action:none 是为笔迹精度所必需；滚动请切回“浏览”(pointer) 工具（默认即该模式）。 */
 .review-annotation-selection rect { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1.5; stroke-dasharray: 5 3; pointer-events: all; cursor: move; }
 .review-annotation-selection circle { fill: var(--color-surface); stroke: var(--color-primary); stroke-width: 2; pointer-events: all; cursor: nwse-resize; }
 .review-annotation-selection-box { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
@@ -3921,7 +3921,7 @@
 .review-annotation-control.text:not(:focus) { resize: none; outline: none; }
 .review-annotation-control:focus { outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent); outline-offset: 1px; }
 .review-annotation-eraser-cursor { position: fixed; z-index: 30; pointer-events: none; border: 1px solid var(--color-primary); border-radius: 50%; background: color-mix(in srgb, var(--color-primary) 12%, transparent); transform: translateZ(0); }
-.review-annotation-select-editor { position: fixed; z-index: 31; right: 16px; bottom: max(72px, calc(16px + env(safe-area-inset-bottom))); display: grid; gap: 7px; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
+.review-annotation-select-editor { position: fixed; z-index: 31; right: 16px; bottom: max(108px, calc(72px + env(safe-area-inset-bottom))); display: grid; gap: 7px; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
 .review-annotation-select-editor input { min-height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding-inline: 8px; background: var(--color-surface); color: var(--color-text); }
 .review-annotation-select-editor > div { display: flex; gap: 6px; justify-content: flex-end; }
 

@@ -652,6 +652,13 @@ export const App = () => {
         return;
       }
 
+      // 自适应复习任务从复习教练打开；硬件返回应回到复习 Tab，与应用内返回一致，
+      // 而非落到今天仪表盘。
+      if (activeTab === "today" && tabMemory.today.adaptiveTaskId) {
+        closeAdaptiveTask();
+        return;
+      }
+
       if (getTabDepth(activeTab, tabMemory) > 0) {
         clearBackHint();
         popCurrentTabDepth();
@@ -689,7 +696,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, popCurrentTabDepth, switchTab, tabMemory]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, popCurrentTabDepth, switchTab, tabMemory]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -1570,7 +1577,8 @@ export const App = () => {
             const Icon = item.icon;
             const active = item.subRoute
               ? activeTab === "more" && tabMemory.more.subRoute === item.subRoute
-              : activeTab === item.tab;
+              // “更多”根项仅在没有具体子路由时高亮，避免 more/recordings 时“录音”与“更多”同时高亮。
+              : activeTab === item.tab && !(item.tab === "more" && tabMemory.more.subRoute !== null);
             return (
               <button
                 key={`${item.tab}-${item.subRoute ?? "root"}`}

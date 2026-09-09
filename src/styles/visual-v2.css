@@ -313,8 +313,9 @@ body {
 .review-record-card { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .review-record-card .record-view-header h1 { font-family: var(--font-reading); font-weight: 580; }
 .review-record-card .rich-editor { font-family: var(--font-reading); line-height: var(--reading-line-height, 1.8); }
-.review-rating-bar { border-right: 0; border-bottom: 0; border-left: 0; border-radius: 0; background: color-mix(in srgb, var(--color-surface) 97%, transparent); box-shadow: none; backdrop-filter: blur(10px); }
-.review-rating-bar button { border-radius: 0; box-shadow: none; }
+/* 评分栏锚定为有边框、不透明、带圆角的卡条，避免“悬空玻璃条”观感。 */
+.review-rating-bar { border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); backdrop-filter: none; }
+.review-rating-bar button { border-radius: var(--radius-control); box-shadow: none; }
 
 .adaptive-review-page { width: min(800px, 100%); }
 .adaptive-review-header { border-bottom-color: var(--color-border); }

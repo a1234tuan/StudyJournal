@@ -101,6 +101,16 @@ describe("web navigation history snapshots", () => {
     expect(restoreWebNavigationSnapshot(oversized)?.tabMemory.review.voiceRecall).toBeUndefined();
   });
 
+  it("restores the four more sub-routes that were missing from the validation list", () => {
+    for (const subRoute of ["templates", "ttsSettings", "podcastTemplates", "aiExport"] as const) {
+      const memory = createInitialTabMemory();
+      memory.more.subRoute = subRoute;
+      const snapshot = createWebNavigationSnapshot("session-1", "more", memory, null, 0);
+      const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
+      expect(restored?.tabMemory.more.subRoute).toBe(subRoute);
+    }
+  });
+
   it("rejects foreign, stale or malformed history state", () => {
     const snapshot = createWebNavigationSnapshot("session-1", "today", createInitialTabMemory(), null, 0);
 

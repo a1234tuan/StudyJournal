@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AiChatAttachment, AiChatMessage, AiContextPack } from "../types";
 import {
+  AiRequestError,
+  DEFAULT_AI_TIMEOUT_MS,
   buildAiMessages,
   buildUserPromptWithImages,
   buildSessionMemorySummary,
   calculateAiRequestBudget,
+  isRetryableAiError,
   normalizeAiChatCompletionsUrl,
   parseOpenAiCompletionResult,
   selectRecentChatContext,
@@ -69,6 +72,73 @@ const imageAttachment = (patch: Partial<AiChatAttachment> = {}): AiChatAttachmen
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+const jsonCompletion = (status = 200, body: unknown = { choices: [{ message: { content: "OK" } }] }) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const stubFetch = (response: Response) => {
+  const fetchMock = vi.fn().mockResolvedValue(response);
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+};
+
+describe("AiRequestError classification", () => {
+  const provider = {
+    id: "custom",
+    providerName: "测试供应商",
+    baseUrl: "https://relay.example/v1",
+    model: "gpt-test",
+    temperature: 0.7,
+    maxTokens: 4096,
+  };
+
+  it("marks 429 and 5xx as retryable", async () => {
+    for (const status of [429, 500, 503]) {
+      stubFetch(jsonCompletion(status, { error: { message: "busy" } }));
+      const error = await testAiProviderConnection({ provider, apiKey: "sk-test" }).catch((e) => e);
+      expect(error).toBeInstanceOf(AiRequestError);
+      expect((error as AiRequestError).retryable).toBe(true);
+      expect((error as AiRequestError).httpStatus).toBe(status);
+    }
+  });
+
+  it("marks 400/401/404 as non-retryable so the orchestrator stops immediately", async () => {
+    for (const status of [400, 401, 404]) {
+      stubFetch(jsonCompletion(status, { error: { message: "bad request" } }));
+      const error = await testAiProviderConnection({ provider, apiKey: "sk-test" }).catch((e) => e);
+      expect((error as AiRequestError).retryable).toBe(false);
+      expect(isRetryableAiError(error)).toBe(false);
+    }
+  });
+
+  it("reports HTML/HTML-like responses as non-retryable Base URL errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("<!doctype html><html><body>portal</body></html>", { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }),
+    ));
+    const error = await testAiProviderConnection({ provider, apiKey: "sk-test" }).catch((e) => e);
+    expect(error).toBeInstanceOf(AiRequestError);
+    expect(isRetryableAiError(error)).toBe(false);
+  });
+
+  it("arms a default timeout when the caller omits timeoutMs instead of hanging forever", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = testAiProviderConnection({ provider, apiKey: "sk-test" }).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(DEFAULT_AI_TIMEOUT_MS - 1);
+    let resolved = false;
+    pending.then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(2);
+    const error = await pending;
+    expect(resolved || error instanceof AiRequestError).toBe(true);
+    expect(error).toBeInstanceOf(AiRequestError);
+    expect((error as AiRequestError).timedOut).toBe(true);
+    expect((error as AiRequestError).retryable).toBe(true);
+    vi.useRealTimers();
+  });
 });
 
 describe("buildAiMessages", () => {

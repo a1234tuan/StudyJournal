@@ -5,10 +5,18 @@ import { VoiceAudioFocusManager } from "./audioFocus";
 import { createVoiceRecallState, transitionVoiceRecallState, type VoiceRecallAction, type VoiceRecallState } from "./domain";
 import type { VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
 import { VoiceRecallRepository, voiceRecallRepository } from "./repository";
+import { WebAudioPlaybackSink } from "./webAudioPlaybackSink";
 
 type RuntimeListener = (state: VoiceRecallState | undefined) => void;
 
 const silentSink: VoicePlaybackSink = { play: async () => undefined, stop: () => undefined };
+
+export const createVoiceRecallRuntimeSink = (): VoicePlaybackSink => {
+  if (typeof window !== "undefined" && (window.AudioContext ?? (window as { webkitAudioContext?: unknown }).webkitAudioContext)) {
+    return new WebAudioPlaybackSink();
+  }
+  return silentSink;
+};
 
 export class VoiceRecallRuntimeController {
   private session?: VoiceRecallSessionLocal;
@@ -135,6 +143,35 @@ export class VoiceRecallRuntimeController {
     this.captureTask = undefined;
   }
 
+  /** Begins a turn-scoped abort signal linked to the session. Cancelling any
+   * prior turn. The pipeline feeds this to ASR/LLM/TTS so interrupt/end can
+   * abort an in-flight turn. */
+  beginTurnSignal(): AbortSignal {
+    return this.cancellation.beginTurn();
+  }
+
+  /** Aborts the active turn signal (ASR/LLM/TTS streaming) without touching
+   * the state machine. */
+  cancelActiveTurn(reason: unknown = "turn-cancelled") {
+    this.cancellation.cancelTurn(reason);
+  }
+
+  enqueueAudio(chunk: Uint8Array, generation?: number): boolean {
+    return this.playback.enqueue(chunk, generation);
+  }
+
+  interruptPlayback(): Promise<number> {
+    return this.playback.interrupt();
+  }
+
+  awaitPlaybackDrained(): Promise<void> {
+    return this.playback.waitUntilIdle();
+  }
+
+  get playbackGeneration() {
+    return this.playback.currentGeneration;
+  }
+
   async pause() {
     if (!this.state || this.state.status === "paused" || this.state.status === "ended") return;
     await Promise.all([this.stopCapture(), this.playback.interrupt()]);
@@ -196,4 +233,4 @@ export class VoiceRecallRuntimeController {
   }
 }
 
-export const voiceRecallRuntime = new VoiceRecallRuntimeController();
+export const voiceRecallRuntime = new VoiceRecallRuntimeController(voiceRecallRepository, createVoiceRecallRuntimeSink());

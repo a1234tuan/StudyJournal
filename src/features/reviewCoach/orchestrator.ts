@@ -26,6 +26,21 @@ import type {
 } from "./aiSchemas";
 import type { ReviewCoachRepository } from "./repository";
 import { planAnalysisBatches, type AnalysisPlanningBlock } from "./analysisPlanner";
+import { isAbortError, isRetryableAiError } from "../../services/aiClientService";
+
+/** 重试退避基数；指数退避 base * 2^attempt，受 signal 取消。 */
+const ORCHESTRATOR_BACKOFF_BASE_MS = 500;
+const abortableDelay = (ms: number, signal?: AbortSignal): Promise<void> => {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const onAbort = () => { globalThis.clearTimeout(timeout); resolve(); };
+    const timeout = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
 
 export interface ReviewCoachAiGateway {
   interpretFeedback(input: unknown, signal?: AbortSignal): Promise<FeedbackInterpretationAiCallResult>;
@@ -330,7 +345,7 @@ export class ReviewCoachOrchestrator {
           : { ...interpretation, ...callMetadata, status: "succeeded", actionability: response.actionability, difficultyType: response.difficultyType, stuckAt: response.stuckAt, userHypothesis: response.userHypothesis, preferredPractice: response.preferredPractice, missingInformation: response.missingInformation, confidence: response.confidence, updatedAt: this.dependencies.clock.now() };
         return this.dependencies.repository.saveFeedbackInterpretation(next);
       } catch (error) {
-        if (input.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        if (input.signal?.aborted || isAbortError(error)) {
           return this.dependencies.repository.saveFeedbackInterpretation({
             ...interpretation,
             status: "pending",
@@ -340,6 +355,9 @@ export class ReviewCoachOrchestrator {
           });
         }
         lastError = error;
+        // 不可重试错误（4xx 凭据/参数、解析错、insufficient-context）立即转失败，避免每次都计费。
+        if (!isRetryableAiError(error)) break;
+        if (attempt < maxRetries) await abortableDelay(ORCHESTRATOR_BACKOFF_BASE_MS * 2 ** attempt, input.signal);
       }
     }
     const failed: FeedbackInterpretation = {
@@ -481,7 +499,11 @@ export class ReviewCoachOrchestrator {
             })),
             allowedSupportingDecisionBlockIds: input.allowCrossBlockSupport ? blocks.map((block) => block.decisionBlockId) : [],
           }, input.signal);
-          if (call.response.status === "insufficient-context") throw new Error(`insufficient-context:${call.response.missingInformation.join("、")}`);
+          if (call.response.status === "insufficient-context") {
+            // 与 interpretFeedback 一致：背景不足为终态，不重试（避免对最大上下文载荷二次计费）。
+            lastError = new Error(`insufficient-context:${call.response.missingInformation.join("、")}`);
+            break;
+          }
           validateBlueprintCandidates(call.response.blueprints, blocks, input.allowCrossBlockSupport);
           summaries.push(call.response.summary);
           for (const candidate of call.response.blueprints) {
@@ -507,7 +529,7 @@ export class ReviewCoachOrchestrator {
           completed = true;
           break;
         } catch (error) {
-          if (input.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+          if (input.signal?.aborted || isAbortError(error)) {
             batch = {
               ...batch,
               status: "confirmed",
@@ -518,6 +540,9 @@ export class ReviewCoachOrchestrator {
             return { batch, blueprints, tasks, paused: true };
           }
           lastError = error;
+          // 不可重试错误立即转失败，避免对最大上下文载荷反复计费。
+          if (!isRetryableAiError(error)) break;
+          if (attempt < maxRetries) await abortableDelay(ORCHESTRATOR_BACKOFF_BASE_MS * 2 ** attempt, input.signal);
         }
       }
       if (!completed) {

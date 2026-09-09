@@ -44,10 +44,14 @@ const MORE_SUB_ROUTES: readonly MoreSubRoute[] = [
   "trash",
   "backup",
   "aiTools",
+  "aiExport",
   "ocrSettings",
   "recordings",
   "podcasts",
+  "templates",
   "guide",
+  "ttsSettings",
+  "podcastTemplates",
   null,
 ];
 const REVIEW_CARD_FILTERS: readonly ReviewCardFilter[] = ["all", "unadded", "new", "due", "learning", "suspended", "mastered"];

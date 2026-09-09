@@ -5,6 +5,7 @@ import type { SessionBlueprintAiCandidate } from "./aiSchemas";
 import type { AnalysisPlanningBlock } from "./analysisPlanner";
 import { ReviewCoachOrchestrator, rankWaitingTasks } from "./orchestrator";
 import type { ReviewCoachRepository } from "./repository";
+import { AiRequestError } from "../../services/aiClientService";
 
 const stamp = "2026-09-04T08:00:00.000Z";
 
@@ -95,7 +96,7 @@ describe("ReviewCoachOrchestrator", () => {
       legacyLearningEvidence: [], legacyKnowledgePoints: [], legacyRecordKnowledgePointLinks: [], legacyKnowledgeRelations: [],
     });
     const saveFeedbackInterpretation = vi.fn(async (next: FeedbackInterpretation) => { interpretation = next; return next; });
-    const interpretFeedback = vi.fn(async () => { throw new Error("timeout"); });
+    const interpretFeedback = vi.fn(async () => { throw new AiRequestError("timeout", { retryable: true, timedOut: true }); });
     const orchestrator = new ReviewCoachOrchestrator({
       repository: { getFormalSnapshot: vi.fn(async () => snapshot()), listFeedbackInterpretations: vi.fn(async () => interpretation ? [interpretation] : []), saveFeedbackInterpretation } as unknown as ReviewCoachRepository,
       ids: { next: () => "unused" }, clock: { now: () => stamp },
@@ -170,7 +171,7 @@ describe("ReviewCoachOrchestrator", () => {
     };
     let current: FeedbackInterpretation | undefined;
     const interpretFeedback = vi.fn()
-      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce(new AiRequestError("timeout", { retryable: true, timedOut: true }))
       .mockResolvedValueOnce({ response: { status: "ok", actionability: "needs_training", difficultyType: "procedure", stuckAt: "order", userHypothesis: null, preferredPractice: "variation", missingInformation: [], confidence: 0.9 } });
     const orchestrator = new ReviewCoachOrchestrator({
       repository: {
@@ -184,6 +185,31 @@ describe("ReviewCoachOrchestrator", () => {
 
     const result = await orchestrator.interpretFeedback({ feedbackId: feedback.id, decisionBlockContent: "content", provider: "test", model: "fast", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, maxRetries: 1 });
     expect(result).toMatchObject({ status: "succeeded", attemptCount: 2 });
+  });
+
+  it("does not retry a non-retryable 4xx error and persists failed on the first attempt", async () => {
+    const feedback = {
+      id: "feedback-4xx", decisionBlockId: "block-1", recordId: "record-1", contentVersion: 1,
+      comment: "Bad key.", includeInAnalysis: true, source: "review" as const, occurredAt: stamp,
+      idempotencyKey: "feedback-4xx", createdAt: stamp, updatedAt: stamp,
+    };
+    let current: FeedbackInterpretation | undefined;
+    const interpretFeedback = vi.fn(async () => { throw new AiRequestError("HTTP 401 unauthorized", { httpStatus: 401, retryable: false }); });
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository: {
+        getFormalSnapshot: vi.fn(async () => ({ decisionBlocks: [], decisionBlockArchives: [], decisionBlockFeedback: [feedback], feedbackInterpretations: [], analysisQueueItems: [], analysisBatches: [], sessionBlueprints: [], adaptiveReviewTasks: [], adaptiveQuizTurns: [], taskOutcomeEvents: [], delayedVerifications: [], aiRoleConfigs: [], legacyLearningEvidence: [], legacyKnowledgePoints: [], legacyRecordKnowledgePointLinks: [], legacyKnowledgeRelations: [] })),
+        listFeedbackInterpretations: vi.fn(async () => current ? [current] : []),
+        saveFeedbackInterpretation: vi.fn(async (next: FeedbackInterpretation) => { current = next; return next; }),
+      } as unknown as ReviewCoachRepository,
+      ids: { next: () => "unused" }, clock: { now: () => stamp },
+      aiGateway: { interpretFeedback, planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+
+    const result = await orchestrator.interpretFeedback({ feedbackId: feedback.id, decisionBlockContent: "content", provider: "test", model: "fast", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, maxRetries: 2 });
+    // 401 不可重试：只调用一次即转失败，不会触发 3 次计费。
+    expect(interpretFeedback).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toContain("HTTP 401");
   });
 
   it("returns an aborted interpretation to pending for later recovery", async () => {
@@ -351,6 +377,22 @@ describe("ReviewCoachOrchestrator", () => {
     expect(result.batch.subBatches.map((item) => item.status)).toEqual(["succeeded", "failed"]);
     expect(planSession).toHaveBeenCalledTimes(2);
     expect(store.blueprints).toHaveLength(2);
+  });
+
+  it("does not retry planSession insufficient-context (avoids 2x billing on the largest payload)", async () => {
+    const store = deepAnalysisRepository();
+    let nextId = 0;
+    const planSession = vi.fn(async () => ({ response: { status: "insufficient-context" as const, missingInformation: ["缺少 OCR 文本"] } }));
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository: store.repository, ids: { next: () => `generated-${++nextId}` }, clock: { now: () => stamp },
+      aiGateway: { interpretFeedback: vi.fn(), planSession, generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+
+    const result = await orchestrator.analyzeFeedback({ blocks: [planningBlock("block-1")], maxInputTokens: 1000, allowCrossBlockSupport: false, provider: "test", model: "deep", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, operationId: "operation", maxRetries: 2 });
+
+    expect(planSession).toHaveBeenCalledTimes(1);
+    expect(result.batch.subBatches[0].status).toBe("failed");
+    expect(result.batch.subBatches[0].errorCode).toContain("insufficient-context");
   });
 
   it("resumes a paused batch without calling a successful sub-batch again", async () => {

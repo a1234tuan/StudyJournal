@@ -7,6 +7,7 @@ import {
   CircleStop,
   Headphones,
   History,
+  Keyboard,
   LayoutGrid,
   Mic,
   MicOff,
@@ -309,7 +310,7 @@ export const VoiceRecallCallView = ({
         {message && <p className="vr-error-message">{message}</p>}
       </section>
 
-      {(transcriptEditorOpen || transcript) && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim()} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
+      {transcriptEditorOpen && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim()} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
       <section className="vr-turn-cue" aria-label="当前通话状态"><div className={`vr-voice-field is-${state.status} ${active ? "is-active" : ""}`} aria-hidden="true"><Waveform active={active || state.status === "speaking"} reduced={reduceMotion} /></div><strong>{voiceRecallStatusCopy[state.status]}</strong><span>{interactionHint}</span></section>
 
       <footer className="vr-controls">
@@ -318,7 +319,8 @@ export const VoiceRecallCallView = ({
             : state.status === "ended" ? <button className="vr-retry" type="button" onClick={onBack}><Check />返回复习</button>
               : <>
                 <button className={`vr-control-secondary ${state.userMuted ? "is-active" : ""}`} type="button" aria-pressed={state.userMuted} onClick={onMute}>{state.userMuted ? <MicOff /> : <Mic />}<span>{state.userMuted ? "已静音" : "静音"}</span></button>
-                <button className={`vr-control-secondary ${captionsVisible ? "is-active" : ""}`} type="button" aria-pressed={transcriptEditorOpen} aria-label="字幕与键盘输入" onClick={() => { onToggleCaptions(); onToggleTranscriptEditor(); }}><Captions /><span>{transcriptEditorOpen ? "收起输入" : "字幕输入"}</span></button>
+                <button className={`vr-control-secondary ${captionsVisible ? "is-active" : ""}`} type="button" aria-pressed={captionsVisible} aria-label="切换字幕显示" onClick={onToggleCaptions}><Captions /><span>{captionsVisible ? "隐藏字幕" : "字幕"}</span></button>
+                <button className={`vr-control-secondary ${transcriptEditorOpen ? "is-active" : ""}`} type="button" aria-pressed={transcriptEditorOpen} aria-label="键盘输入校对" onClick={onToggleTranscriptEditor}><Keyboard /><span>{transcriptEditorOpen ? "收起输入" : "键盘输入"}</span></button>
                 <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={onPressStart} onPointerUp={onPressEnd} onPointerCancel={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
                 <button className="vr-control-secondary vr-control-end" type="button" aria-label="结束并查看摘要" onClick={onEnd}><X /><span>结束</span></button>
               </>}
