@@ -1,7 +1,7 @@
 # Real-time 语音主动回忆实现基线
 
-> 状态：阶段 0–6 代码与自动化收口完成；真实 Provider 与 Android 真机仍是量产门槛
-> 基线日期：2026-09-08
+> 状态：阶段 0–7 完成；真实 ASR / LLM / TTS 链路已用受控账号验证，Android 真机与计费核对仍是量产门槛
+> 基线日期：2026-09-09
 > 产品边界：第一版是实时语音主动回忆，不是视频通话，也不是独立聊天中心。
 
 ## 1. 当前已完成
@@ -38,13 +38,13 @@
 - `TransportAsrStreamAdapter` 把豆包/阿里云的鉴权、帧协议和宿主实现隔离在 `VoiceAsrTransport`，领域流水线不依赖 WebSocket/SSE。
 - 提供缓冲式现有 TTS Provider 降级和系统朗读兜底。
 - 提供请求超时、输出前有限重试、熔断、连接测试、本机用量统计和脱敏诊断原语。
-- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@1` 仍是 `candidate`。豆包 ASR、DeepSeek 候选模型和 Fish Audio 候选音色未经过当前账号与真机验收，不能标记为默认量产链路。
+- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 组合阿里云 Paraformer ASR、用户配置的 LLM 与 Fish Audio TTS，三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包语音因测试应用未开通流式服务保留为备选。
 - Web 默认只允许 Mock、自建中继或明确 `browserDirectSupported` 的配置。候选豆包、阿里云和 Fish Audio 模板禁止 Web 长期密钥直连。
 
 ### 阶段 3：生产工作区与本机历史
 
 - `VoiceRecallWorkspace` 已由“复习”一级流程承载，支持资料范围和自由主题、三种互斥输入模式、外发说明确认、暂停/恢复、确认转写、摘要和本机历史。
-- 麦克风采集是真实 PCM；真实 Provider 未验收期间，ASR 与教师回复必须显式标为 Mock，用户可编辑且必须确认转写。
+- 麦克风采集是真实 PCM；阶段 7 之前 ASR 与教师回复是本地模拟，现已替换为真实 Provider 链路（见阶段 7），转写仍必须由用户确认后才发送给模型。
 - `VoiceRecallRepository.commitTurn` 在同一事务中写入确认轮次并推进 `nextSequence`，拒绝乱序或复用序号。
 - 本机摘要不会自动成为正式学习事实；只有“确认创建并编辑”才通过现有日志创建入口生成记录。
 
@@ -60,7 +60,7 @@
 - `AdaptiveReviewPage` 增加文本/语音分段输入；语音模式使用一次性 PCM 采集，转写可编辑，修改后会撤销确认。
 - 未明确确认的转写不能提交；确认后仍调用既有 `onSubmitAnswer` / `ReviewCoachOrchestrator.submitQuizAnswer`。
 - 一条 `AdaptiveQuizTurn` 仍只有一个 `answerText`。已提交轮次不可覆盖，继续追问由既有 sequence 递增的新轮次承担。
-- 真实 ASR 未验收时不会用示例文本冒充识别结果；采集结束明确要求用户手动填写或校对。
+- 采集结束后必须由用户手动填写或校对转写；系统绝不用示例文本冒充识别结果。
 
 ### 阶段 6：同步、隐私与发布收口
 
@@ -70,6 +70,28 @@
 - OpenAI-compatible 语音 LLM 请求为不可信学习内容增加独立系统防护和 JSON 数据边界，且不提供工具定义。
 - 使用教程已加入语音学习闭环、逐 Provider 外发范围、确认提交和本机留存说明。
 - 发布配套文档：`voice-recall-privacy.md`、`voice-recall-provider-configuration.md`、`voice-recall-release-checklist.md`。
+
+### 阶段 7：真实 Provider 接入（2026-09-09）
+
+- `productionPipeline.ts` 把「模板 + 设备本机覆盖 + 凭据 + 平台」解析成真实管线；任一环节缺失或平台不支持时抛出可执行的中文提示，工作区**拒绝开始通话**，不再呈现模拟通话。
+- ASR 传输层按宿主分派：桌面由主进程持有 WebSocket（`study-journal:voice-asr-open/send/close` + 事件通道，渲染层通过 `desktopVoiceSocket.ts` 适配）；Android 使用 `NativeVoiceAsrPlugin`（OkHttp WebSocket，帧以 base64 过 Capacitor 桥，`androidVoiceSocket.ts` 适配）。两者共用 `bridgeVoiceSocket.ts`。
+- `aliyunAsrProtocol.ts` 实现 DashScope Paraformer 实时协议（`run-task → task-started → 音频帧 → result-generated → task-finished`），`aliyunAsrTransport.ts` 是它的 `VoiceAsrTransport` 实现；错误与超时映射为可读信息。
+- `audioPlaybackSink.ts` 用 Web Audio 真实播放：`provider-native`（Fish MP3）走 `decodeAudioData`，`pcm-s16le` 直接转采样；`play()` 只在播放结束或被打断后 resolve，因此「说完」与「播完」不再靠标志位假装。
+- 工作区删除 `createTeacherReply` 与伪造转写；采集帧经 `AsyncQueue` 交给真实 ASR，partial 实时上屏，`finalizing-asr` 阶段承载「转写校对」，用户确认后由 `buildVoiceTeacherMessages` 组装提示词交给真实 LLM。
+- 状态真实化：波形与「正在识别」由**真实采集状态**驱动；主按钮文案与实际动作一致；连接指示改为会话状态（通话中 / 正在连接 / 已暂停 / 已断开）；披露文案显示**实际运行的模型**。
+- 成本护栏：语音 LLM `max_tokens` 钳制到 320 并强制 `thinking: { type: "disabled" }`（`deepseek-v4-pro` 否则会把预算耗在推理上并返回空正文）；教练提示词限 80 字回复、6k 字符材料、最近 3 轮；TTS 每个请求 2 分钟超时。
+- 采集健壮性：原生 `captureError` 被消费并中止采集，异常经 `startCapture(onError)` 上报；`startSession` 重置转写/回复草稿/历史标记；启动时修复中断会话并清理过期临时会话；删除记录时把相关语音来源标记为不可用；本机历史上限 200 条。
+
+**已验证（2026-09-09，受控账号）**
+
+| 链路 | 结果 |
+| --- | --- |
+| 阿里云 Paraformer 实时 ASR | `aliyunAsrTransport.live.test.ts` 通过，247ms 完成一次真实会话 |
+| DeepSeek LLM → Fish Audio TTS | `voicePipeline.live.test.ts` 通过，3.4s 收到真实音频分片 |
+| TTS → ASR 往返 | Fish 生成「间隔复习为什么有效」→ ffmpeg 转 16k PCM → 阿里云识别出同一句，首个结果 601ms |
+| 浏览器直连 | 实测不可行：ASR 需要自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish preflight 无 CORS 头 |
+
+**仍未验证**：Android 真机的回声消除、蓝牙、音频焦点、来电、后台与弱网语料；桌面/真机完整 5 轮通话与取消抓包；真实账号账单核对。
 
 ## 2. 数据与隐私边界
 
@@ -89,26 +111,31 @@
 - 运行控制：`runtimeController.ts`、`cancellation.ts`、`turnEndpointController.ts`、`playbackQueue.ts`
 - 音频采集：`webVoiceCapture.ts`、`nativeVoiceCapture.ts`
 - Provider：`providerProfiles.ts`、`providerFactory.ts`、`openAiLlmStreamAdapter.ts`、`fishAudioTtsStreamAdapter.ts`、`transportAsrAdapter.ts`
+- 真实链路解析：`productionPipeline.ts`、`credentials.ts`、`runtimePlatform.ts`
+- 阿里云 ASR：`aliyunAsrProtocol.ts`、`aliyunAsrTransport.ts`
+- 宿主桥接：`bridgeVoiceSocket.ts`、`desktopVoiceSocket.ts`、`androidVoiceSocket.ts`
+- 播放：`audioPlaybackSink.ts`、`playbackQueue.ts`
+- 提示词与队列：`teacherPrompt.ts`、`asyncQueue.ts`
 - 主链：`pipeline.ts`、`sentenceBuffer.ts`
-- Android：`NativeVoiceCapturePlugin.java`、`VoiceCaptureController.java`
+- Android：`NativeVoiceCapturePlugin.java`、`VoiceCaptureController.java`、`NativeVoiceAsrPlugin.java`
 - Electron：`desktop/main.cjs`、`desktop/preload.cjs`
 - 原型：`src/preview/VoiceRecallPrototypeApp.tsx`、`voiceRecallPrototype.css`
 
 ## 4. 尚未完成与禁止误报
 
-- 豆包/阿里云 ASR 的真实鉴权、二进制/JSON 帧协议、重连和取消尚未用专门测试账号验证。
-- DeepSeek 候选模型的流式输出、结构化评估和长会话稳定性尚未实测。
-- Fish Audio 候选模型/音色的首包、分片、并发、取消和计费尚未实测。
+- 阿里云 ASR 与 Fish Audio TTS 已验证单次会话；豆包流式 ASR/TTS 因测试应用未开通服务仍不可用（401 `load grant not found` / `Invalid X-Api-Key`），保留为候选。
+- 语音 LLM 与 TTS 的并发、取消、长会话稳定性与真实账单仍未核对。
 - Android 尚未完成真实设备的回声消除、蓝牙、音频焦点、来电、后台、弱网和噪声语料验收。
+- 通话界面的生产视觉回归需要桌面/真机验收（Web 端不提供真实语音链路，因此 Playwright 只覆盖“未配置时拒绝启动”）。
 - 当前只有用户确认后的 Coach 转写会写入既有 `AdaptiveQuizTurn.answerText`；语音本身不改变 FSRS，不自动创建日志，也不保存完整原始通话录音。
 
 ## 5. 后续实施边界
 
-阶段 6 自动化收口不等同于真实链路放行。受控 Provider 账号与 Android 真机检查仍按发布清单逐项验收；任何候选配置都不能在验证前标为默认可用。2026-09-08 已完成 localhost 隔离通话原型的视觉重构与双视口自动化验收；这项视觉基线不改变生产工作区、Provider 验证状态或真机放行条件。
+阶段 7 完成的是真实链路接入与受控账号验证，不等同于量产放行。Android 真机检查、完整通话抓包与真实账单核对仍按发布清单逐项验收；`voice-default-cn@2` 在真机验收前保持 `candidate`。
 
 ## 6. 回归命令
 
-2026-09-08 阶段 0–6 收口回归结果：Vitest `125/125` 个文件、`837/837` 项测试，Desktop/Android-narrow Playwright `38/38`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译和 `git diff --check` 均通过。2026-09-09 编辑器布局收口后，项目总基线为 Vitest `126/126` 个文件、`840/840` 项测试，Playwright `42/42`；Stage 4 的当前卡片入口/返回及 Stage 5 的 Coach 转写确认均包含跨视口 E2E。
+2026-09-09 真实链路接入后的项目基线：Vitest `140` 个文件 / `889` 项测试（其中 2 项为需密钥的线上验收，未提供时跳过），Playwright `44/44`，Firebase Emulator `4/4`，生产构建、Electron 语法检查、Android Java 编译与 `git diff --check` 均通过。
 
 ```powershell
 npm run test

@@ -3,9 +3,9 @@
 ## 当前可用性
 
 - `voice-mock-cn@1`：确定性开发与自动化验收模板，不会访问真实 Provider。
-- `voice-default-cn@1`：候选模板，组合豆包流式 ASR、DeepSeek LLM 和 Fish Audio TTS；尚未完成受控账号与真机验收，不能作为量产默认链路。
-- Web：只允许 Mock、自建中继，或明确通过 `browserDirectSupported` 校验的配置。浏览器中不得长期暴露 Provider 密钥。
-- Desktop/Android：真实链路仍需各 Provider 的宿主传输、凭据和受控连接测试。
+- `voice-default-cn@2`：候选模板，组合**阿里云 Paraformer 实时 ASR**、DeepSeek LLM 和 Fish Audio TTS。ASR 与 TTS 链路已于 2026-09-09 用受控账号完成真实服务验证（见 `STUDYJOURNAL_FIX_PLAN.md`）；豆包流式 ASR 与豆包 TTS 因 App ID 未开通/凭据不匹配暂不可用，保留为备选。真机与量产验收仍未完成，模板保持 `candidate`。
+- Web：只允许 Mock、自建中继，或明确通过 `browserDirectSupported` 校验的配置。浏览器中不得长期暴露 Provider 密钥。实测：阿里云 ASR 需自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish Audio preflight 无 CORS 头，因此 Web 端不提供真实语音链路。
+- Desktop/Android：真实链路仍需各 Provider 的宿主传输、凭据和受控连接测试。桌面端已实现主进程 WebSocket 代理（`study-journal:voice-asr-*`）与 TTS 宿主合成；Android 端 ASR 传输尚未接入。
 
 ## 模板与本机覆盖
 

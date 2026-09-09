@@ -34,9 +34,9 @@
 
 产品级 UI/UX 重构也已完成自动化收口：默认使用“温润阅读”，可在设置中切换到“清爽现代”，两套视觉主题与浅色/深色模式相互独立且只保存在当前设备。新的首页、日志资料库、连续编辑器、复习与学习助教、搜索、设置、备份、录音、播客和 AI 页面共用同一信息架构。2026-09-08 的后续改进进一步收紧主页面顶部空间，并在只读复习卡片中加入本地批注工具和跨 Tab 评分撤回；正式保存、FSRS 评分与云同步协议保持不变，具体实现边界见 [docs/review-annotation-and-rating-undo-plan.md](docs/review-annotation-and-rating-undo-plan.md)。完整单元测试、Desktop/Android 窄屏 E2E、Firebase Emulator 和生产构建均已通过；Android 真机软键盘、中文 IME、系统返回和真实账号配额仍需发布前人工验收。
 
-> 当前自动化基线：126 个 Vitest 文件、840 项测试，42 个 Desktop/Android-narrow Playwright 场景，以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真实语音 Provider/音频行为和真实 Firebase 配额仍属于人工发布门槛。
+> 当前自动化基线：140 个 Vitest 文件、889 项测试（其中 2 项为需密钥的线上验收，未提供时跳过），44 个 Desktop/Android-narrow Playwright 场景，以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真机音频行为与真实 Firebase 配额仍属于人工发布门槛。
 
-实时语音主动回忆已完成阶段 0–6 自动化收口：除隔离交互原型、schema 21 本机检查点、Web/Android PCM 采集和 Provider 适配底座外，复习页已有生产工作区，可从只读日志或当前复习卡进入，保留本机摘要，并在明确确认后整理为正式日志；学习助教支持文本/语音切换，语音转写必须人工确认后才沿既有 Coach 答案链提交。云同步、备份、模板升级和不可信内容边界已有反向证明测试。`?preview=voice-recall` 使用明亮默认声场、连续字幕和固定四键控制验收 Mock 通话交互，`?preview=stage3` 用于验收复习卡入口、生产工作区和日志编辑器，`?preview=coach` 用于验收 Coach 语音答案。真实 Provider 和真机检查仍是发布门槛，详见 [docs/realtime-voice-recall-implementation.md](docs/realtime-voice-recall-implementation.md)。
+实时语音主动回忆已接入真实 `ASR → LLM → TTS` 链路：复习页的生产工作区可从只读日志或当前复习卡进入，语音经真实识别后在“转写校对”阶段由用户确认，再由模型生成简短追问并真实播放；缺少任一环节凭据或平台不支持直连时会拒绝开始通话，而不是呈现模拟通话。阿里云 Paraformer 识别、DeepSeek 回复与 Fish Audio 合已于 2026-09-09 用受控账号验证，Android 使用原生 WebSocket 插件、桌面使用主进程代理。本机摘要、云同步/备份隔离、模板升级与不可信内容边界均有反向证明测试。`?preview=voice-recall` 仍是隔离的 Mock 交互原型，`?preview=stage3` 用于验收复习卡入口、生产工作区和日志编辑器，`?preview=coach` 用于验收 Coach 语音答案。Android 真机与账单核对仍是发布门槛，详见 [docs/realtime-voice-recall-implementation.md](docs/realtime-voice-recall-implementation.md)。
 
 ## 下载
 
@@ -260,7 +260,7 @@ npm run android:build:release
 - 云端复习事件历史目前只增不减；在引入可验证 checkpoint 与事件 tombstone 前不能直接清理。
 - Android 自动备份保留最近 5 个快照，但当前界面不提供选择历史快照回退。
 - AI 看图、长上下文和输出质量取决于模型供应商与 API 兼容性。
-- 实时语音复述的生产工作区与学习闭环已接入，但当前 ASR/教师回复仍明确使用确定性 Mock 或人工转写；真实 Provider、真实费用/配额、真机回声消除、蓝牙、音频焦点、来电、后台和弱网仍未验收。
+- 实时语音复述已接入真实 Provider（阿里云 ASR / DeepSeek / Fish Audio，2026-09-09 受控账号验证）；Web 端因浏览器限制不提供真实语音链路，真实费用与配额、Android 真机回声消除、蓝牙、音频焦点、来电、后台和弱网仍未验收。
 - 单个超大资源文件仍可能受 Android WebView、IndexedDB、Blob 和设备内存限制。
 
 ## 参与贡献与安全

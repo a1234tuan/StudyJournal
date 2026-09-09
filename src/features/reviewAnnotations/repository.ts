@@ -20,7 +20,9 @@ export const reviewAnnotationRepository = {
   async upsertDraft(draft: ReviewAnnotationDraft) {
     validateDraft(draft);
     const existing = await this.getDraft(draft.recordId, draft.reviewOccurrenceKey);
-    if (existing?.pendingClear) return;
+    // A stale pendingClear row (app closed before its 750ms delete) must not
+    // block future annotations; only an empty draft is suppressed.
+    if (existing?.pendingClear && draft.elements.length === 0) return;
     await db.reviewAnnotationDrafts.put(draft);
   },
   async deleteDraft(recordId: string, occurrenceKey: string) {
@@ -33,8 +35,5 @@ export const reviewAnnotationRepository = {
       ? { ...existing, elements: [], history: [[]], historyCursor: 0, pendingClear: true, updatedAt: now }
       : { id: `${recordId}:${occurrenceKey}`, recordId, reviewOccurrenceKey: occurrenceKey, contentRevision: "rated", schemaVersion: 1, elements: [], history: [[]], historyCursor: 0, pendingClear: true, updatedAt: now });
     globalThis.setTimeout(() => { void this.deleteDraft(recordId, occurrenceKey); }, 750);
-  },
-  async deleteRecordDrafts(recordId: string) {
-    await db.reviewAnnotationDrafts.where("recordId").equals(recordId).delete();
   },
 };
