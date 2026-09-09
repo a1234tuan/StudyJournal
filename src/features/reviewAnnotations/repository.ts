@@ -17,23 +17,37 @@ export const reviewAnnotationRepository = {
   async getDraft(recordId: string, occurrenceKey: string) {
     return db.reviewAnnotationDrafts.where("[recordId+reviewOccurrenceKey]").equals([recordId, occurrenceKey]).first();
   },
+  async openDraft(draft: ReviewAnnotationDraft) {
+    return db.transaction("rw", db.reviewAnnotationDrafts, async () => {
+      const existing = await this.getDraft(draft.recordId, draft.reviewOccurrenceKey);
+      const opened = existing && !existing.pendingClear && existing.contentRevision === draft.contentRevision
+        ? { ...existing, writeGeneration: existing.writeGeneration ?? 0 }
+        : { ...draft, writeGeneration: existing && !existing.pendingClear ? (existing.writeGeneration ?? 0) + 1 : existing?.writeGeneration ?? 0, pendingClear: false };
+      await db.reviewAnnotationDrafts.put(opened);
+      return opened;
+    });
+  },
   async upsertDraft(draft: ReviewAnnotationDraft) {
     validateDraft(draft);
-    const existing = await this.getDraft(draft.recordId, draft.reviewOccurrenceKey);
-    // A stale pendingClear row (app closed before its 750ms delete) must not
-    // block future annotations; only an empty draft is suppressed.
-    if (existing?.pendingClear && draft.elements.length === 0) return;
-    await db.reviewAnnotationDrafts.put(draft);
+    return db.transaction("rw", db.reviewAnnotationDrafts, async () => {
+      const existing = await this.getDraft(draft.recordId, draft.reviewOccurrenceKey);
+      if (existing?.pendingClear || (existing?.writeGeneration ?? 0) !== (draft.writeGeneration ?? 0)) return false;
+      await db.reviewAnnotationDrafts.put(draft);
+      return true;
+    });
   },
   async deleteDraft(recordId: string, occurrenceKey: string) {
-    await db.reviewAnnotationDrafts.where("[recordId+reviewOccurrenceKey]").equals([recordId, occurrenceKey]).delete();
+    await this.clearAfterRating(recordId, occurrenceKey);
   },
   async clearAfterRating(recordId: string, occurrenceKey: string) {
-    const existing = await this.getDraft(recordId, occurrenceKey);
-    const now = new Date().toISOString();
-    await db.reviewAnnotationDrafts.put(existing
-      ? { ...existing, elements: [], history: [[]], historyCursor: 0, pendingClear: true, updatedAt: now }
-      : { id: `${recordId}:${occurrenceKey}`, recordId, reviewOccurrenceKey: occurrenceKey, contentRevision: "rated", schemaVersion: 1, elements: [], history: [[]], historyCursor: 0, pendingClear: true, updatedAt: now });
-    globalThis.setTimeout(() => { void this.deleteDraft(recordId, occurrenceKey); }, 750);
+    await db.transaction("rw", db.reviewAnnotationDrafts, async () => {
+      const existing = await this.getDraft(recordId, occurrenceKey);
+      await db.reviewAnnotationDrafts.put({
+        ...(existing ?? { id: recordId + ":" + occurrenceKey, recordId, reviewOccurrenceKey: occurrenceKey, contentRevision: "rated", schemaVersion: 1 as const }),
+        elements: [], history: [[]], historyCursor: 0, pendingClear: true,
+        writeGeneration: (existing?.writeGeneration ?? 0) + 1,
+        updatedAt: new Date().toISOString(),
+      });
+    });
   },
 };

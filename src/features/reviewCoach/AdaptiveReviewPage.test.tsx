@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +28,7 @@ describe("AdaptiveReviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
 
     await waitFor(() => expect(props.onSubmitAnswer).toHaveBeenCalledTimes(1));
-    expect(props.onSubmitAnswer).toHaveBeenCalledWith(coachTestTurn.id, "修改后必须重新确认");
+    expect(props.onSubmitAnswer).toHaveBeenCalledWith(coachTestTurn.id, "修改后必须重新确认", expect.any(AbortSignal));
   });
 
   it("hides answer criteria and source until the user submits", () => {
@@ -67,4 +68,18 @@ describe("AdaptiveReviewPage", () => {
     await waitFor(() => expect(props.onFinishVerification).toHaveBeenCalledWith(coachTestTask.id, "decayed", undefined));
     expect(props.onFinish).not.toHaveBeenCalled();
   });
+});
+
+it("provides a fresh signal after StrictMode remount and aborts it on unmount", async () => {
+  const snapshot = completeCoachTestSnapshot();
+  snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "current" };
+  snapshot.adaptiveQuizTurns = [];
+  const generate = vi.fn(async (_id: string, _signal?: AbortSignal) => undefined);
+  const view = render(<StrictMode><AdaptiveReviewPage {...props} onGenerateTurn={generate} snapshot={snapshot} /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: "开始训练" }));
+  await waitFor(() => expect(generate).toHaveBeenCalledOnce());
+  const signal = generate.mock.calls[0][1];
+  expect(signal?.aborted).toBe(false);
+  view.unmount();
+  expect(signal?.aborted).toBe(true);
 });

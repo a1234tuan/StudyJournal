@@ -42,8 +42,7 @@ export interface VoiceRecallProviderSetup {
 }
 
 export const voiceRecallModeOptions: Array<{ id: VoiceRecallInputMode; label: string; note: string }> = [
-  { id: "auto-half-duplex", label: "自动轮次", note: "停顿后发送" },
-  { id: "push-to-talk", label: "按住讲话", note: "松开后发送" },
+  { id: "push-to-talk", label: "按住讲话", note: "松开后转写，确认后发送" },
   { id: "tap-to-record", label: "点击录音", note: "再次点击结束" },
 ];
 
@@ -228,13 +227,16 @@ export interface VoiceRecallHistoryViewProps {
   history: readonly VoiceRecallLocalHistory[];
   onBack: () => void;
   onDelete: (id: string) => void;
+  onLoadMore?: () => void;
+  loading?: boolean;
 }
 
-export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete }: VoiceRecallHistoryViewProps) => (
+export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
   <main className="vr-shell vr-history" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机通话历史</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>摘要不会进入云同步。需要跨设备保留时，请整理为正式日志。</p></section>
-    <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></article>)}</section>
+    <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></article>)}</section>
+    {onLoadMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更多</button>}
   </main>
 );
 

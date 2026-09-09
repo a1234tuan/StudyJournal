@@ -8,7 +8,7 @@ type PluginEvent = { sessionId: string; kind: "open" | "message" | "error" | "cl
 
 const createFakePlugin = () => {
   const listeners = new Set<(event: PluginEvent) => void>();
-  const sent: Array<{ sessionId: string; dataBase64: string }> = [];
+  const sent: Array<{ sessionId: string; kind: "text" | "binary"; text?: string; dataBase64?: string }> = [];
   let resolveOpen: ((value: { sessionId: string }) => void) | undefined;
   let sequence = 0;
   const plugin: NativeVoiceAsrPlugin = {
@@ -59,7 +59,7 @@ describe("android voice socket", () => {
     socket.onopen = onOpen;
     socket.onmessage = onMessage;
     // Capacitor's addListener resolves asynchronously; wait for registration.
-    await vi.waitFor(() => expect(plugin.addListener).toHaveBeenCalled());
+    await vi.waitFor(() => expect(plugin.open).toHaveBeenCalled());
 
     const sessionId = completeOpen();
     emit({ sessionId, kind: "open" });
@@ -68,7 +68,7 @@ describe("android voice socket", () => {
     socket.send(new Uint8Array([1, 2, 250]));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0].sessionId).toBe(sessionId);
-    expect([...decode(sent[0].dataBase64)]).toEqual([1, 2, 250]);
+    expect([...decode(sent[0].dataBase64!)]).toEqual([1, 2, 250]);
 
     emit({ sessionId, kind: "message", dataBase64: btoa(String.fromCharCode(9, 8)) });
     expect(onMessage).toHaveBeenCalledWith({ data: new Uint8Array([9, 8]) });
@@ -88,11 +88,12 @@ describe("android voice socket", () => {
       signal: controller.signal,
     });
 
-    await vi.waitFor(() => expect(plugin.addListener).toHaveBeenCalled());
+    await vi.waitFor(() => expect(plugin.open).toHaveBeenCalled());
     const sessionId = completeOpen();
     emit({ sessionId, kind: "open" });
     await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
-    expect(JSON.parse(new TextDecoder().decode(decode(sent[0].dataBase64))).header.action).toBe("run-task");
+    expect(sent[0].kind).toBe("text");
+    expect(JSON.parse(sent[0].text!).header.action).toBe("run-task");
 
     emit({ sessionId, kind: "message", dataBase64: toBase64(JSON.stringify({ header: { event: "task-started" } })) });
     const session = await opened;
@@ -106,7 +107,7 @@ describe("android voice socket", () => {
       kind: "message",
       dataBase64: toBase64(JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "间隔复习", sentence_end: true } } } })),
     });
-    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习" } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习", cumulative: true } });
 
     emit({ sessionId, kind: "message", dataBase64: toBase64(JSON.stringify({ header: { event: "task-finished" } })) });
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
@@ -118,7 +119,7 @@ describe("android voice socket", () => {
     const socket = createAndroidVoiceSocketFactory(plugin)("wss://example/ws", {});
     const onError = vi.fn();
     socket.onerror = onError;
-    await vi.waitFor(() => expect(plugin.addListener).toHaveBeenCalled());
+    await vi.waitFor(() => expect(plugin.open).toHaveBeenCalled());
 
     const sessionId = completeOpen();
     emit({ sessionId, kind: "error", message: "语音识别连接失败（HTTP 401）。" });

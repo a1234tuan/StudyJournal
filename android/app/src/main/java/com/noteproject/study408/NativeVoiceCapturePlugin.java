@@ -17,9 +17,11 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public final class NativeVoiceCapturePlugin extends Plugin {
     private PluginCall pendingStartCall;
+    private String activeRequestId;
 
     @PluginMethod
     public void start(PluginCall call) {
+        if (pendingStartCall != null) { call.reject("正在等待麦克风权限。", "BUSY"); return; }
         if (getPermissionState("microphone") != PermissionState.GRANTED) {
             pendingStartCall = call;
             requestPermissionForAlias("microphone", call, "microphonePermissionCallback");
@@ -30,7 +32,8 @@ public final class NativeVoiceCapturePlugin extends Plugin {
 
     @PermissionCallback
     public void microphonePermissionCallback(PluginCall call) {
-        PluginCall target = pendingStartCall != null ? pendingStartCall : call;
+        if (pendingStartCall == null || !pendingStartCall.getCallbackId().equals(call.getCallbackId())) return;
+        PluginCall target = pendingStartCall;
         pendingStartCall = null;
         if (getPermissionState("microphone") == PermissionState.GRANTED) startCapture(target);
         else target.reject("麦克风权限被拒绝，请在系统设置中允许本 App 使用麦克风。");
@@ -39,12 +42,14 @@ public final class NativeVoiceCapturePlugin extends Plugin {
     private void startCapture(PluginCall call) {
         int sampleRate = call.getInt("sampleRate", 16000);
         int frameSize = call.getInt("frameSize", 2048);
+        String requestId = call.getString("requestId", "");
         try {
             MediaPlaybackService.pauseForRecording(getContext());
             VoiceCaptureController.start(sampleRate, frameSize, new VoiceCaptureController.FrameListener() {
                 @Override
                 public void onFrame(byte[] data, long sequence, double capturedAtMonotonicMs, int actualSampleRate) {
                     JSObject event = new JSObject();
+                    event.put("requestId", requestId);
                     event.put("sequence", sequence);
                     event.put("capturedAtMonotonicMs", capturedAtMonotonicMs);
                     event.put("sampleRate", actualSampleRate);
@@ -56,11 +61,13 @@ public final class NativeVoiceCapturePlugin extends Plugin {
                 @Override
                 public void onError(String message) {
                     JSObject event = new JSObject();
+                    event.put("requestId", requestId);
                     event.put("message", message);
                     notifyListeners("captureError", event);
                     VoiceCaptureController.stop();
                 }
             });
+            activeRequestId = requestId;
             call.resolve();
         } catch (Exception error) {
             call.reject(error.getMessage(), error);
@@ -69,7 +76,22 @@ public final class NativeVoiceCapturePlugin extends Plugin {
 
     @PluginMethod public void pause(PluginCall call) { VoiceCaptureController.pause(); call.resolve(); }
     @PluginMethod public void resume(PluginCall call) { VoiceCaptureController.resume(); call.resolve(); }
-    @PluginMethod public void stop(PluginCall call) { VoiceCaptureController.stop(); call.resolve(); }
+    @PluginMethod public void stop(PluginCall call) {
+        String requestId = call.getString("requestId", "");
+        if (pendingStartCall != null && requestId.equals(pendingStartCall.getString("requestId", ""))) cancelPendingStart();
+        if (requestId.equals(activeRequestId)) {
+            VoiceCaptureController.stop();
+            activeRequestId = null;
+        }
+        call.resolve();
+    }
+
+    private void cancelPendingStart() {
+        if (pendingStartCall != null) {
+            pendingStartCall.reject("麦克风请求已取消。", "CANCELLED");
+            pendingStartCall = null;
+        }
+    }
 
     @PluginMethod
     public void status(PluginCall call) {
@@ -82,6 +104,7 @@ public final class NativeVoiceCapturePlugin extends Plugin {
 
     @Override
     public void handleOnDestroy() {
+        cancelPendingStart();
         VoiceCaptureController.stop();
         super.handleOnDestroy();
     }

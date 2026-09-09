@@ -57,7 +57,7 @@ declare global {
       }>;
       voiceAsr: Readonly<{
         open: (options: { url: string; headers: Record<string, string> }) => Promise<{ sessionId: string }>;
-        send: (sessionId: string, data: Uint8Array) => Promise<{ sent: boolean }>;
+        send: (sessionId: string, data: string | Uint8Array) => Promise<{ sent: boolean }>;
         close: (sessionId: string) => Promise<{ closed: boolean }>;
         onEvent: (listener: (payload: {
           sessionId: string;

@@ -67,10 +67,10 @@ export interface ReviewCoachRepository {
   createTask(task: AdaptiveReviewTask): Promise<AdaptiveReviewTask>;
   transitionTask(id: string, status: AdaptiveReviewTaskStatus, updatedAt: string, reason?: string): Promise<AdaptiveReviewTask>;
   switchCurrentTask(targetTaskId: string, updatedAt: string): Promise<AdaptiveReviewTask>;
-  addQuizTurn(turn: AdaptiveQuizTurn): Promise<AdaptiveQuizTurn>;
+  addQuizTurn(turn: AdaptiveQuizTurn, signal?: AbortSignal): Promise<AdaptiveQuizTurn>;
   transitionQuizTurn(id: string, status: AdaptiveQuizTurnStatus, updatedAt: string): Promise<AdaptiveQuizTurn>;
   recordQuizHint(id: string, level: number, requestedAt: string): Promise<AdaptiveQuizTurn>;
-  commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent): Promise<AdaptiveQuizTurn>;
+  commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal): Promise<AdaptiveQuizTurn>;
   invalidateQuizTurn(turnId: string, event: TaskOutcomeEvent, updatedAt: string): Promise<AdaptiveReviewTask>;
   addOutcome(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent>;
   commitTaskOutcome(
@@ -990,7 +990,8 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async addQuizTurn(turn: AdaptiveQuizTurn): Promise<AdaptiveQuizTurn> {
+  async addQuizTurn(turn: AdaptiveQuizTurn, signal?: AbortSignal): Promise<AdaptiveQuizTurn> {
+    signal?.throwIfAborted();
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const existing = await ensureIdempotentInsert(this.database.adaptiveQuizTurns, turn);
       if (existing) return existing;
@@ -1006,6 +1007,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw error;
       }
       await this.bumpMutation();
+      signal?.throwIfAborted();
       return turn;
     });
   }
@@ -1036,7 +1038,8 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent): Promise<AdaptiveQuizTurn> {
+  async commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal): Promise<AdaptiveQuizTurn> {
+    signal?.throwIfAborted();
     assertTaskOutcomeShape(event);
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const current = await this.database.adaptiveQuizTurns.get(turn.id);
@@ -1056,6 +1059,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       if (!existing) await this.database.taskOutcomeEvents.add(event);
       await this.rebuildProjectionsInTransaction();
       await this.bumpMutation();
+      signal?.throwIfAborted();
       return next;
     });
   }

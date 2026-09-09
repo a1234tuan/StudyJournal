@@ -39,7 +39,7 @@ public class NativeAiPlugin extends Plugin {
         String cancellationId = call.getString("requestId", "").trim();
 
         if (baseUrl.trim().isEmpty() || apiKey.trim().isEmpty() || model.trim().isEmpty()) {
-            call.reject("AI 接口配置不完整。");
+            call.reject("AI 接口配置不完整。", "CONFIGURATION");
             return;
         }
 
@@ -79,14 +79,16 @@ public class NativeAiPlugin extends Plugin {
                 int code = connection.getResponseCode();
                 String contentType = connection.getContentType() != null ? connection.getContentType() : "";
                 if (code < 200 || code >= 300) {
-                    call.reject("AI 接口请求失败：" + code + " " + extractErrorMessage(body, contentType, requestUrl));
+                    JSObject details = new JSObject();
+                    details.put("retryAfter", connection.getHeaderField("Retry-After"));
+                    call.reject("AI 接口请求失败。", "HTTP_" + code, details);
                     return;
                 }
 
                 JSONObject json = parseJsonBody(body, contentType, code, requestUrl);
                 JSONArray choices = json.optJSONArray("choices");
                 if (choices == null || choices.length() == 0) {
-                    call.reject("AI 接口返回为空，或不是 OpenAI 兼容格式。");
+                    call.reject("AI 接口返回为空，或不是 OpenAI 兼容格式。", "RESPONSE");
                     return;
                 }
                 JSONObject first = choices.optJSONObject(0);
@@ -124,7 +126,7 @@ public class NativeAiPlugin extends Plugin {
                 if (requestId != null && !requestId.trim().isEmpty()) result.put("requestId", requestId.trim());
                 call.resolve(result);
             } catch (Exception error) {
-                call.reject(error.getMessage() != null ? error.getMessage() : "AI 请求失败。", error);
+                call.reject("AI 请求失败。", error instanceof java.net.SocketTimeoutException ? "TIMEOUT" : error instanceof java.io.IOException ? "NETWORK" : "RESPONSE", error);
             } finally {
                 if (!cancellationId.isEmpty()) {
                     activeConnections.remove(cancellationId);

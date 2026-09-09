@@ -24,6 +24,7 @@ export interface VoiceTeacherTurn {
 
 export const buildVoiceTeacherMessages = (input: {
   learningGoal: string;
+  confirmedText?: string;
   knowledgeBoundary?: "supplement" | "strict";
   materials?: readonly VoiceTeacherMaterial[];
   turns?: readonly VoiceTeacherTurn[];
@@ -44,6 +45,7 @@ export const buildVoiceTeacherMessages = (input: {
     materialBlocks.push(`《${material.title}》\n${text}`);
   }
 
+  const inputTruncated = used < (input.materials ?? []).reduce((total, material) => total + material.text.trim().length, 0);
   const messages: VoiceTeacherMessage[] = [{
     role: "system",
     content: `${SYSTEM_PROMPT}\n本次目标：${input.learningGoal || "复述并发现理解缺口"}。${boundary}`,
@@ -53,7 +55,7 @@ export const buildVoiceTeacherMessages = (input: {
   if (materialBlocks.length) {
     messages.push({
       role: "user",
-      content: `以下是本次复述的学习资料：\n\n${materialBlocks.join("\n\n")}`,
+      content: `以下是本次复述的学习资料${inputTruncated ? "（已截断，不代表完整内容）" : ""}：\n\n${materialBlocks.join("\n\n")}`,
       contentBoundary: "untrusted-learning-content",
     });
   }
@@ -67,5 +69,8 @@ export const buildVoiceTeacherMessages = (input: {
     }
   }
 
+  if (input.confirmedText?.trim()) {
+    messages.push({ role: "user", content: input.confirmedText.trim(), contentBoundary: "untrusted-learning-content" });
+  }
   return messages;
 };

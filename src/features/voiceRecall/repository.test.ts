@@ -152,9 +152,9 @@ describe("VoiceRecallRepository", () => {
     database.close();
   });
 
-  it("caps the local history so it cannot grow without bound", async () => {
+  it("retains all explicitly saved history beyond 200 entries", async () => {
     const { database, repository } = await openRepository();
-    const total = VOICE_RECALL_LIMITS.maxHistoryEntries + 3;
+    const total = 203;
     for (let index = 0; index < total; index += 1) {
       await repository.saveHistory({
         ...history(),
@@ -163,8 +163,48 @@ describe("VoiceRecallRepository", () => {
       });
     }
     const list = await repository.listHistory();
-    expect(list).toHaveLength(VOICE_RECALL_LIMITS.maxHistoryEntries);
+    expect(list).toHaveLength(total);
+    expect(list.some((item) => item.id === "history-0")).toBe(true);
     expect(list[0].id).toBe(`history-${total - 1}`);
     database.close();
   }, 30_000);
+});
+
+it("paginates over 200 histories with equal timestamps without dropping or duplicating rows", async () => {
+  const { database, repository } = await openRepository();
+  await database.voiceRecallLocalHistory.bulkPut(Array.from({ length: 205 }, (_, index) => ({ ...history(), id: "page-" + String(index).padStart(3, "0") })));
+  let cursor: { savedAt: string; id: string } | undefined;
+  const ids: string[] = [];
+  do {
+    const page = await repository.listHistoryPage(cursor);
+    expect(page.items.length).toBeLessThanOrEqual(50);
+    ids.push(...page.items.map((item) => item.id));
+    cursor = page.nextCursor;
+  } while (cursor);
+  expect(ids).toHaveLength(205);
+  expect(new Set(ids).size).toBe(205);
+  expect(ids[0]).toBe("page-204");
+  expect(ids.at(-1)).toBe("page-000");
+  expect(await database.voiceRecallLocalHistory.count()).toBe(205);
+  database.close();
+});
+
+it("replayed usage observations replace operation totals and survive checkpoint saves", async () => {
+  const { database, repository } = await openRepository();
+  const original = session();
+  await repository.putSession(original);
+  await repository.recordUsage(original.id, "operation-1", { llmOutputTokens: 8 });
+  await repository.recordUsage(original.id, "operation-1", { llmOutputTokens: 8 });
+  await repository.putSession(original);
+  expect((await repository.getSession(original.id))?.usageOperations).toEqual({ "operation-1": { llmOutputTokens: 8 } });
+  database.close();
+});
+
+it("rolls back formal turn and checkpoint when cancellation wins the commit", async () => {
+  const { database, repository } = await openRepository();
+  await repository.putSession({ ...session(), checkpoint: { ...session().checkpoint, nextSequence: 0 } });
+  await expect(repository.commitTurn(turn(), "回答", () => false)).rejects.toThrow();
+  expect(await repository.listTurns("session-1")).toEqual([]);
+  expect((await repository.getSession("session-1"))?.checkpoint.nextSequence).toBe(0);
+  database.close();
 });

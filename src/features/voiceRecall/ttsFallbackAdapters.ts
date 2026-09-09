@@ -17,12 +17,13 @@ export class BufferedTtsFallbackAdapter implements TtsStreamAdapter {
   private readonly provider;
 
   async *synthesize(request: TtsStreamRequest): AsyncIterable<TtsStreamEvent> {
+    request.signal.throwIfAborted();
+    yield { type: "usage", characters: request.text.length };
     const blob = await this.provider.synthesize(request.text, { signal: request.signal });
     const chunk = new Uint8Array(await blob.arrayBuffer());
     if (chunk.byteLength) {
       yield { type: "audio", chunk, format: { encoding: "provider-native", sampleRate: 16_000, channelCount: 1 } };
     }
-    yield { type: "usage", characters: request.text.length };
     yield { type: "completed" };
   }
 }

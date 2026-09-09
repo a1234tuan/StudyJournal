@@ -7,7 +7,7 @@ export const VOICE_RECALL_LIMITS = {
   maxSessionTurns: 160,
   maxHistorySummaryCharacters: 12_000,
   completedSessionRetentionDays: 7,
-  maxHistoryEntries: 200,
+  historyPageSize: 50,
 } as const;
 
 const serializedSize = (value: unknown): number => new Blob([JSON.stringify(value)]).size;
@@ -51,8 +51,22 @@ export class VoiceRecallRepository {
 
   async putSession(session: VoiceRecallSessionLocal) {
     validateSession(session);
-    await this.database.voiceRecallSessions.put(structuredClone(session));
+    await this.database.transaction("rw", this.database.voiceRecallSessions, async () => {
+      const existing = await this.getSession(session.id);
+      await this.database.voiceRecallSessions.put(structuredClone({ ...session, checkpoint: existing && existing.checkpoint.nextSequence > session.checkpoint.nextSequence ? { ...session.checkpoint, nextSequence: existing.checkpoint.nextSequence, lastConfirmedText: existing.checkpoint.lastConfirmedText } : session.checkpoint, usageOperations: existing?.usageOperations ?? session.usageOperations, usageSources: existing?.usageSources ?? session.usageSources }));
+    });
     return session;
+  }
+
+  async recordUsage(sessionId: string, operationId: string, usage: Partial<import("./providerRuntime").VoiceUsageTotals>) {
+    await this.database.transaction("rw", this.database.voiceRecallSessions, async () => {
+      const session = await this.getSession(sessionId);
+      if (!session) return;
+      const operations = { ...session.usageOperations, [operationId]: usage };
+      const usageSources = { ...session.usageSources };
+      for (const metric of Object.keys(usage) as Array<keyof typeof usage>) usageSources[metric] = metric === "ttsCharacters" ? "local-estimate" : "provider-reported";
+      await this.database.voiceRecallSessions.update(sessionId, { usageOperations: operations, usageSources });
+    });
   }
 
   async putTurn(turn: VoiceRecallTurnLocal) {
@@ -70,7 +84,7 @@ export class VoiceRecallRepository {
     return turn;
   }
 
-  async commitTurn(turn: VoiceRecallTurnLocal, lastConfirmedText: string) {
+  async commitTurn(turn: VoiceRecallTurnLocal, lastConfirmedText: string, isCurrent = () => true) {
     validateTurn(turn);
     return this.database.transaction("rw", [this.database.voiceRecallSessions, this.database.voiceRecallTurns], async () => {
       const session = await this.database.voiceRecallSessions.get(turn.sessionId);
@@ -84,6 +98,7 @@ export class VoiceRecallRepository {
       if (await this.database.voiceRecallTurns.where("sessionId").equals(turn.sessionId).count() >= VOICE_RECALL_LIMITS.maxSessionTurns) {
         throw new Error("本次语音复述已达到轮次上限");
       }
+      if (!isCurrent()) throw new DOMException("轮次已取消", "AbortError");
       const updatedSession: VoiceRecallSessionLocal = {
         ...session,
         checkpoint: {
@@ -96,6 +111,7 @@ export class VoiceRecallRepository {
       };
       await this.database.voiceRecallTurns.put(structuredClone(turn));
       await this.database.voiceRecallSessions.put(structuredClone(updatedSession));
+      if (!isCurrent()) throw new DOMException("轮次已取消", "AbortError");
       return updatedSession;
     });
   }
@@ -107,13 +123,19 @@ export class VoiceRecallRepository {
   async saveHistory(history: VoiceRecallLocalHistory) {
     validateHistory(history);
     await this.database.voiceRecallLocalHistory.put(structuredClone(history));
-    // Bound local growth: drop the oldest summaries beyond the cap.
-    const total = await this.database.voiceRecallLocalHistory.count();
-    if (total > VOICE_RECALL_LIMITS.maxHistoryEntries) {
-      const oldest = await this.database.voiceRecallLocalHistory.orderBy("savedAt").limit(total - VOICE_RECALL_LIMITS.maxHistoryEntries).primaryKeys();
-      await this.database.voiceRecallLocalHistory.bulkDelete(oldest);
-    }
+
     return history;
+  }
+
+  async listHistoryPage(cursor?: { savedAt: string; id: string }, pageSize = VOICE_RECALL_LIMITS.historyPageSize) {
+    const size = Math.max(1, Math.min(50, pageSize));
+    const collection = cursor
+      ? this.database.voiceRecallLocalHistory.where("savedAt").belowOrEqual(cursor.savedAt).reverse()
+      : this.database.voiceRecallLocalHistory.orderBy("savedAt").reverse();
+    const rows = await collection.filter((item) => !cursor || item.savedAt < cursor.savedAt || (item.savedAt === cursor.savedAt && item.id < cursor.id)).limit(size + 1).toArray();
+    const items = rows.slice(0, size);
+    const last = items.at(-1);
+    return { items, nextCursor: rows.length > size && last ? { savedAt: last.savedAt, id: last.id } : undefined };
   }
 
   listHistory() {

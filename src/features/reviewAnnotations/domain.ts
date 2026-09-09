@@ -30,6 +30,7 @@ export interface ReviewAnnotationDraft {
   history: ReviewAnnotationElement[][];
   historyCursor: number;
   pendingClear?: boolean;
+  writeGeneration?: number;
   updatedAt: string;
 }
 

@@ -562,6 +562,26 @@ describe("DexieReviewCoachRepository", () => {
     expect(await database.taskOutcomeEvents.get(event.id)).toMatchObject({ answerAssessment: "correct", turnId: answered.id });
   });
 
+  it("rolls back an answer and outcome when cancelled during the transaction", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...snapshot.adaptiveReviewTasks[0], status: "in-progress", activeSlotKey: "global-current", openTargetKey: `${coachTestBlock.id}:1`, endedAt: undefined };
+    snapshot.adaptiveQuizTurns[0] = { ...snapshot.adaptiveQuizTurns[0], status: "displayed", answerText: undefined, assessment: undefined };
+    snapshot.taskOutcomeEvents = [];
+    snapshot.delayedVerifications = [];
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, snapshot));
+    const controller = new AbortController();
+    const add = database.taskOutcomeEvents.add.bind(database.taskOutcomeEvents);
+    const spy = vi.spyOn(database.taskOutcomeEvents, "add").mockImplementationOnce((...args) => add(...args).then((key) => {
+      controller.abort();
+      return key;
+    }));
+    const answered = { ...snapshot.adaptiveQuizTurns[0], status: "answered" as const, answerText: "answer", assessment: "correct" as const };
+    await expect(repository.commitQuizAnswer(answered, coachTestAnswerOutcome, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    spy.mockRestore();
+    expect((await database.adaptiveQuizTurns.get(answered.id))?.status).toBe("displayed");
+    expect(await database.taskOutcomeEvents.count()).toBe(0);
+  });
+
   it("rolls back quiz and task invalidation when the outcome event write fails", async () => {
     const snapshot = completeCoachTestSnapshot();
     const turn = { ...snapshot.adaptiveQuizTurns[0], status: "displayed" as const, answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };

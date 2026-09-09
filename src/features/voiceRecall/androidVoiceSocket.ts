@@ -14,7 +14,7 @@ interface NativeVoiceAsrEvent {
 
 export interface NativeVoiceAsrPlugin {
   open(options: { url: string; headers: Record<string, string> }): Promise<{ sessionId: string }>;
-  send(options: { sessionId: string; dataBase64: string }): Promise<{ sent: boolean }>;
+  send(options: { sessionId: string; dataBase64?: string; text?: string; kind: "text" | "binary" }): Promise<{ sent: boolean }>;
   close(options: { sessionId: string }): Promise<{ closed: boolean }>;
   addListener(eventName: "voiceAsrEvent", listener: (event: NativeVoiceAsrEvent) => void): Promise<PluginListenerHandle>;
 }
@@ -36,14 +36,18 @@ const encodeBase64 = (value: Uint8Array): string => {
 
 /** Android relays frames through Capacitor's JSON bridge, so bytes are base64. */
 export const createAndroidVoiceSocketFactory = (plugin: NativeVoiceAsrPlugin = NativeVoiceAsr): VoiceSocketFactory => {
+  let listenerReady: Promise<void> = Promise.resolve();
   const bridge: VoiceSocketBridge = {
-    open: (options) => plugin.open(options),
-    send: (sessionId, data) => plugin.send({ sessionId, dataBase64: encodeBase64(data) }),
+    open: async (options) => { await listenerReady; return plugin.open(options); },
+    send: (sessionId, data) => plugin.send(typeof data === "string"
+      ? { sessionId, kind: "text", text: data }
+      : { sessionId, kind: "binary", dataBase64: encodeBase64(data) }),
     close: (sessionId) => plugin.close({ sessionId }),
     onEvent: (listener) => {
       let handle: PluginListenerHandle | undefined;
       let disposed = false;
-      void plugin.addListener("voiceAsrEvent", (event) => {
+      listenerReady = plugin.addListener("voiceAsrEvent", (event) => {
+        if (disposed) return;
         const payload: VoiceSocketBridgeEvent = {
           sessionId: event.sessionId,
           kind: event.kind,
@@ -54,12 +58,12 @@ export const createAndroidVoiceSocketFactory = (plugin: NativeVoiceAsrPlugin = N
         };
         listener(payload);
       }).then((created) => {
-        if (disposed) void created.remove();
+        if (disposed) void created.remove().catch(() => undefined);
         else handle = created;
       });
       return () => {
         disposed = true;
-        void handle?.remove();
+        void handle?.remove().catch(() => undefined);
       };
     },
   };

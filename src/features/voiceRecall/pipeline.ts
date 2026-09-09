@@ -3,7 +3,6 @@ import type {
   AsrStreamEvent,
   AsrStreamRequest,
   LlmStreamAdapter,
-  LlmStreamEvent,
   TtsStreamAdapter,
   VoiceAudioFrame,
   VoiceTeacherMessage,
@@ -19,6 +18,7 @@ export interface VoiceRecallPipelineResult {
 
 export interface VoiceRecallPipelineEvents {
   onAsrEvent?: (event: AsrStreamEvent) => void;
+  onUsage?: (usage: Partial<VoiceUsageTotals>) => void;
   onTeacherToken?: (token: string) => void;
   onAudio?: (chunk: Uint8Array, generation: number) => void | Promise<void>;
 }
@@ -55,6 +55,7 @@ export class VoiceRecallPipeline {
     format: AsrStreamRequest["format"];
     signal: AbortSignal;
     onEvent?: (event: AsrStreamEvent) => void;
+    onUsage?: (usage: Partial<VoiceUsageTotals>) => void;
   }): Promise<{ transcript: string; usage: VoiceUsageTotals }> {
     const usage = new VoiceUsageMeter();
     let transcript = "";
@@ -68,8 +69,11 @@ export class VoiceRecallPipeline {
       frames: input.frames,
     })) {
       input.onEvent?.(event);
-      if (event.type === "final") transcript = event.text.trim();
-      if (event.type === "completed") usage.add({ asrSeconds: event.usageSeconds });
+      if (event.type === "final") transcript = event.cumulative ? event.text.trim() : transcript + event.text.trim();
+      if ((event.type === "completed" || event.type === "final") && event.usageSeconds !== undefined) {
+        usage.add({ asrSeconds: Math.max(0, event.usageSeconds - usage.snapshot().asrSeconds) });
+        input.onUsage?.({ asrSeconds: usage.snapshot().asrSeconds });
+      }
     }
     if (!transcript) throw new Error("ASR 没有返回可确认的最终转写");
     return { transcript, usage: usage.snapshot() };
@@ -83,48 +87,67 @@ export class VoiceRecallPipeline {
     voice: string;
     generation: number;
     signal: AbortSignal;
-    events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
+    events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio" | "onUsage">;
   }): Promise<{ teacherText: string; usage: VoiceUsageTotals }> {
     const usage = new VoiceUsageMeter();
     const sentenceBuffer = new SpeakableSentenceBuffer();
+    const controller = new AbortController();
+    const abort = () => controller.abort(input.signal.reason);
+    input.signal.addEventListener("abort", abort, { once: true });
+    if (input.signal.aborted) abort();
     let teacherText = "";
+    let sentenceIndex = 0;
+    let failure: unknown;
     let ttsTail = Promise.resolve();
     const speak = (text: string) => {
+      const index = sentenceIndex++;
       ttsTail = ttsTail.then(async () => {
+        controller.signal.throwIfAborted();
         for await (const event of this.tts.synthesize({
-          sessionId: input.sessionId,
-          turnId: input.turnId,
-          operationId: `${input.operationId}:tts:${crypto.randomUUID()}`,
-          signal: input.signal,
-          text,
-          voice: input.voice,
+          sessionId: input.sessionId, turnId: input.turnId,
+          operationId: input.operationId + ":tts:" + index,
+          signal: controller.signal, text, voice: input.voice,
         })) {
+          if (event.type === "usage" && event.characters !== undefined) {
+            usage.add({ ttsCharacters: event.characters });
+            input.events?.onUsage?.({ ttsCharacters: usage.snapshot().ttsCharacters });
+          }
+          controller.signal.throwIfAborted();
           if (event.type === "audio") await input.events?.onAudio?.(event.chunk, input.generation);
-          if (event.type === "usage") usage.add({ ttsCharacters: event.characters });
         }
-      });
+      }).catch((error: unknown) => { failure ??= error; controller.abort(error); });
     };
-
-    for await (const event of this.llm.complete({
-      sessionId: input.sessionId,
-      turnId: input.turnId,
-      operationId: `${input.operationId}:llm`,
-      signal: input.signal,
-      messages: input.messages,
-    } satisfies Parameters<LlmStreamAdapter["complete"]>[0])) {
-      const llmEvent = event as LlmStreamEvent;
-      if (llmEvent.type === "token") {
-        teacherText += llmEvent.text;
-        input.events?.onTeacherToken?.(llmEvent.text);
-        for (const sentence of sentenceBuffer.append(llmEvent.text)) speak(sentence);
-      } else if (llmEvent.type === "usage") {
-        usage.add({ llmInputTokens: llmEvent.inputTokens, llmOutputTokens: llmEvent.outputTokens });
+    try {
+      controller.signal.throwIfAborted();
+      for await (const event of this.llm.complete({
+        sessionId: input.sessionId, turnId: input.turnId,
+        operationId: input.operationId + ":llm", signal: controller.signal, messages: input.messages,
+      })) {
+        if (event.type === "usage") {
+          usage.add({ llmInputTokens: event.inputTokens, llmOutputTokens: event.outputTokens });
+          input.events?.onUsage?.({
+            ...(event.inputTokens !== undefined ? { llmInputTokens: usage.snapshot().llmInputTokens } : {}),
+            ...(event.outputTokens !== undefined ? { llmOutputTokens: usage.snapshot().llmOutputTokens } : {}),
+          });
+        }
+        controller.signal.throwIfAborted();
+        if (event.type === "token") {
+          teacherText += event.text;
+          input.events?.onTeacherToken?.(event.text);
+          for (const sentence of sentenceBuffer.append(event.text)) speak(sentence);
+        }
       }
+      const trailing = sentenceBuffer.flush();
+      if (trailing) speak(trailing);
+      await ttsTail;
+      if (failure) throw failure;
+      controller.signal.throwIfAborted();
+      return { teacherText, usage: usage.snapshot() };
+    } finally {
+      controller.abort();
+      input.signal.removeEventListener("abort", abort);
+      await ttsTail;
     }
-    const trailing = sentenceBuffer.flush();
-    if (trailing) speak(trailing);
-    await ttsTail;
-    return { teacherText, usage: usage.snapshot() };
   }
 
   async runTurn(input: {

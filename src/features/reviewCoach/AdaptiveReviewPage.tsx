@@ -56,7 +56,12 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
   const capturedFramesRef = useRef(0);
   // Leaving the page must cancel an in-flight paid generation, not just hide it.
   const requestAbortRef = useRef<AbortController>(new AbortController());
-  useEffect(() => () => { requestAbortRef.current.abort(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
+    setBusy(undefined);
+    return () => { controller.abort(); };
+  }, [taskId]);
 
   const stopVoiceCapture = async () => {
     captureAbortRef.current?.abort();
@@ -110,19 +115,22 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
   };
 
   const run = async (key: string, work: () => Promise<unknown>, success?: string) => {
+    const controller = requestAbortRef.current;
     setBusy(key);
     setMessage(undefined);
     try {
       await work();
+      if (controller.signal.aborted) return false;
       setAnswer("");
       setVoiceTranscriptConfirmed(false);
       if (success) setMessage(success);
       return true;
     } catch (error) {
+      if (controller.signal.aborted) return false;
       setMessage(formatActionableError(error, "adaptive-review"));
       return false;
     } finally {
-      setBusy(undefined);
+      if (!controller.signal.aborted) setBusy(undefined);
     }
   };
 
@@ -171,7 +179,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
         <section className="adaptive-review-start">
           <h2>准备好后开始第一轮</h2>
           <p>题目会基于当前复习蓝图生成，来源和答案依据将在作答后显示。</p>
-          <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void run("generate", () => onGenerateTurn(task.id))}>{busy === "generate" ? <LoaderCircle className="spin" size={18} /> : <Play size={18} />}开始训练</button>
+          <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void run("generate", () => onGenerateTurn(task.id, requestAbortRef.current.signal))}>{busy === "generate" ? <LoaderCircle className="spin" size={18} /> : <Play size={18} />}开始训练</button>
         </section>
       )}
 
@@ -208,7 +216,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
                 <button type="button" disabled={!answer.trim() || capturingVoice || Boolean(busy)} aria-pressed={voiceTranscriptConfirmed} className={voiceTranscriptConfirmed ? "active" : ""} onClick={() => { setVoiceTranscriptConfirmed(true); setMessage("转写已确认，可以提交本题回答。"); }}><Check size={16} />{voiceTranscriptConfirmed ? "转写已确认" : "确认转写"}</button>
               </div>}
               <div className="adaptive-review-primary-actions">
-                <button type="button" className="primary-button" disabled={!answer.trim() || Boolean(busy) || capturingVoice || (answerInputMode === "voice" && !voiceTranscriptConfirmed)} onClick={() => void run("answer", () => onSubmitAnswer(currentTurn.id, answer.trim()))}>{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提交回答</button>
+                <button type="button" className="primary-button" disabled={!answer.trim() || Boolean(busy) || capturingVoice || (answerInputMode === "voice" && !voiceTranscriptConfirmed)} onClick={() => void run("answer", () => onSubmitAnswer(currentTurn.id, answer.trim(), requestAbortRef.current.signal))}>{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提交回答</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => void run("skip", () => onSkipTurn(currentTurn.id))}>跳过本题</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => setShowInvalid(true)}><Flag size={16} />题目有问题</button>
               </div>
@@ -221,7 +229,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
               <div><small>答案依据</small><ul>{currentTurn.answerCriteria.map((item) => <li key={item}>{item}</li>)}</ul></div>
               <div className="adaptive-review-source"><small>来源片段 · {record.title}</small><p>{extractSourceText(record, task.decisionBlockId)}</p></div>
               {!finishing && <div className="adaptive-review-primary-actions">
-                {canContinue && <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void run("generate", () => onGenerateTurn(task.id))}><RotateCcw size={17} />继续下一轮</button>}
+                {canContinue && <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={() => void run("generate", () => onGenerateTurn(task.id, requestAbortRef.current.signal))}><RotateCcw size={17} />继续下一轮</button>}
                 <button type="button" onClick={() => setFinishing(true)}><Check size={17} />结束本次训练</button>
               </div>}
             </div>

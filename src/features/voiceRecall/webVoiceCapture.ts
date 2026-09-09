@@ -26,14 +26,18 @@ export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
 
   async *start(options: VoiceCaptureOptions, signal: AbortSignal): AsyncIterable<VoiceAudioFrame> {
     if (this.stream) throw new Error("语音采集已经在进行中");
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: {
+    if (signal.aborted) return;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: {
       channelCount: options.preferredFormat.channelCount,
       sampleRate: options.preferredFormat.sampleRate,
       echoCancellation: options.echoCancellation,
       noiseSuppression: options.noiseSuppression,
       autoGainControl: options.autoGainControl,
     } });
+    if (signal.aborted) { stream.getTracks().forEach((track) => track.stop()); return; }
+    this.stream = stream;
     await window.studyJournalDesktop?.voice.setCaptureActive(true);
+    if (signal.aborted) { await this.stop(); return; }
     this.context = new AudioContext({ sampleRate: options.preferredFormat.sampleRate });
     this.source = this.context.createMediaStreamSource(this.stream);
     this.processor = this.context.createScriptProcessor(2048, 1, 1);
@@ -47,8 +51,17 @@ export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
     });
     this.source.connect(this.processor);
     this.processor.connect(this.context.destination);
-    signal.addEventListener("abort", () => { void this.stop(); }, { once: true });
-    for await (const frame of this.queue) yield frame;
+    const abort = () => { void this.stop(); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      for await (const frame of this.queue) {
+        if (signal.aborted) break;
+        yield frame;
+      }
+    } finally {
+      signal.removeEventListener("abort", abort);
+      await this.stop();
+    }
   }
 
   async pause() {

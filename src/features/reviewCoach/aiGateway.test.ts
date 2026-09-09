@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sendChatCompletionDetailed } from "../../services/aiClientService";
 import { buildFeedbackInterpretationPrompt, createFeedbackInterpretationGateway } from "./aiGateway";
 
-vi.mock("../../services/aiClientService", () => ({
+vi.mock("../../services/aiClientService", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../services/aiClientService")>(),
   sendChatCompletionDetailed: vi.fn(),
 }));
 

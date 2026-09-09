@@ -1,6 +1,7 @@
 import type { AppSettings } from "../../types";
 import { formatUiError } from "../../lib/uiError";
 import { getCurrentAiProvider } from "../../lib/aiProviders";
+import { getCurrentTtsProvider } from "../../lib/ttsProviders";
 import type { VoiceAudioFormat } from "./contracts";
 import { resolveVoiceSecret, voiceAsrSecretId } from "./credentials";
 import { createAndroidVoiceSocketFactory } from "./androidVoiceSocket";
@@ -41,6 +42,7 @@ export const describeVoiceError = (error: unknown): string =>
 
 export interface ProductionVoiceSession {
   pipeline: VoiceRecallPipeline;
+  provider?: import("./localTypes").VoiceRecallProviderSnapshot;
   asrFormat: VoiceAudioFormat;
   ttsVoice: string;
   ttsEncoding: VoicePlaybackEncoding;
@@ -67,14 +69,18 @@ const overridesFromConfig = (
   return {
     templateId,
     asr: {
-      endpoint: config.asrEndpoint || undefined,
-      model: config.asrModel || undefined,
-      resourceId: config.asrResourceId || undefined,
+      ...(config.asrEndpoint ? { endpoint: config.asrEndpoint } : {}),
+      ...(config.asrModel ? { model: config.asrModel } : {}),
+      ...(config.asrResourceId ? { resourceId: config.asrResourceId } : {}),
+    },
+    llm: {
+      ...(config.llmBaseUrl ? { baseUrl: config.llmBaseUrl } : {}),
+      ...(config.llmModel ? { model: config.llmModel } : {}),
     },
     tts: {
-      endpoint: config.ttsEndpoint || undefined,
-      model: config.ttsModel || undefined,
-      voice: config.ttsVoice || undefined,
+      ...(config.ttsEndpoint ? { endpoint: config.ttsEndpoint } : {}),
+      ...(config.ttsModel ? { model: config.ttsModel } : {}),
+      ...(config.ttsVoice ? { voice: config.ttsVoice } : {}),
     },
   };
 };
@@ -115,26 +121,33 @@ export const createProductionVoiceSession = async (
   input: CreateProductionVoiceSessionInput,
 ): Promise<ProductionVoiceSession> => {
   const platform = input.platform ?? voiceRuntimePlatform();
-  const baseTemplate = USER_VOICE_TEMPLATES.find((item) => item.templateId === input.templateId) ?? USER_VOICE_TEMPLATES[0];
+  const baseTemplate = input.templateId ? USER_VOICE_TEMPLATES.find((item) => item.templateId === input.templateId) : USER_VOICE_TEMPLATES[0];
+  if (!baseTemplate) throw new VoiceConfigurationError("语音模板已失效，请重新选择。");
   const configuredLlm = getCurrentAiProvider(input.settings.ai);
   if (!configuredLlm) throw new VoiceConfigurationError("请先在“更多 → AI 设置”里配置 AI 供应商。");
   const llmProfile = { ...configuredLlm, maxTokens: Math.min(configuredLlm.maxTokens || VOICE_LLM_MAX_TOKENS, VOICE_LLM_MAX_TOKENS) };
   // The template's LLM id is aspirational; the user's configured provider is what
   // actually runs, so bind the template to it before resolving.
-  const template = { ...baseTemplate, llmProfileId: llmProfile.id };
+  const configuredTts = getCurrentTtsProvider(input.settings.tts);
+  if (configuredTts && configuredTts.providerId !== "fish-audio") throw new VoiceConfigurationError("本轮语音复述需要选择 Fish Audio 配置。");
+  const baseTts = BUILT_IN_VOICE_TTS_PROFILES.find((profile) => profile.id === baseTemplate.ttsProfileId)!;
+  const ttsProfile = configuredTts ? { ...baseTts, id: configuredTts.id, model: configuredTts.model, voice: configuredTts.voice } : baseTts;
+  if (configuredTts?.id === llmProfile.id) throw new VoiceConfigurationError("AI 与 TTS 使用了相同的旧密钥槽，请为 Fish Audio 新建独立配置并重新填写密钥。");
+  const template = { ...baseTemplate, llmProfileId: llmProfile.id, ttsProfileId: ttsProfile.id };
 
   const resolved = resolveVoiceProviderTemplate({
     template,
     asrProfiles: BUILT_IN_ASR_PROFILES,
     llmProfiles: [llmProfile],
-    ttsProfiles: BUILT_IN_VOICE_TTS_PROFILES,
+    ttsProfiles: [ttsProfile],
     overrides: overridesFromConfig(input.config, template.templateId),
   });
 
+  if (resolved.tts.endpoint !== baseTts.endpoint) throw new VoiceConfigurationError("当前句级 TTS 仅支持 Fish Audio 官方端点，请还原 TTS 端点配置。");
   const [asrSecret, llmSecret, ttsSecret] = await Promise.all([
     resolveVoiceSecret({ profileId: voiceAsrSecretId(resolved.asr), providerId: resolved.asr.providerId }),
-    resolveVoiceSecret({ profileId: llmProfile.id, providerId: "default", fallbackIds: ["default"] }),
-    resolveVoiceSecret({ profileId: resolved.tts.id, providerId: resolved.tts.providerId, fallbackIds: ["fish-audio", "default"] }),
+    resolveVoiceSecret({ profileId: llmProfile.id }),
+    resolveVoiceSecret({ profileId: resolved.tts.id, fallbackIds: configuredTts ? [] : ["fish-audio"] }),
   ]);
   if (!asrSecret) throw new VoiceConfigurationError(`缺少 ${resolved.asr.providerName} 的密钥，请在语音服务设置中填写。`);
   if (!llmSecret) throw new VoiceConfigurationError(`缺少 ${llmProfile.providerName} 的 API Key，请在“更多 → AI 设置”中填写。`);
@@ -159,6 +172,12 @@ export const createProductionVoiceSession = async (
 
   return {
     pipeline: new VoiceRecallPipeline(asr, llm, tts),
+    provider: {
+      templateId: template.templateId, templateVersion: template.version,
+      asrProfileId: resolved.asr.id, llmProfileId: resolved.llm.id, ttsProfileId: resolved.tts.id,
+      configurationIdentity: JSON.stringify({ asr: resolved.asr, llm: resolved.llm, tts: resolved.tts }),
+      config: input.config,
+    },
     asrFormat: {
       encoding: resolved.asr.acceptedFormats[0] ?? "pcm-s16le",
       sampleRate: resolved.asr.acceptedSampleRates[0] ?? DEFAULT_ALIYUN_ASR_CONFIG.sampleRate,

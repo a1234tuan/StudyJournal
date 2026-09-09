@@ -35,3 +35,13 @@ describe("createAsyncQueue", () => {
     expect(queue.closed).toBe(true);
   });
 });
+
+it("rejects waiting and future consumers on failure", async () => {
+  const queue = createAsyncQueue<string>();
+  const iterator = queue[Symbol.asyncIterator]();
+  const pending = iterator.next();
+  queue.fail(new Error("transport failed"));
+  await expect(pending).rejects.toThrow("transport failed");
+  await expect(iterator.next()).rejects.toThrow("transport failed");
+  expect(queue.closed).toBe(true);
+});

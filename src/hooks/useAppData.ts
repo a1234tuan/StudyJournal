@@ -523,12 +523,12 @@ export const useAppData = () => {
       { role: "question-quality-reviewer" as const, promptVersion: defaultQuizExecutionMetadata.questionQualityPromptVersion },
       { role: "answer-evaluator" as const, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion },
     ];
-    let quizTimeoutMs = 60_000;
+    const roleTimeouts: Partial<Record<typeof roleSpecs[number]["role"], number>> = {};
     for (const spec of roleSpecs) {
       const existing = reviewCoachSnapshot.aiRoleConfigs.find((item) => item.role === spec.role && !item.deletedAt);
       // The persisted timeout is authoritative so the stored config is not a lie.
-      const timeoutMs = existing?.timeoutMs ?? quizTimeoutMs;
-      if (spec.role === "turn-generator") quizTimeoutMs = timeoutMs;
+      const timeoutMs = existing?.timeoutMs ?? 60_000;
+      roleTimeouts[spec.role] = timeoutMs;
       await reviewCoachRepository.saveAiRoleConfig({
         id: existing?.id ?? `ai-role:${spec.role}`, role: spec.role, providerId: provider.id, model: provider.model, enabled: true,
         promptVersion: spec.promptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, schemaVersion: defaultQuizExecutionMetadata.schemaVersion,
@@ -537,7 +537,7 @@ export const useAppData = () => {
         timeoutMs, maxRetries: 0, maxConcurrency: 1, createdAt: existing?.createdAt ?? stamp, updatedAt: stamp,
       });
     }
-    const gateway = createQuizExecutionGateway({ provider, apiKey, timeoutMs: quizTimeoutMs });
+    const gateway = createQuizExecutionGateway({ provider, apiKey, roleTimeouts });
     return {
       provider,
       orchestrator: new ReviewCoachOrchestrator({

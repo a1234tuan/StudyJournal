@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AiKnowledgeScopePicker } from "../../components/AiKnowledgeScopePicker";
 import { getAiKnowledgeScopeRecords } from "../../services/aiContextService";
 import { getCurrentAiProvider } from "../../lib/aiProviders";
+import { getCurrentTtsProvider } from "../../lib/ttsProviders";
 import { recordToPlainText } from "../../lib/recordContent";
 import type { AppSettings, Asset, Block, ContentTemplate, RecordBlock, SubjectConfig } from "../../types";
 import type { VoiceRecallNavigationRoute } from "../../lib/tabNavigation";
@@ -32,6 +33,7 @@ import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "./nativeVoi
 import type { VoicePlaybackSink } from "./playbackQueue";
 import {
   createProductionVoiceSession,
+  VoiceConfigurationError,
   describeVoiceError,
   type CreateProductionVoiceSessionInput,
   type ProductionVoiceSession,
@@ -63,6 +65,7 @@ import {
   type VoiceProviderEditableConfig,
 } from "./providerProfiles";
 import "./voiceRecallWorkspace.css";
+import { VoiceAsrCredentialSettings } from "./VoiceAsrCredentialSettings";
 
 const INPUT_MODES = voiceRecallModeOptions.map((mode) => ({ ...mode, detail: mode.note }));
 
@@ -129,7 +132,7 @@ export const VoiceRecallWorkspace = ({
     sampleRate: session.ttsSampleRate,
   }),
 }: VoiceRecallWorkspaceProps) => {
-  const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("auto-half-duplex");
+  const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("tap-to-record");
   const [topic, setTopic] = useState(route.topic ?? "");
   const [learningGoal, setLearningGoal] = useState(route.learningGoal ?? "复述并发现理解缺口");
   const [knowledgeBoundary, setKnowledgeBoundary] = useState<"supplement" | "strict">("supplement");
@@ -158,9 +161,10 @@ export const VoiceRecallWorkspace = ({
   const [providerTemplateId, setProviderTemplateId] = useState(() => readVoiceProviderTemplateId());
   const [providerConfig, setProviderConfig] = useState<VoiceProviderEditableConfig | undefined>(() => readVoiceProviderConfig());
   const [providerSummary, setProviderSummary] = useState<{ asr: string; llm: string; tts: string } | undefined>();
-  const disclosureStorageKey = useMemo(() => `study-journal.voice-recall.disclosure.${providerTemplateId}`, [providerTemplateId]);
+  const disclosureStorageKey = useMemo(() => `study-journal.voice-recall.disclosure.${JSON.stringify({ template: providerTemplateId, config: providerConfig, ai: getCurrentAiProvider(settings.ai), tts: getCurrentTtsProvider(settings.tts) })}`, [providerTemplateId, providerConfig, settings.ai, settings.tts]);
   const framesRef = useRef(0);
-  const sessionRef = useRef<ProductionVoiceSession | undefined>(undefined);
+  const recordingSecondsRef = useRef(0);
+  const sessionRef = useRef<ProductionVoiceSession | undefined>(runtime.productionSession);
   const frameQueueRef = useRef<AsyncQueue<VoiceAudioFrame> | undefined>(undefined);
   const asrFinalRef = useRef<string | undefined>(undefined);
 
@@ -176,21 +180,72 @@ export const VoiceRecallWorkspace = ({
     setPreflightOpen(false);
   }, [disclosureStorageKey]);
 
-  const reloadHistory = useCallback(async () => setHistory(await repository.listHistory()), [repository]);
+  const [historyCursor, setHistoryCursor] = useState<{ savedAt: string; id: string }>();
+  const reloadHistory = useCallback(async () => {
+    const page = await repository.listHistoryPage();
+    setHistory(page.items);
+    setHistoryCursor(page.nextCursor);
+  }, [repository]);
+  const loadMoreHistory = async () => {
+    if (!historyCursor || busy) return;
+    setBusy(true);
+    try {
+      const page = await repository.listHistoryPage(historyCursor);
+      setHistory((current) => [...current, ...page.items.filter((item) => !current.some((old) => old.id === item.id))]);
+      setHistoryCursor(page.nextCursor);
+    } catch (error) { setMessage(describeVoiceError(error)); } finally { setBusy(false); }
+  };
   const reloadTurns = useCallback(async () => {
     if (!route.sessionId) return setTurns([]);
     setTurns(await repository.listTurns(route.sessionId));
   }, [repository, route.sessionId]);
 
   useEffect(() => {
-    const unsubscribe = runtime.subscribe(setRuntimeState);
+    const unsubscribe = runtime.subscribe((snapshot) => {
+      setRuntimeState(snapshot);
+      if (snapshot?.status === "paused" || snapshot?.status === "ended") {
+        frameQueueRef.current?.close();
+        frameQueueRef.current = undefined;
+        setCapturing(false);
+        setBusy(false);
+        setTranscribing(false);
+      }
+    });
     return () => { unsubscribe(); };
   }, [runtime]);
   useEffect(() => { void reloadHistory(); }, [reloadHistory]);
   useEffect(() => { void reloadTurns(); }, [reloadTurns]);
   useEffect(() => {
-    if (route.screen !== "call" || !route.sessionId || runtime.activeSessionId === route.sessionId) return;
-    void runtime.restoreSession(route.sessionId).catch((error) => setMessage(describeVoiceError(error)));
+    if (route.screen !== "call" || !route.sessionId) return;
+    let active = true;
+    const restore = async () => {
+      const available = await repository.getSession(route.sessionId!);
+      if (!available || available.sourceUnavailable) throw new VoiceConfigurationError("会话来源已不可用，无法恢复。");
+      if (!active) return;
+      if (runtime.activeSessionId === route.sessionId && runtime.productionSession) {
+        sessionRef.current = runtime.productionSession;
+        setProviderSummary(runtime.productionSession.summary);
+        setInputMode(runtime.snapshot?.inputMode ?? "tap-to-record");
+        return;
+      }
+      sessionRef.current = undefined;
+      const stored = await repository.getSession(route.sessionId!);
+      if (!stored?.provider.configurationIdentity) throw new VoiceConfigurationError("旧会话缺少可确认的服务配置，请开始新会话。");
+      const production = await sessionFactory({ settings, templateId: stored.provider.templateId, config: stored.provider.config });
+      if (production.provider?.configurationIdentity !== stored.provider.configurationIdentity) throw new VoiceConfigurationError("服务配置已变更，请重新确认并开始新会话。");
+      if (!active) return;
+      await runtime.restoreSession(route.sessionId!);
+      if (!active) { await runtime.pause(); return; }
+      await runtime.attachProductionSession(production);
+      sessionRef.current = production;
+      runtime.setPlaybackSink(playbackSinkFactory(production));
+      setTranscript(stored.checkpoint.lastConfirmedText ?? "");
+      setLearningGoal(stored.memory.learningGoal);
+      setInputMode(runtime.snapshot?.inputMode ?? "tap-to-record");
+      setProviderSummary(production.summary);
+    };
+    void restore().catch((error) => { if (active) setMessage(describeVoiceError(error)); });
+    return () => { active = false; };
   }, [route.screen, route.sessionId, runtime]);
   useEffect(() => () => { void runtime.disposeView(); }, [runtime]);
 
@@ -213,6 +268,7 @@ export const VoiceRecallWorkspace = ({
         config: providerConfig,
       });
       sessionRef.current = session;
+
       setProviderSummary(session.summary);
       runtime.setPlaybackSink(playbackSinkFactory(session));
       const sessionId = await runtime.createSession({
@@ -225,6 +281,7 @@ export const VoiceRecallWorkspace = ({
           returnIdentity: nextRoute.returnTab,
         },
       });
+      await runtime.attachProductionSession(session);
       await runtime.updateMemory({ learningGoal: nextRoute.learningGoal ?? learningGoal });
       runtime.dispatch({ type: "OPEN_PREFLIGHT" });
       runtime.dispatch({ type: "CONFIRM_DISCLOSURE", confirmed: true });
@@ -256,6 +313,7 @@ export const VoiceRecallWorkspace = ({
 
   const resume = () => {
     if (runtime.snapshot?.status !== "paused") return;
+    if (!sessionRef.current) { setMessage("语音服务尚未恢复，请检查本机配置后重试。"); return; }
     runtime.dispatch({ type: "RESUME" });
     runtime.dispatch({ type: "CONNECTED" });
   };
@@ -268,13 +326,13 @@ export const VoiceRecallWorkspace = ({
       return;
     }
     setMessage("");
-    framesRef.current = 0;
+    if (!frameQueueRef.current) { framesRef.current = 0; recordingSecondsRef.current = 0; }
     try {
       if (runtime.snapshot?.status === "paused") resume();
       if (runtime.snapshot?.status === "listening" && !runtime.snapshot.captureRequested) {
         runtime.dispatch({ type: "SET_CAPTURE_REQUESTED", requested: true });
       }
-      const queue = createAsyncQueue<VoiceAudioFrame>();
+      const queue = frameQueueRef.current ?? createAsyncQueue<VoiceAudioFrame>();
       frameQueueRef.current = queue;
       const adapter = canUseNativeVoiceCapture() ? new NativeVoiceCaptureAdapter() : new WebVoiceCaptureAdapter();
       await runtime.startCapture(adapter, {
@@ -284,8 +342,13 @@ export const VoiceRecallWorkspace = ({
         autoGainControl: true,
         preferredFormat: session.asrFormat,
       }, (frame) => {
+        if (recordingSecondsRef.current >= 120) return;
+        const previousSeconds = recordingSecondsRef.current;
+        recordingSecondsRef.current += frame.data.byteLength / (frame.format.sampleRate * frame.format.channelCount * 2);
         framesRef.current += 1;
         queue.push(frame);
+        if (previousSeconds < 90 && recordingSecondsRef.current >= 90) setMessage("录音已达 90 秒，120 秒将自动结束并进入转写。");
+        if (recordingSecondsRef.current >= 120) void stopCapture();
       }, (error) => {
         queue.close();
         frameQueueRef.current = undefined;
@@ -300,7 +363,7 @@ export const VoiceRecallWorkspace = ({
   };
 
   const stopCapture = async () => {
-    if (!capturing) return;
+    if (!frameQueueRef.current) return;
     const queue = frameQueueRef.current;
     const session = sessionRef.current;
     frameQueueRef.current = undefined;
@@ -320,6 +383,7 @@ export const VoiceRecallWorkspace = ({
       if (runtime.snapshot?.status === "finalizing-asr") runtime.dispatch({ type: "CANCEL_TURN" });
       return;
     }
+    const generation = runtime.operationGeneration;
     setTranscribing(true);
     setMessage("正在识别你的回答…");
     try {
@@ -331,18 +395,28 @@ export const VoiceRecallWorkspace = ({
           if (event.type === "partial" || event.type === "final") setTranscript(event.text);
         },
       });
+      if (!runtime.isCurrentOperation(generation)) return;
       asrFinalRef.current = result.transcript;
       setTranscript(result.transcript);
       setTranscriptEditorOpen(true);
       setMessage("转写已就绪，请校对后点击“确认并发送”。");
     } catch (error) {
+      if (!runtime.isCurrentOperation(generation)) return;
       asrFinalRef.current = undefined;
+      setTranscribing(false);
       setMessage(describeVoiceError(error));
       if (runtime.snapshot?.status === "finalizing-asr") runtime.dispatch({ type: "CANCEL_TURN" });
     } finally {
-      setTranscribing(false);
+      if (runtime.isCurrentOperation(generation)) setTranscribing(false);
     }
   };
+
+  useEffect(() => {
+    if (!capturing) return;
+    const warning = setTimeout(() => setMessage("录音已达 90 秒，120 秒将自动结束并进入转写。"), 90_000);
+    const limit = setTimeout(() => { void stopCapture(); }, 120_000);
+    return () => { clearTimeout(warning); clearTimeout(limit); };
+  }, [capturing]);
 
   const ensureListening = () => {
     if (runtime.snapshot?.status === "paused") resume();
@@ -362,10 +436,13 @@ export const VoiceRecallWorkspace = ({
     }
     setBusy(true);
     setMessage("");
+    const generation = runtime.operationGeneration;
+    const assertCurrent = () => { if (!runtime.isCurrentOperation(generation)) throw new DOMException("轮次已取消", "AbortError"); };
     try {
       ensureListening();
       const stored = await repository.getSession(route.sessionId);
-      if (!stored) throw new Error("语音复述会话不存在");
+      if (!stored || stored.sourceUnavailable) throw new VoiceConfigurationError("语音复述会话或学习来源已不可用。");
+      assertCurrent();
       const current = runtime.snapshot;
       if (current?.status === "listening") {
         if (!current.captureRequested) runtime.dispatch({ type: "SET_CAPTURE_REQUESTED", requested: true });
@@ -374,6 +451,7 @@ export const VoiceRecallWorkspace = ({
       runtime.dispatch({ type: "ASR_FINALIZED", transcript: confirmedText });
 
       const messages: VoiceTeacherMessage[] = buildVoiceTeacherMessages({
+        confirmedText,
         learningGoal: route.learningGoal ?? learningGoal,
         knowledgeBoundary,
         materials: selectedRecords.map((record) => ({ title: record.title, text: recordToPlainText(record, assets) })),
@@ -399,6 +477,7 @@ export const VoiceRecallWorkspace = ({
       });
       if (!replyStarted) runtime.dispatch({ type: "LLM_REPLIED", teacherText: result.teacherText });
       await runtime.waitForPlayback();
+      assertCurrent();
       runtime.dispatch({ type: "PLAYBACK_FINISHED" });
 
       const now = new Date().toISOString();
@@ -407,7 +486,9 @@ export const VoiceRecallWorkspace = ({
         id: crypto.randomUUID(),
         sessionId: route.sessionId,
         sequence: stored.checkpoint.nextSequence,
-        operationId: crypto.randomUUID(),
+        operationId: result.operationId,
+        usage: result.observedUsage,
+        usageSources: Object.fromEntries(Object.keys(result.observedUsage).map((metric) => [metric, metric === "ttsCharacters" ? "local-estimate" : "provider-reported"])),
         status: "completed",
         teacherText: result.teacherText,
         providerFinalText: asrFinal,
@@ -418,26 +499,33 @@ export const VoiceRecallWorkspace = ({
         createdAt: now,
         updatedAt: now,
       };
-      await runtime.commitTurn(turn);
+      await runtime.commitTurn(turn, generation);
+      assertCurrent();
       setTranscript("");
       setTeacherDraft("");
       asrFinalRef.current = undefined;
+      assertCurrent();
       await reloadTurns();
     } catch (error) {
+      if (!runtime.isCurrentOperation(generation)) return;
+      setBusy(false);
       setMessage(describeVoiceError(error));
+      if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
       if (runtime.snapshot?.status === "thinking" || runtime.snapshot?.status === "finalizing-asr") {
         runtime.dispatch({ type: "CANCEL_TURN" });
       }
     } finally {
-      setBusy(false);
+      if (runtime.isCurrentOperation(generation)) setBusy(false);
     }
   };
 
   const finish = async () => {
-    if (!route.sessionId || busy) return;
+    if (!route.sessionId) return;
     setBusy(true);
     try {
-      if (capturing) await stopCapture();
+      frameQueueRef.current?.close();
+      frameQueueRef.current = undefined;
+      setCapturing(false);
       await runtime.end();
       onRouteChange({ ...route, screen: "summary" });
     } catch (error) {
@@ -450,6 +538,13 @@ export const VoiceRecallWorkspace = ({
   const saveHistory = async () => {
     if (!route.sessionId || !summary.trim()) return;
     const now = new Date().toISOString();
+    const storedSession = await repository.getSession(route.sessionId);
+    const observedUsage: Partial<import("./providerRuntime").VoiceUsageTotals> = {};
+    for (const usage of Object.values(storedSession?.usageOperations ?? {})) {
+      for (const metric of Object.keys(usage) as Array<keyof typeof usage>) {
+        observedUsage[metric] = (observedUsage[metric] ?? 0) + (usage[metric] ?? 0);
+      }
+    }
     await repository.saveHistory({
       id: crypto.randomUUID(),
       sessionId: route.sessionId,
@@ -457,7 +552,9 @@ export const VoiceRecallWorkspace = ({
       source: { kind: route.sourceKind, recordIds: route.recordIds, taskId: route.taskId, returnIdentity: route.returnTab },
       title: route.topic?.trim() || route.learningGoal?.trim() || "语音主动回忆",
       summary,
-      usage: emptyUsage,
+      usage: { ...emptyUsage, asrSentSeconds: observedUsage.asrSeconds ?? 0, llmInputTokens: observedUsage.llmInputTokens ?? 0, llmOutputTokens: observedUsage.llmOutputTokens ?? 0, ttsCharacters: observedUsage.ttsCharacters ?? 0 },
+      observedUsage,
+      usageSources: storedSession?.usageSources,
       savedAt: now,
     });
     setHistorySaved(true);
@@ -470,12 +567,12 @@ export const VoiceRecallWorkspace = ({
   // LLM id is aspirational, the configured AI provider is what gets called.
   const llmLabel = useMemo(() => {
     const provider = getCurrentAiProvider(settings.ai);
-    return provider ? `${provider.providerName} · ${provider.model}` : "未配置的 AI 供应商";
-  }, [settings.ai]);
+    return provider ? `${provider.providerName} · ${providerConfig?.llmModel || provider.model}` : "未配置的 AI 供应商";
+  }, [settings.ai, providerConfig]);
   const providerSummaries = useMemo(() => Object.fromEntries(USER_VOICE_TEMPLATES.map((template) => [
     template.templateId,
-    { ...getVoiceProviderTemplateSummary(template), llm: llmLabel },
-  ])), [llmLabel]);
+    { ...getVoiceProviderTemplateSummary(template), llm: llmLabel, tts: getCurrentTtsProvider(settings.tts) ? `${getCurrentTtsProvider(settings.tts)!.providerName} · ${providerConfig?.ttsVoice || getCurrentTtsProvider(settings.tts)!.voice}` : getVoiceProviderTemplateSummary(template).tts },
+  ])), [llmLabel, settings.tts, providerConfig]);
   const providerSetup = useMemo(() => ({
     templates: USER_VOICE_TEMPLATES,
     selectedTemplateId: USER_VOICE_TEMPLATES.some((template) => template.templateId === providerTemplateId) ? providerTemplateId : USER_VOICE_TEMPLATES[0].templateId,
@@ -485,28 +582,27 @@ export const VoiceRecallWorkspace = ({
       const template = USER_VOICE_TEMPLATES.find((item) => item.templateId === providerTemplateId) ?? USER_VOICE_TEMPLATES[0];
       const asr = BUILT_IN_ASR_PROFILES.find((item) => item.id === template.asrProfileId);
       const tts = BUILT_IN_VOICE_TTS_PROFILES.find((item) => item.id === template.ttsProfileId);
-      return { templateId: template.templateId, asrEndpoint: asr?.endpoint ?? "", asrModel: asr?.model ?? "", asrResourceId: asr?.resourceId ?? "", llmBaseUrl: "https://api.deepseek.com", llmModel: template.llmProfileId, ttsEndpoint: tts?.endpoint ?? "", ttsModel: tts?.model ?? "", ttsVoice: tts?.voice ?? "" };
+      return { templateId: template.templateId, asrEndpoint: asr?.endpoint ?? "", asrModel: asr?.model ?? "", asrResourceId: asr?.resourceId ?? "", llmBaseUrl: getCurrentAiProvider(settings.ai)?.baseUrl ?? "", llmModel: getCurrentAiProvider(settings.ai)?.model ?? "", ttsEndpoint: tts?.endpoint ?? "", ttsModel: getCurrentTtsProvider(settings.tts)?.model ?? tts?.model ?? "", ttsVoice: getCurrentTtsProvider(settings.tts)?.voice ?? tts?.voice ?? "" };
     })(),
     onConfigChange: (config: VoiceProviderEditableConfig) => { setProviderConfig(config); writeVoiceProviderConfig(config); },
-  }), [providerConfig, providerSummaries, providerTemplateId]);
+  }), [providerConfig, providerSummaries, providerTemplateId, settings.ai, settings.tts]);
   // The waveform and "正在识别" caption must follow the real microphone, not a
   // state-machine flag, otherwise the UI claims to listen while capture is off.
   const active = capturing && !state.userMuted && !state.systemCaptureGate;
   const mainControl = useMemo(() => {
-    if (state.status === "speaking") return { label: state.userMuted ? "取消静音并说话" : "打断并说话", icon: Mic };
+    if (state.status === "speaking") return { label: "打断回复", icon: Mic };
     if (state.status === "finalizing-asr" || state.status === "thinking") return { label: "取消当前轮次", icon: X };
     if (state.status !== "listening") return { label: voiceRecallStatusCopy[state.status], icon: Mic };
-    if (state.userMuted) return { label: "取消静音并说话", icon: MicOff };
-    if (state.inputMode === "auto-half-duplex") return { label: capturing ? "立即发送" : "开始回答", icon: Mic };
+    if (state.userMuted) return { label: "取消静音", icon: MicOff };
     if (state.inputMode === "push-to-talk") return { label: "按住说话", icon: Mic };
-    return { label: capturing ? "发送" : "开始说话", icon: Mic };
+    return { label: capturing ? "结束录音并转写" : "开始说话", icon: Mic };
   }, [capturing, state]);
 
   const interactionHint = useMemo(() => {
     if (state.status === "speaking") return "说话，或点击打断";
     if (state.status === "listening") {
       if (state.userMuted) return "麦克风已静音";
-      if (capturing) return state.inputMode === "push-to-talk" ? "松开按钮立即发送" : "说完后点击发送";
+      if (capturing) return state.inputMode === "push-to-talk" ? "松开后转写，确认后发送" : "点击结束录音，校对后确认发送";
       if (state.inputMode === "push-to-talk") return "按住主按钮开始回答";
       return "点击主按钮开始说话";
     }
@@ -531,13 +627,17 @@ export const VoiceRecallWorkspace = ({
 
   const handleMainClick = () => {
     if (state.status === "speaking") {
-      if (state.userMuted) runtime.dispatch({ type: "SET_USER_MUTED", muted: false });
       void runtime.interruptPlayback();
       runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
+      setBusy(false);
+      setTeacherDraft("");
       return;
     }
     if (state.status === "finalizing-asr" || state.status === "thinking") {
       runtime.dispatch({ type: "CANCEL_TURN" });
+      setBusy(false);
+      setTranscribing(false);
+      setTeacherDraft("");
       return;
     }
     if (state.status !== "listening" || state.inputMode === "push-to-talk") return;
@@ -584,7 +684,7 @@ export const VoiceRecallWorkspace = ({
   }
 
   if (route.screen === "history") {
-    return <VoiceRecallHistoryView theme={visualTheme} history={history} onBack={() => onRouteChange({ ...route, screen: "start" })} onDelete={(id) => void repository.deleteHistory(id).then(reloadHistory)} />;
+    return <VoiceRecallHistoryView theme={visualTheme} history={history} loading={busy} onLoadMore={historyCursor ? () => void loadMoreHistory() : undefined} onBack={() => onRouteChange({ ...route, screen: "start" })} onDelete={(id) => void repository.deleteHistory(id).then(reloadHistory)} />;
   }
 
   if (route.screen === "summary") {
@@ -618,7 +718,11 @@ export const VoiceRecallWorkspace = ({
         onMainClick={handleMainClick}
         onPressStart={handlePressStart}
         onPressEnd={handlePressEnd}
-        onMute={() => runtime.dispatch({ type: "SET_USER_MUTED", muted: !state.userMuted })}
+        onMute={() => {
+          const muted = !state.userMuted;
+          runtime.dispatch({ type: "SET_USER_MUTED", muted });
+          if (muted) setCapturing(false);
+        }}
         onToggleCaptions={() => setCaptionsVisible((value) => !value)}
         onToggleTranscriptEditor={() => setTranscriptEditorOpen((value) => !value)}
         onEnd={() => setBackOpen(true)}
@@ -667,6 +771,7 @@ export const VoiceRecallWorkspace = ({
     }}
     providerSetup={providerSetup}
   >
+    <VoiceAsrCredentialSettings />
     {knowledgeMode === "topic" && <section className="vr-topic-editor"><label><span>主题</span><input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例如：解释事件循环" /></label><label><span>本次目标</span><input value={learningGoal} onChange={(event) => setLearningGoal(event.target.value)} /></label></section>}
     {preflightOpen && <section className="vr-disclosure vr-production-disclosure"><div className="vr-disclosure-heading"><div><span className="vr-section-label">首次使用确认</span><h2>本次会使用哪些服务？</h2></div></div><p className="vr-disclosure-summary">你的语音会交给 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.asr ?? "语音识别服务"}</strong> 识别，所选资料会交给 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.llm ?? "内容理解服务"}</strong> 生成追问，AI 回复会由 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.tts ?? "语音播放服务"}</strong> 播放。</p><label className="vr-confirm-check"><input type="checkbox" checked={disclosureConfirmed} onChange={(event) => { const confirmed = event.target.checked; setDisclosureConfirmed(confirmed); if (confirmed && typeof window !== "undefined") window.localStorage.setItem(disclosureStorageKey, "accepted"); }} /><span>我了解本次发送范围，并记住这个选择</span></label></section>}
   </VoiceRecallStartView>;

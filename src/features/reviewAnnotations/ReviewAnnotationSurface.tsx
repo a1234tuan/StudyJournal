@@ -87,7 +87,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
     setSelectionBox(undefined);
     setEraserPointer(undefined);
     interactionRef.current = undefined;
-    void reviewAnnotationRepository.getDraft(recordId, occurrenceKey).then((saved) => {
+    void reviewAnnotationRepository.openDraft(emptyDraft(recordId, occurrenceKey, contentRevision)).then((saved) => {
       if (active && saved && !saved.pendingClear && saved.contentRevision === contentRevision) setDraft(saved);
     }).catch((reason) => active && setError(formatUiError(reason, "review-annotation")));
     return () => { active = false; };

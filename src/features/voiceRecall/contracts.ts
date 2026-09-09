@@ -38,7 +38,7 @@ export interface VoiceCaptureAdapter {
 
 export type AsrStreamEvent =
   | { type: "partial"; text: string; confidence?: number }
-  | { type: "final"; text: string; confidence?: number }
+  | { type: "final"; text: string; confidence?: number; usageSeconds?: number; cumulative?: boolean }
   | { type: "completed"; usageSeconds?: number };
 
 export interface AsrStreamRequest extends VoiceOperationContext {

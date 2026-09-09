@@ -41,7 +41,7 @@ describe("VoiceRecallRuntimeController", () => {
     runtime.dispatch({ type: "CONNECT" });
     runtime.dispatch({ type: "CONNECTED" });
     await runtime.pause();
-    expect(await database.voiceRecallSessions.get(id)).toMatchObject({ status: "paused", checkpoint: { inputMode: "auto-half-duplex" } });
+    expect(await database.voiceRecallSessions.get(id)).toMatchObject({ status: "paused", checkpoint: { inputMode: "tap-to-record" } });
 
     const restored = new VoiceRecallRuntimeController(new VoiceRecallRepository(database));
     await restored.restoreSession(id);
@@ -98,6 +98,9 @@ describe("VoiceRecallRuntimeController", () => {
     await runtime.createSession({ ...request, source: { kind: "free-topic" } });
     await runtime.end();
     await runtime.restoreSession(resumableId);
+    expect(runtime.snapshot?.status).toBe("paused");
+    runtime.dispatch({ type: "RESUME" });
+    runtime.dispatch({ type: "CONNECTED" });
 
     let restoredSignal: AbortSignal | undefined;
     const capture: VoiceCaptureAdapter = {

@@ -1,5 +1,5 @@
 import { ChevronDown, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 
 import type { AiProviderConfig, AiProviderProfile, AiPromptPreset, AppSettings } from "../types";
 import { createBaseEntity } from "../lib/entity";
@@ -76,6 +76,7 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
   // finishes silently deletes a stored key.
   const [loadedKeyIds, setLoadedKeyIds] = useState<Set<string>>(() => new Set());
   const [dirtyKeyIds, setDirtyKeyIds] = useState<Set<string>>(() => new Set());
+  const editedKeys = useRef(new Set<string>());
   const [showKey, setShowKey] = useState(false);
   const [message, setMessage] = useState("");
   const [open, setOpen] = useState(false);
@@ -85,6 +86,8 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
   const currentProvider = getCurrentAiProvider(config);
 
   useEffect(() => {
+    let active = true;
+    editedKeys.current = new Set();
     const nextConfig = withAiDefaults(settings);
     setConfig(nextConfig);
     setLoadedKeyIds(new Set());
@@ -93,10 +96,12 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
       nextConfig.providers.map(async (provider) => [provider.id, (await storage.getAiSecret?.(provider.id))?.apiKey ?? ""] as const),
     )
       .then((entries) => {
-        setApiKeys(Object.fromEntries(entries));
+        if (!active) return;
+        setApiKeys((current) => ({ ...current, ...Object.fromEntries(entries.filter(([id]) => !editedKeys.current.has(id))) }));
         setLoadedKeyIds(new Set(entries.map(([id]) => id)));
       })
-      .catch(() => setApiKeys(Object.fromEntries(nextConfig.providers.map((provider) => [provider.id, ""]))));
+      .catch(() => undefined);
+    return () => { active = false; };
   }, [settings]);
 
   const updateProvider = (id: string, patch: Partial<AiProviderProfile>) => {
@@ -307,6 +312,7 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
                           value={apiKeys[provider.id] ?? ""}
                           type={showKey ? "text" : "password"}
                           onChange={(event) => {
+                            editedKeys.current.add(provider.id);
                             setApiKeys((current) => ({ ...current, [provider.id]: event.target.value }));
                             setDirtyKeyIds((current) => new Set(current).add(provider.id));
                           }}

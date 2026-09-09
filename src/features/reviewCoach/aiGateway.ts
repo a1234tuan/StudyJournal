@@ -6,7 +6,7 @@ import {
   parseFeedbackInterpretationAiResponse,
 } from "./aiSchemas";
 import type { ReviewCoachAiGateway } from "./orchestrator";
-import { sendChatCompletionDetailed } from "../../services/aiClientService";
+import { AiSchemaError, sendChatCompletionDetailed } from "../../services/aiClientService";
 
 export interface FeedbackInterpretationGatewayOptions {
   provider: AiProviderProfile;
@@ -30,7 +30,7 @@ export const parseJsonContent = (content: string): unknown => {
   try {
     return JSON.parse(fenced);
   } catch {
-    throw new Error("快速模型返回的内容不是有效 JSON。");
+    throw new AiSchemaError("快速模型返回的内容不是有效 JSON。");
   }
 };
 
@@ -51,6 +51,11 @@ export const buildFeedbackInterpretationPrompt = (input: FeedbackInterpretationP
     decisionBlockId: input.decisionBlockId,
     recordId: input.recordId,
     contentVersion: input.contentVersion,
+    inputCompleteness: {
+      commentTruncated: input.comment.length > FEEDBACK_INTERPRETATION_MAX_COMMENT_CHARACTERS,
+      materialTruncated: input.decisionBlockContent.length > FEEDBACK_INTERPRETATION_MAX_BLOCK_CHARACTERS,
+      historyTruncated: (input.historicalTrend?.length ?? 0) > FEEDBACK_INTERPRETATION_MAX_HISTORY_ITEMS,
+    },
     originalComment: input.comment.slice(0, FEEDBACK_INTERPRETATION_MAX_COMMENT_CHARACTERS),
     decisionBlockContent: input.decisionBlockContent.slice(0, FEEDBACK_INTERPRETATION_MAX_BLOCK_CHARACTERS),
     historicalTrend: (input.historicalTrend ?? []).slice(-FEEDBACK_INTERPRETATION_MAX_HISTORY_ITEMS),

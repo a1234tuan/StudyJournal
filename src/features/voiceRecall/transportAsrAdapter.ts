@@ -41,16 +41,21 @@ export class TransportAsrStreamAdapter implements AsrStreamAdapter {
       format: request.format,
       signal: request.signal,
     });
+    let senderError: unknown;
     const sender = (async () => {
       for await (const frame of request.frames) {
         if (request.signal.aborted) break;
         await session.send(frame);
       }
       if (!request.signal.aborted) await session.finish();
-    })();
+    })().catch(async (error: unknown) => {
+      senderError = error;
+      await session.close();
+    });
     try {
       for await (const event of session.events) yield event;
       await sender;
+      if (senderError) throw senderError;
     } finally {
       await session.close();
     }

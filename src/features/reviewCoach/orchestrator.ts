@@ -16,6 +16,7 @@ import type {
   TaskPriorityTier,
 } from "./domain";
 import { AiRequestError } from "../../services/aiClientService";
+import { waitAiRetry } from "../../services/aiRetry";
 import { calculateDelayedVerificationSchedule, isVerificationDue, isVerificationEligible } from "./verificationPolicy";
 import type {
   AnswerEvaluationAiResponse,
@@ -309,6 +310,8 @@ export class ReviewCoachOrchestrator {
     let lastError: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       try {
+        if (attempt > 0) await waitAiRetry(lastError, attempt, input.signal);
+        if (input.signal?.aborted) throw new DOMException("AI request cancelled", "AbortError");
         const call = await this.dependencies.aiGateway.interpretFeedback({
           feedbackId: feedback.id,
           decisionBlockId: feedback.decisionBlockId,
@@ -343,7 +346,7 @@ export class ReviewCoachOrchestrator {
         lastError = error;
         // A bad key, wrong Base URL or schema mismatch will fail identically on
         // every attempt; retrying only burns quota across the whole queue.
-        if (error instanceof AiRequestError && !error.retryable) break;
+        if (!(error instanceof AiRequestError) || !error.retryable) break;
       }
     }
     const failed: FeedbackInterpretation = {
@@ -457,6 +460,8 @@ export class ReviewCoachOrchestrator {
       let completed = false;
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
+          if (attempt > 0) await waitAiRetry(lastError, attempt, input.signal);
+          if (input.signal?.aborted) throw new DOMException("AI request cancelled", "AbortError");
           const call = await this.dependencies.aiGateway.planSession({
             blocks: blocks.map((block) => ({
               decisionBlockId: block.decisionBlockId,
@@ -485,7 +490,7 @@ export class ReviewCoachOrchestrator {
             })),
             allowedSupportingDecisionBlockIds: input.allowCrossBlockSupport ? blocks.map((block) => block.decisionBlockId) : [],
           }, input.signal);
-          if (call.response.status === "insufficient-context") throw new Error(`insufficient-context:${call.response.missingInformation.join("、")}`);
+          if (call.response.status === "insufficient-context") throw new AiRequestError(`insufficient-context:${call.response.missingInformation.join("、")}`, false);
           validateBlueprintCandidates(call.response.blueprints, blocks, input.allowCrossBlockSupport);
           summaries.push(call.response.summary);
           for (const candidate of call.response.blueprints) {
@@ -522,7 +527,7 @@ export class ReviewCoachOrchestrator {
             return { batch, blueprints, tasks, paused: true };
           }
           lastError = error;
-          if (error instanceof AiRequestError && !error.retryable) break;
+          if (!(error instanceof AiRequestError) || !error.retryable) break;
         }
       }
       if (!completed) {
@@ -680,6 +685,7 @@ export class ReviewCoachOrchestrator {
         verificationMode: verification ? { verificationId: verification.id, requireFreshRetrieval: true } : undefined,
         priorQualityFailure: lastQualityReason || undefined,
       }, input.signal);
+      input.signal?.throwIfAborted();
       if (response.status === "insufficient-context") throw new Error(`生成题目所需背景不足：${response.missingInformation.join("、")}`);
       if (response.sourceEvidence.some((item) => !evidenceByKey.has(`${item.decisionBlockId}:${item.recordId}:${item.contentVersion}:${item.excerptHash}`))) {
         throw new Error("题目引用了蓝图之外的来源。");
@@ -692,9 +698,11 @@ export class ReviewCoachOrchestrator {
       let qualityChecked = false;
       if (requiresQualityReview) {
         const quality = await this.dependencies.aiGateway.reviewQuestion({ blueprint, candidate: response, decisionBlockContent: input.decisionBlockContent }, input.signal);
+        input.signal?.throwIfAborted();
         qualityChecked = true;
-        if (quality.status === "insufficient-context" || quality.verdict === "fail") {
-          lastQualityReason = quality.status === "insufficient-context" ? quality.missingInformation.join("、") : quality.rationale;
+        if (quality.status === "insufficient-context") throw new AiRequestError("题目质检背景不足。", false);
+        if (quality.verdict === "fail") {
+          lastQualityReason = quality.rationale;
           continue;
         }
       }
@@ -723,7 +731,7 @@ export class ReviewCoachOrchestrator {
         idempotencyKey: `quiz-turn:${input.operationId}:${turns.length + 1}`,
         createdAt: stamp,
         updatedAt: stamp,
-      });
+      }, input.signal);
     }
     throw new Error(`题目质检连续失败，已停止生成。${lastQualityReason ? ` ${lastQualityReason}` : ""}`);
   }
@@ -742,6 +750,7 @@ export class ReviewCoachOrchestrator {
     const blueprint = task ? snapshot.sessionBlueprints.find((item) => item.id === task.blueprintId && item.status === "accepted") : undefined;
     if (!turn || !task || !blueprint) throw new Error("当前题目已经失效或不再进行中。");
     const evaluation = await this.dependencies.aiGateway.evaluateAnswer({ blueprint, question: turn.question, answerCriteria: turn.answerCriteria, answerText, hintsUsed: turn.hintsUsed }, input.signal);
+    input.signal?.throwIfAborted();
     if (evaluation.status === "insufficient-context") throw new Error(`无法可靠判断回答：${evaluation.missingInformation.join("、")}`);
     const criteria = new Set(turn.answerCriteria);
     if ([...evaluation.matchedCriteria, ...evaluation.missingCriteria].some((item) => !criteria.has(item))) throw new Error("回答判定引用了题目之外的判据。");
@@ -752,7 +761,7 @@ export class ReviewCoachOrchestrator {
       kind: "answer-assessment", answerAssessment: evaluation.assessment, reason: evaluation.rationale, occurredAt: stamp,
       idempotencyKey: `answer:${input.operationId}`, createdAt: stamp, updatedAt: stamp,
     };
-    return this.dependencies.repository.commitQuizAnswer(answered, outcome);
+    return this.dependencies.repository.commitQuizAnswer(answered, outcome, input.signal);
   }
 
   async skipQuizTurn(turnId: string, operationId: string): Promise<AdaptiveQuizTurn> {

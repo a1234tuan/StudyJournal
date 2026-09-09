@@ -24,7 +24,7 @@ export const DEFAULT_ALIYUN_ASR_CONFIG: AliyunAsrSessionConfig = {
 export type AliyunAsrEvent =
   | { type: "started" }
   | { type: "partial"; text: string }
-  | { type: "final"; text: string }
+  | { type: "final"; text: string; segmentId?: string; usageSeconds?: number }
   | { type: "completed" }
   | { type: "failed"; message: string }
   | { type: "unknown"; raw: string };
@@ -81,8 +81,10 @@ export const parseAliyunAsrMessage = (raw: string): AliyunAsrEvent => {
       const sentence = asRecord(output?.sentence);
       const text = typeof sentence?.text === "string" ? sentence.text.trim() : "";
       if (!text) return { type: "unknown", raw };
+      const duration = asRecord(asRecord(root?.payload)?.usage)?.duration;
+      const reportedUsage = typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? { usageSeconds: duration } : {};
       const ended = sentence?.sentence_end === true || sentence?.sentenceEnd === true;
-      return ended ? { type: "final", text } : { type: "partial", text };
+      return ended ? { type: "final", text, ...reportedUsage, ...(sentence?.begin_time !== undefined ? { segmentId: String(sentence.begin_time) } : {}) } : { type: "partial", text };
     }
     default:
       return { type: "unknown", raw };

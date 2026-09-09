@@ -96,7 +96,7 @@ describe("Aliyun ASR transport", () => {
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "partial", text: "间隔" } });
 
     socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "间隔复习为什么有效？", sentence_end: true } } } }) });
-    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习为什么有效？" } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习为什么有效？", cumulative: true } });
 
     socket.onmessage?.({ data: JSON.stringify({ header: { event: "task-finished" } }) });
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
@@ -146,4 +146,40 @@ describe("Aliyun ASR transport", () => {
       signal: controller.signal,
     })).rejects.toThrow();
   });
+});
+
+it("accumulates three sentences and deduplicates a replayed final", async () => {
+  const { session, socket } = await openSession();
+  const iterator = session.events[Symbol.asyncIterator]();
+  for (const [begin_time, text] of [[0, "第一句。"], [1000, "第二句。"], [1000, "第二句。"], [2000, "第三句。"]]) {
+    socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text, begin_time, sentence_end: true } } } }) });
+  }
+  const results = [];
+  for (let index = 0; index < 4; index += 1) results.push((await iterator.next()).value);
+  expect(results.at(-1)).toEqual({ type: "final", text: "第一句。第二句。第三句。", cumulative: true });
+  await session.close();
+});
+
+it("rejects task failure even after a finalized sentence", async () => {
+  const { session, socket } = await openSession();
+  const iterator = session.events[Symbol.asyncIterator]();
+  socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "不完整回答", sentence_end: true } } } }) });
+  await iterator.next();
+  const waiting = iterator.next();
+  socket.onmessage?.({ data: JSON.stringify({ header: { event: "task-failed", error_message: "failed mid-task" } }) });
+  await expect(waiting).rejects.toThrow("failed mid-task");
+  expect(socket.readyState).toBe(3);
+});
+
+it("bounds the final result wait after finish-task", async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, socket } = await openSession();
+    await session.finish();
+    const result = session.events[Symbol.asyncIterator]().next();
+    const rejected = expect(result).rejects.toThrow("超时");
+    await vi.advanceTimersByTimeAsync(30_001);
+    await rejected;
+    expect(socket.readyState).toBe(3);
+  } finally { vi.useRealTimers(); }
 });

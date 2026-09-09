@@ -102,9 +102,11 @@ public class NativeVoiceAsrPlugin extends Plugin {
         JSObject result = new JSObject();
         WebSocket socket = sockets.get(sessionId);
         boolean sent = false;
-        if (socket != null && !dataBase64.isEmpty()) {
+        if (socket != null) {
             try {
-                sent = socket.send(ByteString.of(Base64.decode(dataBase64, Base64.NO_WRAP)));
+                String kind = call.getString("kind", "");
+                sent = VoiceAsrFrames.send(socket, kind, call.getString("text", ""),
+                    "binary".equals(kind) && !dataBase64.isEmpty() ? Base64.decode(dataBase64, Base64.NO_WRAP) : null);
             } catch (IllegalArgumentException error) {
                 sent = false;
             }

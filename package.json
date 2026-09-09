@@ -31,6 +31,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:voice-host": "node --test desktop/voiceAsrSocket.test.cjs",
     "test:firebase": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-firebase-emulator.ps1",
     "test:watch": "vitest",
     "android:add": "cap add android",
@@ -118,6 +119,7 @@
     "files": [
       "dist/**",
       "desktop/**",
+      "!desktop/**/*.test.*",
       "package.json",
       "!node_modules/**"
     ],

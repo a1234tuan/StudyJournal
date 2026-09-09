@@ -139,3 +139,13 @@ describe("AiSettingsPanel", () => {
     expect(await screen.findByText(/连接成功。请求地址：https:\/\/chatapi.onechats.top\/chat\/completions/)).toBeInTheDocument();
   });
 });
+
+it("keeps an edited key when the earlier asynchronous load resolves", async () => {
+  let resolveKey: ((value: unknown) => void) | undefined;
+  storageMock.getAiSecret.mockImplementation(() => new Promise((resolve) => { resolveKey = resolve; }));
+  await openSettingsPanel();
+  const input = screen.getByLabelText(/API Key/);
+  fireEvent.change(input, { target: { value: "new-test-key" } });
+  resolveKey?.({ apiKey: "old-test-key" });
+  await waitFor(() => expect(input).toHaveValue("new-test-key"));
+});

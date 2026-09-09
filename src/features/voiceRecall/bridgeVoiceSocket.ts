@@ -4,7 +4,7 @@ import type { VoiceSocket, VoiceSocketFactory } from "./aliyunAsrTransport";
  * or an Android plugin) and relays frames to the renderer. */
 export interface VoiceSocketBridge {
   open(options: { url: string; headers: Record<string, string> }): Promise<{ sessionId: string }>;
-  send(sessionId: string, data: Uint8Array): Promise<unknown>;
+  send(sessionId: string, data: string | Uint8Array): Promise<unknown>;
   close(sessionId: string): Promise<unknown>;
   onEvent(listener: (payload: VoiceSocketBridgeEvent) => void): () => void;
 }
@@ -69,29 +69,31 @@ export const createBridgeVoiceSocketFactory = (bridge: VoiceSocketBridge): Voice
       dispatch(payload);
     });
 
-    socket.send = (data) => {
-      if (!sessionId) return;
-      // Control frames are strings (run-task / finish-task); audio frames are bytes.
-      const bytes = typeof data === "string"
-        ? new TextEncoder().encode(data)
-        : data instanceof Uint8Array
-          ? data
-          : new Uint8Array(data as ArrayBuffer);
-      void bridge.send(sessionId, bytes).catch(() => undefined);
+    socket.send = async (data) => {
+      if (!sessionId || closed || socket.readyState !== 1) throw new Error("语音识别连接未就绪");
+      const result = await bridge.send(sessionId, data);
+      if (result && typeof result === "object" && "sent" in result && result.sent === false) {
+        throw new Error("语音识别数据发送失败");
+      }
     };
     socket.close = () => {
-      if (!sessionId || closed) return;
+      if (closed) return;
       closed = true;
-      void bridge.close(sessionId).catch(() => undefined);
+      socket.readyState = 3;
+      pending.length = 0;
+      if (sessionId) void bridge.close(sessionId).catch(() => undefined);
       unsubscribe?.();
     };
 
     void bridge.open({ url, headers }).then(({ sessionId: id }) => {
       sessionId = id;
+      if (closed) { void bridge.close(id).catch(() => undefined); return; }
       for (const payload of pending.splice(0)) {
         if (payload.sessionId === sessionId) dispatch(payload);
       }
     }).catch((error: unknown) => {
+      if (closed) return;
+      pending.length = 0;
       socket.onerror?.({ message: error instanceof Error ? error.message : "语音识别连接失败。" });
       closed = true;
       socket.readyState = 3;

@@ -41,10 +41,16 @@ export class AiRequestError extends Error {
     readonly status?: number,
     /** True when the message tells the user exactly what to fix. */
     readonly actionable = false,
+    readonly retryAfterMs?: number,
+    readonly category = status === 401 || status === 403 ? "authentication" : status === 429 ? "rate-limit" : status === 408 ? "timeout" : status && status >= 500 ? "network" : actionable ? "configuration" : retryable ? "network" : "response",
   ) {
     super(message);
     this.name = "AiRequestError";
   }
+}
+
+export class AiSchemaError extends AiRequestError {
+  constructor(message: string) { super(message, false, undefined, false, undefined, "schema"); this.name = "AiSchemaError"; }
 }
 
 export interface AiCompletionRequestOptions {
@@ -65,7 +71,7 @@ const SYSTEM_PROMPT = [
 export const normalizeAiChatCompletionsUrl = (baseUrl: string): string => {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
   if (!trimmed) {
-    throw new Error("请先填写 AI 接口 Base URL。");
+    throw new AiRequestError("请先填写 AI 接口 Base URL。", false, undefined, true);
   }
   return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
 };
@@ -303,7 +309,7 @@ const parseUsage = (value: unknown): AiCompletionUsage | undefined => {
 
 export const parseOpenAiCompletionResult = (body: unknown, requestId?: string): AiCompletionResult => {
   const first = (body as { choices?: Array<{ message?: { content?: unknown }; text?: unknown; finish_reason?: unknown }> }).choices?.[0];
-  if (!first) throw new Error("AI 接口没有返回 choices，可能不是 OpenAI 兼容格式。");
+  if (!first) throw new AiSchemaError("AI 接口没有返回 choices，可能不是 OpenAI 兼容格式。");
   const rawContent = first.message?.content ?? first.text;
   const content = typeof rawContent === "string" ? rawContent.trim() : "";
   const finishReason = typeof first.finish_reason === "string" ? first.finish_reason : undefined;
@@ -329,6 +335,7 @@ const requestOpenAiChatCompletionDetailed = async (options: {
   maxTokens?: number;
 } & AiCompletionRequestOptions): Promise<AiCompletionResult> => {
   const { provider, apiKey, messages } = options;
+  if (options.signal?.aborted) throw new DOMException("AI request cancelled", "AbortError");
   const maxTokens = options.maxTokens ?? provider.maxTokens;
 
   if (canUseNativeAi()) {
@@ -344,6 +351,14 @@ const requestOpenAiChatCompletionDetailed = async (options: {
       reasoningEffort: options.reasoningEffort,
       timeoutMs: options.timeoutMs,
       signal: options.signal,
+    }).catch((error: unknown) => {
+      if (options.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw new DOMException("AI request cancelled", "AbortError");
+      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+      const status = /^HTTP_\d+$/.test(code) ? Number(code.slice(5)) : undefined;
+      const retryable = code === "NETWORK" || code === "TIMEOUT" || status === 408 || status === 429 || Boolean(status && status >= 500);
+      const retryAfter = typeof error === "object" && error !== null && "data" in error ? (error.data as { retryAfter?: string })?.retryAfter : undefined;
+      const retryAfterMs = retryAfter ? (/^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : undefined;
+      throw new AiRequestError("原生 AI 请求失败，请检查服务配置或网络。", retryable, status, code === "CONFIGURATION", retryAfterMs, code === "TIMEOUT" ? "timeout" : undefined);
     });
   }
 
@@ -389,7 +404,9 @@ const requestOpenAiChatCompletionDetailed = async (options: {
         ].filter(Boolean).join(" ");
       const retryableStatus = response.status === 408 || response.status === 429 || response.status >= 500;
       const actionableStatus = response.status === 401 || response.status === 403 || response.status === 404;
-      throw new AiRequestError(`${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`, retryableStatus, response.status, actionableStatus);
+      const retryAfter = response.headers.get("retry-after");
+      const retryAfterMs = retryAfter ? (/^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : undefined;
+      throw new AiRequestError(`${provider.providerName} AI 接口请求失败：${formatResponseMeta(response.status, contentType, requestUrl)}，${detail}`, retryableStatus, response.status, actionableStatus, retryAfterMs);
     }
 
     if (!parsed.ok) {

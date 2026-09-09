@@ -40,3 +40,11 @@ describe("buildVoiceTeacherMessages", () => {
     expect(messages[0].content).toContain("只依据学习资料提问");
   });
 });
+
+it("appends exactly one current answer after history and keeps it untrusted", () => {
+  for (const turns of [[], [{ confirmedText: "旧回答", teacherText: "旧回复" }]]) {
+    const messages = buildVoiceTeacherMessages({ learningGoal: "目标", confirmedText: "当前回答", turns });
+    expect(messages.at(-1)).toEqual({ role: "user", content: "当前回答", contentBoundary: "untrusted-learning-content" });
+    expect(messages.filter((message) => message.content === "当前回答")).toHaveLength(1);
+  }
+});

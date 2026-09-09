@@ -1,3 +1,4 @@
+import { AiSchemaError } from "../../services/aiClientService";
 import type {
   AdaptivePracticeType,
   FeedbackActionability,
@@ -278,7 +279,7 @@ const isConfidence = (value: unknown): value is number => typeof value === "numb
 
 const assertExactKeys = (value: Record<string, unknown>, keys: readonly string[], label: string) => {
   const allowed = new Set(keys);
-  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error(`Invalid ${label} response: unexpected field.`);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new AiSchemaError(`Invalid ${label} response: unexpected field.`);
 };
 
 export const isInsufficientContextAiResult = (value: unknown): value is InsufficientContextAiResult =>
@@ -289,26 +290,26 @@ export const parseFeedbackInterpretationAiResponse = (value: unknown): FeedbackI
     assertExactKeys(value as unknown as Record<string, unknown>, ["status", "missingInformation"], "feedback interpretation");
     return value;
   }
-  if (!isObject(value) || value.status !== "ok") throw new Error("Invalid feedback interpretation response status.");
+  if (!isObject(value) || value.status !== "ok") throw new AiSchemaError("Invalid feedback interpretation response status.");
   assertExactKeys(value, ["status", "actionability", "difficultyType", "stuckAt", "userHypothesis", "preferredPractice", "missingInformation", "confidence"], "feedback interpretation");
-  if (!["needs_training", "reflection_only", "unclear"].includes(String(value.actionability))) throw new Error("Invalid feedback actionability.");
-  if (!["concept", "procedure", "confusion", "calculation", "application", "expression", "other"].includes(String(value.difficultyType))) throw new Error("Invalid feedback difficulty type.");
+  if (!["needs_training", "reflection_only", "unclear"].includes(String(value.actionability))) throw new AiSchemaError("Invalid feedback actionability.");
+  if (!["concept", "procedure", "confusion", "calculation", "application", "expression", "other"].includes(String(value.difficultyType))) throw new AiSchemaError("Invalid feedback difficulty type.");
   if ((value.stuckAt !== null && typeof value.stuckAt !== "string") ||
       (value.userHypothesis !== null && typeof value.userHypothesis !== "string") ||
       (value.preferredPractice !== null && typeof value.preferredPractice !== "string") ||
       !isStringArray(value.missingInformation) || !isConfidence(value.confidence)) {
-    throw new Error("Invalid feedback interpretation response body.");
+    throw new AiSchemaError("Invalid feedback interpretation response body.");
   }
   return value as unknown as FeedbackInterpretationAiResult;
 };
 
 const requireOkObject = (value: unknown, label: string): Record<string, unknown> => {
-  if (!isObject(value) || value.status !== "ok") throw new Error(`Invalid ${label} response status.`);
+  if (!isObject(value) || value.status !== "ok") throw new AiSchemaError(`Invalid ${label} response status.`);
   return value;
 };
 
 const requireString = (value: unknown, label: string) => {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`Invalid ${label}.`);
+  if (typeof value !== "string" || !value.trim()) throw new AiSchemaError(`Invalid ${label}.`);
 };
 
 const isPracticeType = (value: unknown): value is AdaptivePracticeType =>
@@ -322,7 +323,7 @@ const validateEvidence = (value: unknown) => {
     !Number.isSafeInteger(item.contentVersion) || Number(item.contentVersion) < 1 ||
     typeof item.excerptHash !== "string" ||
     typeof item.purpose !== "string"
-  )) throw new Error("Invalid source evidence.");
+  )) throw new AiSchemaError("Invalid source evidence.");
   for (const item of value as Array<Record<string, unknown>>) {
     assertExactKeys(item, ["decisionBlockId", "recordId", "contentVersion", "excerptHash", "purpose"], "source evidence");
   }
@@ -336,10 +337,10 @@ export const parseSessionBlueprintAiResponse = (value: unknown): SessionBlueprin
   const body = requireOkObject(value, "session blueprint");
   assertExactKeys(body, ["status", "summary", "blueprints"], "session blueprint");
   if (typeof body.summary !== "string" || !Array.isArray(body.blueprints) || body.blueprints.length < 1 || body.blueprints.length > 3) {
-    throw new Error("Invalid session blueprint response body.");
+    throw new AiSchemaError("Invalid session blueprint response body.");
   }
   for (const candidate of body.blueprints) {
-    if (!isObject(candidate)) throw new Error("Invalid session blueprint candidate.");
+    if (!isObject(candidate)) throw new AiSchemaError("Invalid session blueprint candidate.");
     assertExactKeys(candidate, ["mainDecisionBlockId", "contentVersion", "supportingDecisionBlockIds", "feedbackIds", "interpretationIds", "problemHypothesis", "hypothesisConfidence", "objective", "completionCriteria", "initialPracticeType", "initialDifficulty", "expectedKeyPoints", "branches", "allowedStrategies", "forbiddenScope", "evidence", "maxTurns", "maxRetriesPerTurn", "maxEstimatedTokens"], "session blueprint candidate");
     requireString(candidate.mainDecisionBlockId, "mainDecisionBlockId");
     requireString(candidate.problemHypothesis, "problemHypothesis");
@@ -356,19 +357,19 @@ export const parseSessionBlueprintAiResponse = (value: unknown): SessionBlueprin
         !Number.isSafeInteger(candidate.maxTurns) || Number(candidate.maxTurns) < 1 || Number(candidate.maxTurns) > 20 ||
         !Number.isSafeInteger(candidate.maxRetriesPerTurn) || Number(candidate.maxRetriesPerTurn) < 0 || Number(candidate.maxRetriesPerTurn) > 2 ||
         !Number.isSafeInteger(candidate.maxEstimatedTokens) || Number(candidate.maxEstimatedTokens) < 1) {
-      throw new Error("Invalid session blueprint candidate fields.");
+      throw new AiSchemaError("Invalid session blueprint candidate fields.");
     }
     const allowedBranches = new Set(["continue", "hint", "explain", "worked-example", "prerequisite-check", "finish"]);
     const cases = new Set<string>();
     for (const branch of candidate.branches) {
       if (!isObject(branch) || !["correct", "partial", "incorrect", "skipped"].includes(String(branch.when)) || !allowedBranches.has(String(branch.nextStrategy))) {
-        throw new Error("Invalid session blueprint branch.");
+        throw new AiSchemaError("Invalid session blueprint branch.");
       }
       assertExactKeys(branch, ["when", "nextStrategy"], "session blueprint branch");
       cases.add(String(branch.when));
     }
     if (["correct", "partial", "incorrect", "skipped"].some((branch) => !cases.has(branch)) || candidate.allowedStrategies.some((strategy) => !allowedBranches.has(strategy))) {
-      throw new Error("Incomplete or unsupported session blueprint branches.");
+      throw new AiSchemaError("Incomplete or unsupported session blueprint branches.");
     }
     validateEvidence(candidate.evidence);
   }
@@ -384,7 +385,7 @@ export const parseQuizTurnAiResponse = (value: unknown): QuizTurnAiResponse => {
   assertExactKeys(body, ["status", "practiceType", "answerMode", "question", "answerCriteria", "sourceEvidence", "hints"], "quiz turn");
   requireString(body.question, "question");
   if (!isPracticeType(body.practiceType) || !["open", "objective", "unique"].includes(String(body.answerMode)) || !isStringArray(body.answerCriteria) || body.answerCriteria.length === 0 || !isStringArray(body.hints)) {
-    throw new Error("Invalid quiz turn response body.");
+    throw new AiSchemaError("Invalid quiz turn response body.");
   }
   validateEvidence(body.sourceEvidence);
   return body as unknown as QuizTurnAiResponse;
@@ -399,7 +400,7 @@ export const parseQuestionQualityAiResponse = (value: unknown): QuestionQualityA
   assertExactKeys(body, ["status", "verdict", "severeIssues", "rationale"], "question quality");
   const issues = ["unsolvable", "missing-condition", "source-drift", "non-unique-answer", "answer-contradiction"];
   if (!["pass", "fail"].includes(String(body.verdict)) || !isStringArray(body.severeIssues) || body.severeIssues.some((item) => !issues.includes(item)) || typeof body.rationale !== "string") {
-    throw new Error("Invalid question quality response body.");
+    throw new AiSchemaError("Invalid question quality response body.");
   }
   return body as unknown as QuestionQualityAiResponse;
 };
@@ -413,7 +414,7 @@ export const parseAnswerEvaluationAiResponse = (value: unknown): AnswerEvaluatio
   assertExactKeys(body, ["status", "assessment", "matchedCriteria", "missingCriteria", "rationale"], "answer evaluation");
   if (!["correct", "partial", "incorrect", "unreliable"].includes(String(body.assessment)) ||
       !isStringArray(body.matchedCriteria) || !isStringArray(body.missingCriteria) || typeof body.rationale !== "string") {
-    throw new Error("Invalid answer evaluation response body.");
+    throw new AiSchemaError("Invalid answer evaluation response body.");
   }
   return body as unknown as AnswerEvaluationAiResponse;
 };

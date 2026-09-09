@@ -14,6 +14,7 @@ import { createProductionVoiceSession } from "./productionPipeline";
 
 const settings = (): AppSettings => ({
   ...DEFAULT_SETTINGS,
+  tts: { currentProviderId: "fish-audio", providers: [{ id: "fish-audio", providerId: "fish-audio", providerName: "Fish Audio", model: "s2-pro", voice: "test-voice" }] },
   ai: {
     currentProviderId: "default",
     presets: [],

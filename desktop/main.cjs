@@ -554,15 +554,16 @@ ipcMain.handle("study-journal:voice-capture-active", (_event, active) => {
 // Voice ASR needs a WebSocket with custom auth headers, which the renderer cannot
 // open. The main process owns the socket and streams frames to the renderer.
 const desktopVoiceSockets = new Map();
+const { openVoiceAsrSocket, sendVoiceAsrFrame } = require("./voiceAsrSocket.cjs");
 
 ipcMain.handle("study-journal:voice-asr-open", (event, options) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error("语音识别请求来源无效。");
   }
   const sessionId = randomUUID();
-  const socket = new WebSocket(String(options?.url ?? ""), {
-    headers: Object.fromEntries(Object.entries(options?.headers ?? {}).map(([key, value]) => [key, String(value)])),
-  });
+  const socket = openVoiceAsrSocket(String(options?.url ?? ""),
+    Object.fromEntries(Object.entries(options?.headers ?? {}).map(([key, value]) => [key, String(value)])),
+  );
   socket.binaryType = "arraybuffer";
   const emit = (payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -586,11 +587,9 @@ ipcMain.handle("study-journal:voice-asr-open", (event, options) => {
   return { sessionId };
 });
 
-ipcMain.handle("study-journal:voice-asr-send", (_event, sessionId, data) => {
-  const socket = desktopVoiceSockets.get(String(sessionId));
-  if (!socket || socket.readyState !== 1) return { sent: false };
-  socket.send(data);
-  return { sent: true };
+ipcMain.handle("study-journal:voice-asr-send", (event, sessionId, data) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) throw new Error("语音识别请求来源无效。");
+  return sendVoiceAsrFrame(desktopVoiceSockets.get(String(sessionId)), data);
 });
 
 ipcMain.handle("study-journal:voice-asr-close", (_event, sessionId) => {

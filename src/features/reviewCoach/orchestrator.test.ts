@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AiRequestError } from "../../services/aiClientService";
 
 import type { AdaptiveReviewTask, AnalysisBatch, AnalysisInputRef, FeedbackInterpretation, ReviewCoachFormalSnapshot, SessionBlueprint } from "./domain";
 import type { SessionBlueprintAiCandidate } from "./aiSchemas";
@@ -95,7 +96,7 @@ describe("ReviewCoachOrchestrator", () => {
       legacyLearningEvidence: [], legacyKnowledgePoints: [], legacyRecordKnowledgePointLinks: [], legacyKnowledgeRelations: [],
     });
     const saveFeedbackInterpretation = vi.fn(async (next: FeedbackInterpretation) => { interpretation = next; return next; });
-    const interpretFeedback = vi.fn(async () => { throw new Error("timeout"); });
+    const interpretFeedback = vi.fn(async () => { throw new AiRequestError("timeout", true, undefined, false, undefined, "timeout"); });
     const orchestrator = new ReviewCoachOrchestrator({
       repository: { getFormalSnapshot: vi.fn(async () => snapshot()), listFeedbackInterpretations: vi.fn(async () => interpretation ? [interpretation] : []), saveFeedbackInterpretation } as unknown as ReviewCoachRepository,
       ids: { next: () => "unused" }, clock: { now: () => stamp },
@@ -170,7 +171,7 @@ describe("ReviewCoachOrchestrator", () => {
     };
     let current: FeedbackInterpretation | undefined;
     const interpretFeedback = vi.fn()
-      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce(new AiRequestError("timeout", true, undefined, false, undefined, "timeout"))
       .mockResolvedValueOnce({ response: { status: "ok", actionability: "needs_training", difficultyType: "procedure", stuckAt: "order", userHypothesis: null, preferredPractice: "variation", missingInformation: [], confidence: 0.9 } });
     const orchestrator = new ReviewCoachOrchestrator({
       repository: {
@@ -339,7 +340,7 @@ describe("ReviewCoachOrchestrator", () => {
     const firstCandidates = [blueprintCandidate("block-1"), blueprintCandidate("block-2")];
     const planSession = vi.fn()
       .mockResolvedValueOnce({ response: { status: "ok", summary: "first", blueprints: firstCandidates } })
-      .mockRejectedValueOnce(new Error("provider unavailable"));
+      .mockRejectedValueOnce(new AiRequestError("provider unavailable", true, 503));
     const orchestrator = new ReviewCoachOrchestrator({
       repository: store.repository, ids: { next: () => `generated-${++nextId}` }, clock: { now: () => stamp },
       aiGateway: { interpretFeedback: vi.fn(), planSession, generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },

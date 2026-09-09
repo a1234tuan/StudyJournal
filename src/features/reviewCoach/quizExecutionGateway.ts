@@ -17,6 +17,7 @@ interface QuizExecutionGatewayOptions {
   provider: AiProviderProfile;
   apiKey: string;
   timeoutMs?: number;
+  roleTimeouts?: Partial<Record<"turn-generator" | "question-quality-reviewer" | "answer-evaluator", number>>;
 }
 
 const prompt = (instruction: string, input: unknown) => [
@@ -39,7 +40,7 @@ const request = async (options: QuizExecutionGatewayOptions, instruction: string
 
 export const createQuizExecutionGateway = (options: QuizExecutionGatewayOptions): Pick<ReviewCoachAiGateway, "generateTurn" | "reviewQuestion" | "evaluateAnswer"> => ({
   async generateTurn(input, signal) {
-    return parseQuizTurnAiResponse(await request(options,
+    return parseQuizTurnAiResponse(await request({ ...options, timeoutMs: options.roleTimeouts?.["turn-generator"] ?? options.timeoutMs },
       [
         "生成下一轮中文自适应练习。题目中不得泄露答案或判据；hints 要由弱到强。",
         "正常结果必须严格为：{\"status\":\"ok\",\"practiceType\":\"concept|calculation|discrimination|cloze|variation|chunk\",\"answerMode\":\"open|objective|unique\",\"question\":\"...\",\"answerCriteria\":[\"...\"],\"sourceEvidence\":[{\"decisionBlockId\":\"...\",\"recordId\":\"...\",\"contentVersion\":1,\"excerptHash\":\"...\",\"purpose\":\"...\"}],\"hints\":[\"...\"]}。",
@@ -49,7 +50,7 @@ export const createQuizExecutionGateway = (options: QuizExecutionGatewayOptions)
       input, 1800, signal));
   },
   async reviewQuestion(input, signal) {
-    return parseQuestionQualityAiResponse(await request(options,
+    return parseQuestionQualityAiResponse(await request({ ...options, timeoutMs: options.roleTimeouts?.["question-quality-reviewer"] ?? options.timeoutMs },
       [
         "独立检查题目是否无解、缺关键条件、偏离来源、唯一答案不唯一或答案判据矛盾。只检查严重问题。",
         "正常结果必须严格为：{\"status\":\"ok\",\"verdict\":\"pass|fail\",\"severeIssues\":[\"unsolvable|missing-condition|source-drift|non-unique-answer|answer-contradiction\"],\"rationale\":\"...\"}。severeIssues 必须是数组；通过时使用空数组。不得增加其他字段。",
@@ -57,7 +58,7 @@ export const createQuizExecutionGateway = (options: QuizExecutionGatewayOptions)
       input, 700, signal));
   },
   async evaluateAnswer(input, signal) {
-    return parseAnswerEvaluationAiResponse(await request(options,
+    return parseAnswerEvaluationAiResponse(await request({ ...options, timeoutMs: options.roleTimeouts?.["answer-evaluator"] ?? options.timeoutMs },
       [
         "按给定判据评估用户回答。无法可靠判断时 assessment 必须为 unreliable。",
         "正常结果必须严格为：{\"status\":\"ok\",\"assessment\":\"correct|partial|incorrect|unreliable\",\"matchedCriteria\":[\"...\"],\"missingCriteria\":[\"...\"],\"rationale\":\"...\"}。两个 criteria 字段必须是字符串数组，并且只能逐字复制 input.answerCriteria 中的条目。不得增加其他字段。",

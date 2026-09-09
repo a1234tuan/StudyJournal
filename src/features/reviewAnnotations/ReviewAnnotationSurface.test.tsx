@@ -7,6 +7,7 @@ const drafts = new Map<string, ReviewAnnotationDraft>();
 
 vi.mock("./repository", () => ({
   reviewAnnotationRepository: {
+    openDraft: vi.fn(async (draft: ReviewAnnotationDraft) => drafts.get(draft.id) ?? draft),
     getDraft: vi.fn(async (recordId: string, occurrenceKey: string) => drafts.get(`${recordId}:${occurrenceKey}`)),
     upsertDraft: vi.fn(async (draft: ReviewAnnotationDraft) => {
       drafts.set(`${draft.recordId}:${draft.reviewOccurrenceKey}`, draft);

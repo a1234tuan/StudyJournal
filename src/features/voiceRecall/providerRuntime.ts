@@ -21,7 +21,7 @@ export interface VoiceProviderRetryPolicy {
 }
 
 export const DEFAULT_VOICE_PROVIDER_POLICY: VoiceProviderRetryPolicy = {
-  maxAttempts: 2,
+  maxAttempts: 1,
   timeoutMs: 20_000,
   baseDelayMs: 350,
   circuitFailureThreshold: 3,

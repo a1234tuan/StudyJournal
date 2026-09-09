@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sendChatCompletionDetailed } from "../../services/aiClientService";
 import { buildSessionPlanningPrompt, createSessionPlanningGateway } from "./sessionPlanningGateway";
 
-vi.mock("../../services/aiClientService", () => ({ sendChatCompletionDetailed: vi.fn() }));
+vi.mock("../../services/aiClientService", async (importOriginal) => ({ ...await importOriginal<typeof import("../../services/aiClientService")>(), sendChatCompletionDetailed: vi.fn() }));
 
 const provider = { id: "deep", providerName: "Deep", baseUrl: "https://example.test", model: "deep-model", temperature: 0, maxTokens: 8000 };
 const candidate = {

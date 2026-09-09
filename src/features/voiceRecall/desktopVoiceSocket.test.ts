@@ -6,7 +6,7 @@ import type { AsrProviderProfile } from "./providerProfiles";
 
 const createFakeBridge = () => {
   const listeners = new Set<(payload: DesktopVoiceAsrEvent) => void>();
-  const sent: Array<{ sessionId: string; data: Uint8Array }> = [];
+  const sent: Array<{ sessionId: string; data: string | Uint8Array }> = [];
   const opened: Array<{ url: string; headers: Record<string, string> }> = [];
   let resolveOpen: ((value: { sessionId: string }) => void) | undefined;
   let sequence = 0;
@@ -97,7 +97,8 @@ describe("desktop voice socket", () => {
     const sessionId = completeOpen();
     emit({ sessionId, kind: "open" });
     await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
-    expect(JSON.parse(new TextDecoder().decode(sent[0].data)).header).toEqual({ action: "run-task", task_id: "turn-1", streaming: "duplex" });
+    expect(typeof sent[0].data).toBe("string");
+    expect(JSON.parse(sent[0].data as string).header).toEqual({ action: "run-task", task_id: "turn-1", streaming: "duplex" });
 
     emit({ sessionId, kind: "message", data: new TextEncoder().encode(JSON.stringify({ header: { event: "task-started" } })) });
     const session = await opened;
@@ -107,7 +108,7 @@ describe("desktop voice socket", () => {
 
     const iterator = session.events[Symbol.asyncIterator]();
     emit({ sessionId, kind: "message", data: new TextEncoder().encode(JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "间隔复习", sentence_end: true } } } })) });
-    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习" } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习", cumulative: true } });
 
     emit({ sessionId, kind: "message", data: new TextEncoder().encode(JSON.stringify({ header: { event: "task-finished" } })) });
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });

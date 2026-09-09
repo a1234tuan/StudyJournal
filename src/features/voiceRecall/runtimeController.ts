@@ -28,6 +28,18 @@ export class VoiceRecallRuntimeController {
   private capture?: VoiceCaptureAdapter;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private captureTask?: Promise<void>;
+  private operationEpoch = 0;
+  productionSession?: import("./productionPipeline").ProductionVoiceSession;
+
+  get operationGeneration() { return this.operationEpoch; }
+
+  isCurrentOperation(generation: number) { return generation === this.operationEpoch; }
+
+  async cancelActiveTurn() {
+    this.operationEpoch += 1;
+    this.cancellation.cancelTurn("user-cancelled");
+    await Promise.all([this.stopCapture(), this.playback.interrupt()]);
+  }
   private readonly focus: VoiceAudioFocusManager;
 
   constructor(
@@ -62,7 +74,7 @@ export class VoiceRecallRuntimeController {
     this.cancellation = new VoiceRecallCancellationTree();
     const id = crypto.randomUUID();
     this.state = createVoiceRecallState(request.mode);
-    this.state = transitionVoiceRecallState(this.state, { type: "SET_INPUT_MODE", mode: request.inputMode });
+    this.state = transitionVoiceRecallState(this.state, { type: "SET_INPUT_MODE", mode: request.inputMode === "auto-half-duplex" ? "tap-to-record" : request.inputMode });
     this.session = {
       id,
       mode: request.mode,
@@ -94,12 +106,19 @@ export class VoiceRecallRuntimeController {
     this.state = {
       ...createVoiceRecallState(session.mode),
       status: "paused",
-      inputMode: session.checkpoint.inputMode,
+      inputMode: session.checkpoint.inputMode === "auto-half-duplex" ? "tap-to-record" : session.checkpoint.inputMode,
       userMuted: session.checkpoint.userMuted,
       transcript: session.checkpoint.lastConfirmedText ?? "",
     };
     this.focus.start();
     this.emit();
+  }
+
+  async attachProductionSession(production: import("./productionPipeline").ProductionVoiceSession) {
+    if (!this.session) throw new Error("当前没有活动会话");
+    this.productionSession = production;
+    this.session = { ...this.session, provider: production.provider ?? this.session.provider };
+    await this.persistNow();
   }
 
   async updateMemory(memory: Partial<VoiceRecallStructuredMemory>) {
@@ -108,14 +127,18 @@ export class VoiceRecallRuntimeController {
     await this.persistNow();
   }
 
-  async commitTurn(turn: VoiceRecallTurnLocal) {
+  async commitTurn(turn: VoiceRecallTurnLocal, generation = this.operationEpoch) {
     if (!this.session || turn.sessionId !== this.session.id) throw new Error("语音复述轮次与当前会话不匹配");
-    this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "");
+    this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "", () => this.isCurrentOperation(generation));
     return turn;
   }
 
   dispatch(action: VoiceRecallAction) {
     if (!this.state) throw new Error("当前没有活动的语音复述会话");
+    if (action.type === "CANCEL_TURN" || action.type === "INTERRUPT_AND_LISTEN") {
+      void this.cancelActiveTurn();
+    }
+    if (action.type === "SET_USER_MUTED" && action.muted) void this.stopCapture();
     this.state = transitionVoiceRecallState(this.state, action);
     this.schedulePersist();
     this.emit();
@@ -129,7 +152,9 @@ export class VoiceRecallRuntimeController {
     onError?: (error: unknown) => void,
   ) {
     if (!this.state || !this.session) throw new Error("当前没有活动的语音复述会话");
+    const generation = this.operationEpoch;
     await this.stopCapture();
+    if (!this.isCurrentOperation(generation) || this.state?.status === "paused" || this.state?.userMuted) return;
     this.capture = adapter;
     const turnSignal = this.cancellation.beginTurn();
     this.captureTask = (async () => {
@@ -147,11 +172,11 @@ export class VoiceRecallRuntimeController {
   }
 
   async stopCapture() {
-    this.cancellation.cancelTurn("capture-stopped");
-    await this.capture?.stop();
+    if (this.capture) this.cancellation.cancelTurn("capture-stopped");
+    const capture = this.capture;
     this.capture = undefined;
-    await this.captureTask?.catch(() => undefined);
     this.captureTask = undefined;
+    await capture?.stop();
   }
 
   /** Swap in the real audio sink once the TTS provider (and its encoding) is known. */
@@ -174,6 +199,29 @@ export class VoiceRecallRuntimeController {
   }
 
   /** Phase 1 of a turn: captured audio -> confirmed transcript. */
+  private async withUsage<Result extends { usage: import("./providerRuntime").VoiceUsageTotals }>(
+    sessionId: string,
+    execute: (operationId: string, observe: (usage: Partial<import("./providerRuntime").VoiceUsageTotals>) => void) => Promise<Result>,
+  ) {
+    const operationId = crypto.randomUUID();
+    let observed: Partial<import("./providerRuntime").VoiceUsageTotals> = {};
+    let pending = Promise.resolve();
+    let persistenceError: unknown;
+    const observe = (patch: Partial<import("./providerRuntime").VoiceUsageTotals>) => {
+      observed = { ...observed, ...patch };
+      const snapshot = { ...observed };
+      pending = pending.then(() => this.repository.recordUsage(sessionId, operationId, snapshot)).catch((error) => { persistenceError = error; });
+    };
+    try {
+      const result = await execute(operationId, observe);
+      observe(Object.fromEntries(Object.entries(result.usage).filter(([, value]) => value > 0)));
+      return { ...result, operationId, observedUsage: observed };
+    } finally {
+      await pending;
+      if (persistenceError) throw persistenceError;
+    }
+  }
+
   async transcribeTurn(input: {
     pipeline: VoiceRecallPipeline;
     frames: AsyncIterable<VoiceAudioFrame>;
@@ -182,15 +230,19 @@ export class VoiceRecallRuntimeController {
   }) {
     if (!this.session) throw new Error("当前没有活动的语音复述会话");
     const turnSignal = this.cancellation.beginTurn();
-    return input.pipeline.transcribe({
-      sessionId: this.session.id,
+    const sessionId = this.session.id;
+    const result = await this.withUsage(sessionId, (operationId, onUsage) => input.pipeline.transcribe({
+      sessionId,
       turnId: crypto.randomUUID(),
-      operationId: crypto.randomUUID(),
+      operationId,
+      onUsage,
       frames: input.frames,
       format: input.format,
       signal: turnSignal,
-      onEvent: input.onEvent,
-    });
+      onEvent: (event) => { if (!turnSignal.aborted) input.onEvent?.(event); },
+    }));
+    if (turnSignal.aborted) throw new DOMException("语音轮次已取消", "AbortError");
+    return result;
   }
 
   /** Phase 2 of a turn: confirmed transcript -> streamed reply + real playback. */
@@ -201,30 +253,40 @@ export class VoiceRecallRuntimeController {
     events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
   }) {
     if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
+    const operationGeneration = this.operationEpoch;
     await this.playback.interrupt();
+    if (!this.isCurrentOperation(operationGeneration) || !this.session) throw new DOMException("轮次已取消", "AbortError");
     const turnSignal = this.cancellation.beginTurn();
-    return input.pipeline.respond({
-      sessionId: this.session.id,
+    const sessionId = this.session.id;
+    const generation = this.state.generation;
+    const result = await this.withUsage(sessionId, (operationId, onUsage) => input.pipeline.respond({
+      sessionId,
       turnId: crypto.randomUUID(),
-      operationId: crypto.randomUUID(),
+      operationId,
       messages: input.messages,
       voice: input.voice,
-      generation: this.state.generation,
+      generation,
       signal: turnSignal,
-      events: input.events,
-    });
+      events: {
+        onUsage,
+        onTeacherToken: (token) => { if (!turnSignal.aborted) input.events?.onTeacherToken?.(token); },
+        onAudio: (chunk, generation) => { if (!turnSignal.aborted) return input.events?.onAudio?.(chunk, generation); },
+      },
+    }));
+    if (turnSignal.aborted) throw new DOMException("语音轮次已取消", "AbortError");
+    return result;
   }
 
   async pause() {
     if (!this.state || this.state.status === "paused" || this.state.status === "ended") return;
-    await Promise.all([this.stopCapture(), this.playback.interrupt()]);
+    await this.cancelActiveTurn();
     this.dispatch({ type: "PAUSE" });
     await this.persistNow();
   }
 
   async end() {
     if (!this.state || !this.session) return;
-    await Promise.all([this.stopCapture(), this.playback.interrupt()]);
+    await this.cancelActiveTurn();
     if (this.state.status !== "ending" && this.state.status !== "ended") this.dispatch({ type: "END" });
     if (this.state.status === "ending") this.dispatch({ type: "END_COMPLETE" });
     this.session.endedAt = new Date().toISOString();

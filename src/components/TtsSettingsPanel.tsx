@@ -1,5 +1,5 @@
 import { ChevronDown, Eye, EyeOff, Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { AppSettings, TtsProviderConfig, TtsProviderId, TtsProviderProfile } from "../types";
 import {
@@ -39,11 +39,14 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
   // See AiSettingsPanel: never write or clear a secret that was not loaded or edited.
   const [loadedKeyIds, setLoadedKeyIds] = useState<Set<string>>(() => new Set());
   const [dirtyKeyIds, setDirtyKeyIds] = useState<Set<string>>(() => new Set());
+  const editedKeys = useRef(new Set<string>());
   const [secondaryKeys, setSecondaryKeys] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    let active = true;
+    editedKeys.current = new Set();
     const nextConfig = normalizeTtsConfig(settings.tts);
     setConfig(nextConfig);
     setLoadedKeyIds(new Set());
@@ -55,14 +58,13 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
       }),
     )
       .then((entries) => {
-        setApiKeys(Object.fromEntries(entries.map(([id, s]) => [id, s?.apiKey ?? ""])));
-        setSecondaryKeys(Object.fromEntries(entries.map(([id, s]) => [id, s?.apiKeySecondary ?? ""])));
+        if (!active) return;
+        setApiKeys((current) => ({ ...current, ...Object.fromEntries(entries.filter(([id]) => !editedKeys.current.has(id)).map(([id, secret]) => [id, secret?.apiKey ?? ""])) }));
+        setSecondaryKeys((current) => ({ ...current, ...Object.fromEntries(entries.filter(([id]) => !editedKeys.current.has(id)).map(([id, secret]) => [id, secret?.apiKeySecondary ?? ""])) }));
         setLoadedKeyIds(new Set(entries.map(([id]) => id)));
       })
-      .catch(() => {
-        setApiKeys(Object.fromEntries(nextConfig.providers.map((p) => [p.id, ""])));
-        setSecondaryKeys(Object.fromEntries(nextConfig.providers.map((p) => [p.id, ""])));
-      });
+      .catch(() => undefined);
+    return () => { active = false; };
   }, [settings]);
 
   const updateProvider = (id: string, patch: Partial<TtsProviderProfile>) => {
@@ -241,6 +243,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                           type={showKey ? "text" : "password"}
                           value={apiKeys[profile.id] ?? ""}
                           onChange={(e) => {
+                            editedKeys.current.add(profile.id);
                             setApiKeys((c) => ({ ...c, [profile.id]: e.target.value }));
                             setDirtyKeyIds((c) => new Set(c).add(profile.id));
                           }}
@@ -263,7 +266,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                           <input
                             type={showKey ? "text" : "password"}
                             value={secondaryKeys[profile.id] ?? ""}
-                            onChange={(e) => setSecondaryKeys((c) => ({ ...c, [profile.id]: e.target.value }))}
+                            onChange={(e) => { editedKeys.current.add(profile.id); setDirtyKeyIds((current) => new Set(current).add(profile.id)); setSecondaryKeys((current) => ({ ...current, [profile.id]: e.target.value })); }}
                             placeholder="腾讯云 SecretKey"
                           />
                         </span>

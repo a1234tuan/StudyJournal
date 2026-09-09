@@ -10,6 +10,8 @@ export interface VoiceRecallProviderSnapshot {
   asrProfileId?: string;
   llmProfileId?: string;
   ttsProfileId?: string;
+  configurationIdentity?: string;
+  config?: import("./providerProfiles").VoiceProviderEditableConfig;
 }
 
 export interface VoiceRecallStructuredMemory {
@@ -29,6 +31,8 @@ export interface VoiceRecallSessionCheckpoint {
   userMuted: boolean;
 }
 
+export type VoiceUsageSources = Partial<Record<keyof import("./providerRuntime").VoiceUsageTotals, "provider-reported" | "local-estimate">>;
+
 export interface VoiceRecallSessionLocal {
   id: string;
   mode: VoiceRecallSessionMode;
@@ -39,6 +43,8 @@ export interface VoiceRecallSessionLocal {
   sourceUnavailable?: boolean;
   status: VoiceRecallLocalSessionStatus;
   provider: VoiceRecallProviderSnapshot;
+  usageOperations?: Record<string, Partial<import("./providerRuntime").VoiceUsageTotals>>;
+  usageSources?: VoiceUsageSources;
   memory: VoiceRecallStructuredMemory;
   checkpoint: VoiceRecallSessionCheckpoint;
   createdAt: string;
@@ -60,6 +66,8 @@ export interface VoiceRecallTurnLocal {
   uncertainSpans?: string[];
   meaningRisk?: "low" | "medium" | "high";
   playedCharacterCount?: number;
+  usage?: Partial<import("./providerRuntime").VoiceUsageTotals>;
+  usageSources?: VoiceUsageSources;
   errorCode?: string;
   createdAt: string;
   updatedAt: string;
@@ -84,5 +92,7 @@ export interface VoiceRecallLocalHistory {
   title: string;
   summary: string;
   usage: VoiceRecallUsageEstimate;
+  observedUsage?: Partial<import("./providerRuntime").VoiceUsageTotals>;
+  usageSources?: VoiceUsageSources;
   savedAt: string;
 }
