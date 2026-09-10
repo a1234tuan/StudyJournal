@@ -8,6 +8,7 @@ export interface VoicePlaybackSinkOptions {
   encoding: VoicePlaybackEncoding;
   sampleRate?: number;
   contextFactory?: () => AudioContext;
+  preferHtmlAudio?: boolean;
 }
 
 const toFloat32 = (chunk: Uint8Array): Float32Array<ArrayBuffer> => {
@@ -27,6 +28,7 @@ const toFloat32 = (chunk: Uint8Array): Float32Array<ArrayBuffer> => {
 export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): VoicePlaybackSink => {
   let context: AudioContext | undefined;
   let current: AudioBufferSourceNode | undefined;
+  let currentAudio: HTMLAudioElement | undefined;
 
   const getContext = (): AudioContext => {
     context ??= (options.contextFactory ?? (() => new AudioContext()))();
@@ -35,6 +37,8 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
 
   const stopCurrent = () => {
     try { current?.stop(); } catch { /* already stopped */ }
+    currentAudio?.pause();
+    currentAudio = undefined;
     current = undefined;
   };
 
@@ -45,6 +49,20 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
       if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
       if (signal.aborted) return;
 
+      if (options.encoding === "provider-native" && options.preferHtmlAudio) {
+        const url = URL.createObjectURL(new Blob([chunk.slice().buffer], { type: "audio/mpeg" }));
+        const audio = new Audio(url);
+        currentAudio = audio;
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => { URL.revokeObjectURL(url); signal.removeEventListener("abort", abort); audio.onended = null; audio.onerror = null; if (currentAudio === audio) currentAudio = undefined; };
+          const abort = () => { audio.pause(); cleanup(); resolve(); };
+          audio.onended = () => { cleanup(); resolve(); };
+          audio.onerror = () => { cleanup(); reject(new Error("Android 音频播放失败。")); };
+          signal.addEventListener("abort", abort, { once: true });
+          void audio.play().catch((error) => { cleanup(); reject(error); });
+        });
+        return;
+      }
       let buffer: AudioBuffer;
       if (options.encoding === "pcm-s16le") {
         const samples = toFloat32(chunk);

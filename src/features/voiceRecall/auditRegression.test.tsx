@@ -233,7 +233,7 @@ it("ignores late tokens and audio after cancellation and keeps the editable answ
   });
   expect(enqueue).not.toHaveBeenCalled();
   expect(await repository.listTurns(runtime.activeSessionId!)).toEqual([]);
-  expect(screen.getByLabelText("本轮转写校对")).toHaveValue("保留这个回答");
+  await waitFor(() => expect(screen.getByLabelText("本轮转写校对")).toHaveValue("保留这个回答"));
   expect(screen.getByRole("button", { name: "确认并发送" })).not.toBeDisabled();
 });
 

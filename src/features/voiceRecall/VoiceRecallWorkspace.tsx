@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 
 import { AiKnowledgeScopePicker } from "../../components/AiKnowledgeScopePicker";
 import { getAiKnowledgeScopeRecords } from "../../services/aiContextService";
@@ -130,6 +131,7 @@ export const VoiceRecallWorkspace = ({
   playbackSinkFactory = (session) => createVoicePlaybackSink({
     encoding: session.ttsEncoding,
     sampleRate: session.ttsSampleRate,
+    preferHtmlAudio: Capacitor.getPlatform() === "android",
   }),
 }: VoiceRecallWorkspaceProps) => {
   const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("tap-to-record");
@@ -449,6 +451,8 @@ export const VoiceRecallWorkspace = ({
         runtime.dispatch({ type: "SUBMIT_CAPTURE" });
       }
       runtime.dispatch({ type: "ASR_FINALIZED", transcript: confirmedText });
+      setTranscript("");
+      setTranscriptEditorOpen(false);
 
       const messages: VoiceTeacherMessage[] = buildVoiceTeacherMessages({
         confirmedText,
@@ -507,7 +511,13 @@ export const VoiceRecallWorkspace = ({
       assertCurrent();
       await reloadTurns();
     } catch (error) {
-      if (!runtime.isCurrentOperation(generation)) return;
+      if (!runtime.isCurrentOperation(generation)) {
+        setTranscript(confirmedText);
+        setTranscriptEditorOpen(true);
+        return;
+      }
+      setTranscript(confirmedText);
+      setTranscriptEditorOpen(true);
       setBusy(false);
       setMessage(describeVoiceError(error));
       if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
