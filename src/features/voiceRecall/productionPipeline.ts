@@ -162,6 +162,7 @@ export const createProductionVoiceSession = async (
     profile: resolved.llm,
     apiKey: llmSecret.apiKey,
     fetchImplementation: input.fetchImplementation,
+    platform,
   });
   const tts = createVoiceTtsAdapter({
     profile: resolved.tts,

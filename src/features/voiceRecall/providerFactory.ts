@@ -6,6 +6,7 @@ import { OpenAiCompatibleLlmStreamAdapter } from "./openAiLlmStreamAdapter";
 import { assertBrowserDirectSupported, type AsrProviderProfile, type VoiceRuntimePlatform, type VoiceTtsProviderProfile } from "./providerProfiles";
 import { BufferedTtsFallbackAdapter, SystemSpeechTtsFallbackAdapter } from "./ttsFallbackAdapters";
 import { TransportAsrStreamAdapter, type VoiceAsrTransport } from "./transportAsrAdapter";
+import { AndroidNativeLlmAdapter, AndroidNativeTtsAdapter } from "./nativeAndroidAdapters";
 
 export const createVoiceAsrAdapter = (options: {
   profile: AsrProviderProfile;
@@ -23,9 +24,11 @@ export const createVoiceLlmAdapter = (options: {
   apiKey?: string;
   fetchImplementation?: typeof fetch;
   mock?: boolean;
+  platform?: VoiceRuntimePlatform;
 }): LlmStreamAdapter => {
   if (options.mock) return new MockLlmStreamAdapter();
   if (!options.profile || !options.apiKey) throw new Error("LLM 配置或本机凭据不完整。");
+  if (options.platform === "android") return new AndroidNativeLlmAdapter(options.profile, options.apiKey);
   return new OpenAiCompatibleLlmStreamAdapter(options.profile, options.apiKey, options.fetchImplementation);
 };
 
@@ -47,6 +50,7 @@ export const createVoiceTtsAdapter = (options: {
   }
   const profile = options.legacyProfile ?? options.profile;
   if (!profile || !options.apiKey) throw new Error("TTS 配置或本机凭据不完整。");
+  if (options.platform === "android" && options.profile?.providerId === "fish-audio") return new AndroidNativeTtsAdapter(options.profile, options.apiKey);
   if (options.profile) assertBrowserDirectSupported(options.profile, options.platform);
   return new BufferedTtsFallbackAdapter(profile, options.apiKey, options.apiKeySecondary);
 };
