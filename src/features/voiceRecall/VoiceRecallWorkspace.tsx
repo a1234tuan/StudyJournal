@@ -522,6 +522,7 @@ export const VoiceRecallWorkspace = ({
   const finish = async () => {
     if (!route.sessionId) return;
     setBusy(true);
+    setMessage("");
     try {
       frameQueueRef.current?.close();
       frameQueueRef.current = undefined;

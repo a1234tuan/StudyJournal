@@ -27,6 +27,9 @@ describe("Windows desktop upgrade", () => {
     expect(installerScript).toContain("!macro customUnInstallCheckCurrentUser");
     expect(installerScript).toContain('RMDir /r "$INSTDIR"');
     expect(packageJson.build.files).toContain("!node_modules/**");
+    expect(desktopMain).toContain("try { _oauth = require(\"./oauth-config.cjs\"); }");
+    expect(desktopMain).toContain("Desktop Google 登录尚未配置");
+    expect(packageJson.build.files).toContain("!desktop/**/*.test.*");
   });
 
   it("handles the updater shutdown command through the single-instance lock", () => {

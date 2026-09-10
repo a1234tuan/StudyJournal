@@ -162,7 +162,7 @@ export const VoiceRecallStartView = ({
     </details>
 
     {providerSetup && <details className="vr-provider-details">
-      <summary><span>语音服务</span><small>{providerSetup.summaries[providerSetup.selectedTemplateId]?.statusLabel ?? "本机配置"}</small></summary>
+      <summary><span>语音服务</span><small>{providerSetup.summaries[providerSetup.selectedTemplateId]?.statusLabel === "待真实链路验证" ? "可用性取决于本机配置" : providerSetup.summaries[providerSetup.selectedTemplateId]?.statusLabel ?? "本机配置"}</small></summary>
       <div className="vr-provider-body">
         <label><span>预置链路</span><select value={providerSetup.selectedTemplateId} onChange={(event) => providerSetup.onTemplateChange(event.target.value)}>{providerSetup.templates.map((template) => <option key={template.templateId} value={template.templateId}>{template.templateId}@{template.version}</option>)}</select></label>
         {providerSetup.summaries[providerSetup.selectedTemplateId] && <dl><div><dt>ASR</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].asr}</dd></div><div><dt>LLM</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].llm}</dd></div><div><dt>TTS</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].tts}</dd></div></dl>}
@@ -176,7 +176,7 @@ export const VoiceRecallStartView = ({
           <label><span>TTS 模型</span><input value={providerSetup.config.ttsModel} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, ttsModel: event.target.value })} /></label>
           <label><span>音色 ID</span><input value={providerSetup.config.ttsVoice} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, ttsVoice: event.target.value })} /></label>
         </div>
-        <p>字段覆盖仅保存在当前设备；API Key 请在现有 AI/TTS 设置中管理，不会写入语音路由、备份或云同步。候选 Provider 仍需真实账号与设备验收。</p>
+        <p>本机只保存服务配置标识和覆盖项；API Key 分别由 AI、TTS 与 ASR 的本机凭据设置管理，不会进入语音路由、备份或云同步。开始前会检查三段配置是否可用。</p>
       </div>
     </details>}
 

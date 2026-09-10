@@ -14,9 +14,12 @@ const FIREBASE_STORAGE_BUCKET = "study-journal-408-9f31.firebasestorage.app";
 const FIREBASE_STORAGE_TEST_URL = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(FIREBASE_STORAGE_BUCKET)}/o?maxResults=1`;
 const FIREBASE_STORAGE_METADATA_TIMEOUT_MS = 30_000;
 const FIREBASE_STORAGE_REQUEST_TIMEOUT_MS = 120_000;
-const _oauth = require("./oauth-config.cjs");
-const DESKTOP_GOOGLE_CLIENT_ID = _oauth.clientId;
-const DESKTOP_GOOGLE_CLIENT_SECRET = _oauth.clientSecret;
+let _oauth = {};
+try { _oauth = require("./oauth-config.cjs"); } catch (error) {
+  if (error?.code !== "MODULE_NOT_FOUND" || !String(error.message).includes("oauth-config.cjs")) throw error;
+}
+const DESKTOP_GOOGLE_CLIENT_ID = typeof _oauth.clientId === "string" ? _oauth.clientId.trim() : "";
+const DESKTOP_GOOGLE_CLIENT_SECRET = typeof _oauth.clientSecret === "string" ? _oauth.clientSecret.trim() : "";
 const UPDATE_QUIT_ARGUMENT = "--quit-for-update";
 const DIST_ROOT = path.resolve(__dirname, "..", "dist");
 const APP_ID = "com.noteproject.study408.desktop";
@@ -799,6 +802,9 @@ ipcMain.on("study-journal:backup-flush-complete", (_event, requestId) => {
 });
 
 ipcMain.handle("study-journal:google-sign-in", (event) => {
+  if (!DESKTOP_GOOGLE_CLIENT_ID || !DESKTOP_GOOGLE_CLIENT_SECRET || DESKTOP_GOOGLE_CLIENT_ID.includes("YOUR_GOOGLE")) {
+    throw new Error("Desktop Google 登录尚未配置。请将 desktop/oauth-config.example.cjs 复制为 desktop/oauth-config.cjs，并填写 OAuth 客户端信息。");
+  }
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error("Google 登录请求来源无效。");
   }

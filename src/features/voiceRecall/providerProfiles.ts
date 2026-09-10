@@ -239,7 +239,7 @@ export const getVoiceProviderTemplateSummary = (template: VoiceProviderTemplate)
   const asr = BUILT_IN_ASR_PROFILES.find((profile) => profile.id === template.asrProfileId);
   const tts = BUILT_IN_VOICE_TTS_PROFILES.find((profile) => profile.id === template.ttsProfileId);
   return {
-    statusLabel: template.status === "verified" ? "已验证" : template.status === "candidate" ? "待真实链路验证" : "已弃用",
+    statusLabel: template.status === "verified" ? "已验证" : template.status === "candidate" ? "本机配置后可用" : "已弃用",
     asr: asr?.providerName ?? template.asrProfileId,
     llm: template.llmProfileId,
     tts: tts ? `${tts.providerName} · ${tts.voice}` : template.ttsProfileId,

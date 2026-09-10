@@ -3,6 +3,7 @@ package com.noteproject.study408;
 import com.getcapacitor.BridgeActivity;
 import android.graphics.Color;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -19,8 +20,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativePodcastTtsPlugin.class);
         registerPlugin(NativeMediaPlaybackPlugin.class);
         super.onCreate(savedInstanceState);
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        getWindow().setStatusBarColor(Color.TRANSPARENT);
-        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+        getWindow().setStatusBarColor(Color.rgb(247, 244, 238));
+        getWindow().setNavigationBarColor(Color.rgb(247, 244, 238));
+        WindowInsetsControllerCompat insets = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        insets.setAppearanceLightStatusBars(true);
+        insets.setAppearanceLightNavigationBars(true);
     }
 }
