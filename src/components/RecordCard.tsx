@@ -46,10 +46,12 @@ export const RecordCard = ({ record, onOpen, onAskAi, onToggleFavorite, reviewSt
           <FileText size={18} />
         </span>
         <div className="record-card-copy">
-          <small className="record-card-meta">{record.date} · {record.subject}</small>
           <strong>{record.title}</strong>
           {excerpt && <p className="record-card-excerpt">{excerpt}</p>}
-          <RecordTagChips subject={record.subject} tags={record.tags} />
+          <div className="record-card-supporting">
+            <small className="record-card-meta">{record.date} · {record.subject}</small>
+            <RecordTagChips subject={record.subject} tags={record.tags} />
+          </div>
         </div>
       </button>
       <div className="record-card-actions" aria-label="记录操作">

@@ -262,6 +262,13 @@ describe("tabNavigation", () => {
     expect(buildTabPageKey("review", recordDetail)).not.toBe(buildTabPageKey("review", base));
   });
 
+  it("keeps the AI workspace mounted when only the active session changes", () => {
+    const memory = createInitialTabMemory();
+    memory.more.subRoute = "ai";
+
+    expect(buildTabPageKey("more", memory, "session-a")).toBe(buildTabPageKey("more", memory, "session-b"));
+  });
+
   it("opens and pops record depth inside review tab", () => {
     const memory = {
       ...createInitialTabMemory(),

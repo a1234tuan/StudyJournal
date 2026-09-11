@@ -302,7 +302,8 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
   }
   if (tab === "more") {
     const pageDepth = memory.more.subRoute === "ai" ? 1 : depth;
-    return `${tab}-${pageDepth}-${recordPart}-${memory.more.subRoute ?? "root"}-${memory.more.podcastId ?? "none"}-${memory.more.podcastScreen}-${activeAiSessionId ?? "none"}`;
+    const workspacePart = memory.more.subRoute === "ai" ? "stable-ai-workspace" : activeAiSessionId ?? "none";
+    return `${tab}-${pageDepth}-${recordPart}-${memory.more.subRoute ?? "root"}-${memory.more.podcastId ?? "none"}-${memory.more.podcastScreen}-${workspacePart}`;
   }
   return `${tab}-${depth}-${recordPart}`;
 };

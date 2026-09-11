@@ -1,6 +1,5 @@
 import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 
@@ -484,5 +483,5 @@ export const ImageLightbox = ({ images, initialIndex, onClose, onStatus }: Image
     </div>
   );
 
-  return createPortal(lightbox, document.body);
+  return lightbox;
 };

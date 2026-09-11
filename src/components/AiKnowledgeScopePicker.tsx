@@ -248,7 +248,7 @@ export const AiKnowledgeScopePicker = ({
   };
 
   return (
-    <main className="page ai-scope-page immersive" aria-label={ariaLabel}>
+    <main className="page ai-scope-page immersive page-section-transition" aria-label={ariaLabel}>
       <section className={`ai-scope-page-shell${scopeKind === "records" ? " ai-scope-page-records" : ""}`}>
         <header className="ai-scope-page-header">
           <button type="button" className="icon-button" onClick={onBack} disabled={busy} aria-label={backLabel} title={backLabel}><ArrowLeft size={18} /></button>

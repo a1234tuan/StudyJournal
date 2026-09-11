@@ -741,8 +741,8 @@
 
 .review-library {
   display: grid;
-  grid-template-columns: minmax(196px, 240px) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
   margin-top: 14px;
 }
@@ -758,17 +758,50 @@
 }
 
 .review-deck-panel > summary {
-  display: none;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
 }
 
 .review-deck-panel:not([open]) > .review-deck-list {
-  display: grid;
+  display: none;
+}
+
+.review-deck-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.review-deck-panel > summary span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.review-deck-panel > summary strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-deck-panel > summary svg {
+  transition: transform var(--motion-fast) ease;
+}
+
+.review-deck-panel[open] > summary svg {
+  transform: rotate(180deg);
 }
 
 .review-deck-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 3px;
   padding: 7px;
+  border-top: 1px solid var(--color-border);
 }
 
 .review-deck-list button {
@@ -812,6 +845,7 @@
 
 .review-deck-group {
   display: grid;
+  align-content: start;
   gap: 2px;
   margin-top: 4px;
 }
@@ -1036,49 +1070,10 @@
 }
 
 @media (max-width: 900px) {
-  .review-library {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-deck-panel > summary {
-    min-height: 44px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    cursor: pointer;
-    list-style: none;
-  }
-
-  .review-deck-panel > summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .review-deck-panel > summary span {
-    color: var(--color-muted);
-    font-size: 0.82rem;
-  }
-
-  .review-deck-panel > summary strong {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .review-deck-panel[open] > summary svg {
-    transform: rotate(180deg);
-  }
-
-  .review-deck-panel:not([open]) > .review-deck-list {
-    display: none;
-  }
-
   .review-deck-list {
+    grid-template-columns: minmax(0, 1fr);
     max-height: min(48vh, 360px);
     overflow: auto;
-    border-top: 1px solid var(--color-border);
   }
 
   .review-library-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
@@ -2582,15 +2577,10 @@
   margin-top: 0;
 }
 
-.review-record-card.has-decision-blocks {
-  width: min(1080px, 100%);
-}
-
 .review-learning-layout.has-decision-blocks {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  align-items: start;
-  gap: clamp(22px, 4vw, 48px);
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(24px, 4vh, 40px);
 }
 
 .decision-block-reflection-list {
@@ -3419,14 +3409,20 @@
   background: var(--color-surface);
 }
 
+.review-viewport-dock {
+  left: 50%;
+  width: min(760px, calc(100vw - 32px));
+  transform: translateX(-50%);
+}
+
 .review-bottom-controls {
-  width: min(760px, 100%);
+  width: min(760px, calc(100vw - 32px));
   justify-self: center;
-  position: sticky;
-  bottom: calc(var(--bottom-nav-height, 78px) + max(10px, env(safe-area-inset-bottom)));
+  position: fixed;
+  bottom: 16px;
   z-index: 6;
-  margin: 4px auto 0;
-  padding: 6px 0 max(0px, env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 6px 0;
   border-top: 1px solid var(--color-border);
   border-radius: 0;
   background: var(--color-bg);
@@ -3436,8 +3432,7 @@
 }
 
 .review-bottom-controls.has-decision-blocks {
-  position: static;
-  margin-top: 12px;
+  width: min(760px, calc(100vw - 32px));
 }
 
 .review-rating-bar {
@@ -3525,7 +3520,7 @@
   }
 
   .review-bottom-controls {
-    bottom: calc(var(--bottom-nav-height, 78px) + max(8px, env(safe-area-inset-bottom)));
+    bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
   .app-shell.immersive-task-active .review-session {
@@ -3533,7 +3528,7 @@
   }
 
   .app-shell.immersive-task-active .review-bottom-controls {
-    bottom: max(8px, env(safe-area-inset-bottom));
+    bottom: calc(12px + env(safe-area-inset-bottom));
   }
 }
 
@@ -3752,10 +3747,10 @@
 .review-library-active-filters button { min-height: 26px; border: 1px solid color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); border-radius: 999px; padding: 2px 8px; color: var(--color-primary-strong); background: var(--color-primary-soft); font-size: .74rem; }
 
 .review-annotation-entry {
-  position: absolute;
+  position: fixed;
   z-index: 24;
-  top: 8px;
-  right: 8px;
+  top: calc(16px + env(safe-area-inset-top));
+  right: calc(20px + env(safe-area-inset-right));
   width: 40px;
   height: 40px;
   display: grid;
@@ -3780,10 +3775,10 @@
   position: fixed;
   z-index: 26;
   right: auto;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  bottom: 16px;
   left: 50%;
   top: auto;
-  width: min(860px, calc(100vw - 32px));
+  width: min(760px, calc(100vw - 32px));
   margin: 0;
   transform: translateX(-50%);
   min-height: 44px;
@@ -3890,9 +3885,17 @@
   touch-action: none;
   cursor: crosshair;
 }
-.review-annotation-svg.drawing { pointer-events: auto; touch-action: none; }
+.review-annotation-svg.selecting { z-index: 24; pointer-events: auto; touch-action: none; cursor: default; }
+.review-annotation-form-hit { fill: transparent; stroke: transparent; }
+.review-annotation-root.selecting .review-annotation-control { pointer-events: none; user-select: none; }
 .review-annotation-selection rect { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1.5; stroke-dasharray: 5 3; pointer-events: all; cursor: move; }
 .review-annotation-selection circle { fill: var(--color-surface); stroke: var(--color-primary); stroke-width: 2; pointer-events: all; cursor: nwse-resize; }
+.review-annotation-selection circle[data-selection-handle="n"],
+.review-annotation-selection circle[data-selection-handle="s"] { cursor: ns-resize; }
+.review-annotation-selection circle[data-selection-handle="e"],
+.review-annotation-selection circle[data-selection-handle="w"] { cursor: ew-resize; }
+.review-annotation-selection circle[data-selection-handle="ne"],
+.review-annotation-selection circle[data-selection-handle="sw"] { cursor: nesw-resize; }
 .review-annotation-selection-box { fill: color-mix(in srgb, var(--color-primary) 8%, transparent); stroke: var(--color-primary); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 
 .review-annotation-error {
@@ -3909,7 +3912,7 @@
 .review-annotation-control {
   position: absolute;
   z-index: 23;
-  resize: both;
+  resize: none;
   border: 1px solid currentColor;
   border-radius: 4px;
   padding: 6px 8px;
@@ -3924,13 +3927,19 @@
 .review-annotation-control.text:not(:focus) { resize: none; outline: none; }
 .review-annotation-control:focus { outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent); outline-offset: 1px; }
 .review-annotation-eraser-cursor { position: fixed; z-index: 30; pointer-events: none; border: 1px solid var(--color-primary); border-radius: 50%; background: color-mix(in srgb, var(--color-primary) 12%, transparent); transform: translateZ(0); }
-.review-annotation-select-editor { position: fixed; z-index: 31; right: 16px; bottom: max(72px, calc(16px + env(safe-area-inset-bottom))); display: grid; gap: 7px; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
+.review-annotation-select-editor { position: fixed; z-index: 31; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); display: grid; gap: 7px; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface-raised); box-shadow: var(--shadow-floating); }
 .review-annotation-select-editor input { min-height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding-inline: 8px; background: var(--color-surface); color: var(--color-text); }
 .review-annotation-select-editor > div { display: flex; gap: 6px; justify-content: flex-end; }
 
 @media (max-width: 600px) {
+  .review-annotation-entry {
+    top: calc(68px + env(safe-area-inset-top));
+    right: calc(12px + env(safe-area-inset-right));
+  }
+
   .review-annotation-toolbar {
     right: 8px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
     left: 8px;
     width: auto;
     transform: none;
@@ -3999,6 +4008,7 @@
 
 .review-page-session-active {
   padding-top: 12px;
+  padding-bottom: calc(92px + env(safe-area-inset-bottom));
 }
 
 .review-session-chrome {

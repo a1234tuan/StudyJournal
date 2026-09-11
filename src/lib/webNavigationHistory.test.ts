@@ -26,7 +26,7 @@ describe("web navigation history snapshots", () => {
       searchOpen: true,
     };
 
-    const snapshot = createWebNavigationSnapshot("session-1", "journal", memory, "ai-session-1", 384);
+    const snapshot = createWebNavigationSnapshot("session-1", "journal", memory, "ai-session-1", 384, 7);
     const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
 
     expect(restored).toEqual({
@@ -41,6 +41,7 @@ describe("web navigation history snapshots", () => {
     });
     expect(restored?.tabMemory.journal.month).toBeInstanceOf(Date);
     expect(restored?.tabMemory.journal.referenceStack?.[0]).toMatchObject({ recordId: "record-a", scrollY: 248 });
+    expect(restored?.navigationIndex).toBe(7);
   });
 
   it("restores every More sub-route and degrades an unknown one to the More root", () => {
@@ -79,7 +80,9 @@ describe("web navigation history snapshots", () => {
 
     const legacySnapshot = JSON.parse(JSON.stringify(snapshot));
     delete legacySnapshot.tabMemory.review.library;
+    delete legacySnapshot.navigationIndex;
     expect(restoreWebNavigationSnapshot(legacySnapshot)?.tabMemory.review.library).toEqual(createInitialTabMemory().review.library);
+    expect(restoreWebNavigationSnapshot(legacySnapshot)?.navigationIndex).toBe(0);
   });
 
   it("round-trips the bounded voice recall route without serialising runtime data", () => {

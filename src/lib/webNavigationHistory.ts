@@ -30,6 +30,7 @@ export type WebNavigationSnapshot = {
   tabMemory: SerializedTabMemory;
   activeAiSessionId: string | null;
   scrollY: number;
+  navigationIndex: number;
 };
 
 export type RestoredWebNavigationSnapshot = Omit<WebNavigationSnapshot, "tabMemory"> & {
@@ -302,6 +303,7 @@ export const createWebNavigationSnapshot = (
   tabMemory: TabMemory,
   activeAiSessionId: string | null,
   scrollY: number,
+  navigationIndex = 0,
 ): WebNavigationSnapshot => ({
   kind: HISTORY_KIND,
   version: HISTORY_VERSION,
@@ -310,6 +312,7 @@ export const createWebNavigationSnapshot = (
   tabMemory: serialiseTabMemory(tabMemory),
   activeAiSessionId,
   scrollY: Number.isFinite(scrollY) && scrollY >= 0 ? scrollY : 0,
+  navigationIndex: Number.isInteger(navigationIndex) && navigationIndex >= 0 ? navigationIndex : 0,
 });
 
 export const restoreWebNavigationSnapshot = (value: unknown): RestoredWebNavigationSnapshot | null => {
@@ -332,6 +335,9 @@ export const restoreWebNavigationSnapshot = (value: unknown): RestoredWebNavigat
     tabMemory,
     activeAiSessionId: value.activeAiSessionId,
     scrollY,
+    navigationIndex: typeof value.navigationIndex === "number" && Number.isInteger(value.navigationIndex) && value.navigationIndex >= 0
+      ? value.navigationIndex
+      : 0,
   };
 };
 

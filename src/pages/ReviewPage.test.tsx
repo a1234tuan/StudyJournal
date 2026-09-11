@@ -429,6 +429,61 @@ describe("ReviewPage", () => {
     expect(screen.getByLabelText("日志标签：队列、重点")).toBeInTheDocument();
   });
 
+  it("keeps the deck scope collapsed above a full-width library and reuses the existing scope state", () => {
+    const { handlers } = renderReviewPage({ mode: "manage" });
+    const summary = screen.getByText("牌组范围");
+    const details = summary.closest("details");
+
+    expect(details).not.toHaveAttribute("open");
+    expect(details?.parentElement?.nextElementSibling).toHaveClass("review-library-content");
+
+    fireEvent.click(summary);
+    expect(details).toHaveAttribute("open");
+    fireEvent.click(within(details as HTMLElement).getByRole("button", { name: /^OS/ }));
+
+    expect(handlers.onLibraryStateChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      scope: { kind: "subject", subject: "OS" },
+    }));
+  });
+
+  it("places review-focus feedback after the centered read-only body", () => {
+    renderReviewPage({
+      records: records.map((item) => item.id === "active" ? withDecisionBlock(item) : item),
+      mode: "queue",
+      dueReviews: [review("active")],
+      reviewStates: [review("active")],
+      queueIds: ["active"],
+      currentRecordId: "active",
+    });
+
+    const layout = document.querySelector(".review-learning-layout");
+    expect(layout).toHaveClass("has-decision-blocks");
+    expect(layout?.children[0]).toHaveClass("review-annotation-root");
+    expect(layout?.children[1]).toHaveClass("decision-block-reflection-list");
+  });
+
+  it("replaces the rating dock with annotation tools and restores it when annotation closes", () => {
+    renderReviewPage({
+      records: records.map((item) => item.id === "active" ? withDecisionBlock(item) : item),
+      mode: "queue",
+      dueReviews: [review("active")],
+      reviewStates: [review("active")],
+      queueIds: ["active"],
+      currentRecordId: "active",
+    });
+
+    expect(document.querySelector(".review-bottom-controls")).toHaveClass("review-viewport-dock", "has-decision-blocks");
+    expect(screen.queryByRole("toolbar", { name: "批注工具栏" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开批注工具" }));
+    expect(document.querySelector(".review-bottom-controls")).toBeNull();
+    expect(screen.getByRole("toolbar", { name: "批注工具栏" })).toHaveClass("review-viewport-dock");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭批注工具" }));
+    expect(document.querySelector(".review-bottom-controls")).toBeInTheDocument();
+    expect(screen.queryByRole("toolbar", { name: "批注工具栏" })).not.toBeInTheDocument();
+  });
+
   it("passes queue card references to the read-only editor without enabling queue editing", () => {
     const onOpenRecordReference = vi.fn();
     renderReviewPage({

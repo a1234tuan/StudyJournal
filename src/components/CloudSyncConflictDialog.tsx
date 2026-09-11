@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 
+import { MotionPresence } from "./MotionPresence";
 import { formatUiError } from "../lib/uiError";
 import { getCurrentCloudUser, resolveCloudSyncConflict, synchronizeCloudChanges } from "../services/cloudSyncService";
 import { cloudSyncStore, useCloudSyncStore } from "../services/cloudSyncStore";
@@ -21,7 +22,9 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
   const { busy, conflict, message, readBudget, readBudgetChoice, writeBudget, writeBudgetChoice } = useCloudSyncStore();
   const [approvedBudgets, setApprovedBudgets] = useState({ read: false, write: false });
 
-  if (!conflict) return null;
+  if (!conflict) {
+    return <MotionPresence present={false} variant="modal" className="cloud-sync-conflict-backdrop" role="presentation">{null}</MotionPresence>;
+  }
 
   const resolve = async (
     choice: "local" | "cloud",
@@ -184,7 +187,7 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
   };
 
   return (
-    <div className="cloud-sync-conflict-backdrop" role="presentation">
+    <MotionPresence present variant="modal" className="cloud-sync-conflict-backdrop" role="presentation">
       <section
         className="cloud-sync-conflict-dialog"
         role="alertdialog"
@@ -281,6 +284,6 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
           </button>
         </div>
       </section>
-    </div>
+    </MotionPresence>
   );
 };

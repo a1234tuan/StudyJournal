@@ -118,7 +118,7 @@ export const VoiceRecallStartView = ({
   onDisclosureChange,
   providerSetup,
 }: VoiceRecallStartViewProps) => (
-  <main className="vr-shell vr-start" data-visual-theme={theme}>
+  <main className="vr-shell vr-start page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header">
       <button className="vr-icon-button" type="button" aria-label="返回复习" onClick={onBack}><ArrowLeft /></button>
       <strong>语音复述</strong>
@@ -223,7 +223,7 @@ export interface VoiceRecallHistoryViewProps {
 }
 
 export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
-  <main className="vr-shell vr-history" data-visual-theme={theme}>
+  <main className="vr-shell vr-history page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机通话历史</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>摘要不会进入云同步。需要跨设备保留时，请整理为正式日志。</p></section>
     <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></article>)}</section>
@@ -242,7 +242,7 @@ export interface VoiceRecallSummaryViewProps {
 }
 
 export const VoiceRecallSummaryView = ({ theme, summary, turnCount, historySaved, onBack, onSaveHistory, onCreateJournal }: VoiceRecallSummaryViewProps) => (
-  <main className="vr-shell vr-summary" data-visual-theme={theme}>
+  <main className="vr-shell vr-summary page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回来源" onClick={onBack}><X /></button><h1>本次复述摘要</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-summary-hero"><span className="vr-eyebrow"><Sparkles />主动回忆完成</span><h1>{turnCount ? `完成 ${turnCount} 轮复述` : "这次没有形成正式回答"}</h1><p>先确认内容，再决定是否保留为本机历史或整理为正式日志。</p></section>
     <section className="vr-summary-sheet"><pre>{summary || "本次没有形成可保留的正式转写。"}</pre></section>
@@ -298,7 +298,7 @@ export const VoiceRecallCallView = ({
 }: VoiceRecallCallViewProps) => {
   const MainControlIcon = mainControl.icon;
   return (
-    <main className="vr-shell vr-call" data-visual-theme={theme} data-call-palette={callPalette}>
+    <main className="vr-shell vr-call page-section-transition" data-visual-theme={theme} data-call-palette={callPalette}>
       <header className="vr-call-header">
         <button className="vr-icon-button" type="button" aria-label="返回" onClick={onBack}><ArrowLeft /></button>
         <div className="vr-scene-pill"><LayoutGrid /><span><strong>学习复述</strong><small>{elapsed} · {selectedModeLabel}</small></span></div>
@@ -339,12 +339,10 @@ export const VoiceRecallCallView = ({
 };
 
 export const VoiceRecallExitSheet = ({ onPause, onEnd, onContinue }: { onPause: () => void; onEnd: () => void; onContinue: () => void }) => (
-  <div className="vr-sheet-backdrop" role="presentation">
-    <section className="vr-sheet" role="dialog" aria-modal="true" aria-labelledby="vr-back-title">
+  <section className="vr-sheet" role="dialog" aria-modal="true" aria-labelledby="vr-back-title">
       <header><div><span className="vr-section-label">离开语音复述</span><h2 id="vr-back-title">要暂停还是结束本次通话？</h2></div><button className="vr-icon-button" type="button" aria-label="关闭" onClick={onContinue}><X /></button></header>
       <button type="button" onClick={onPause}><Pause /><span><strong>暂停并离开</strong><small>停止麦克风和播放，保留本机检查点</small></span></button>
       <button type="button" onClick={onEnd}><CircleStop /><span><strong>结束通话</strong><small>释放连接并进入本次摘要</small></span></button>
       <button type="button" onClick={onContinue}><Play /><span><strong>继续通话</strong><small>关闭面板，不改变当前状态</small></span></button>
-    </section>
-  </div>
+  </section>
 );

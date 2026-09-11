@@ -31,9 +31,9 @@ describe("interaction feedback styles", () => {
   });
 
   it("normalizes tap highlights and separates pointer focus from keyboard focus", () => {
-    const tapHighlight = cssBlockFor(componentsCss, ':is(button, [role="button"])');
-    const pointerFocus = cssBlockFor(componentsCss, ':is(button, [role="button"]):focus:not(:focus-visible)');
-    const keyboardFocus = cssBlockFor(componentsCss, ':is(button, [role="button"]):focus-visible');
+    const tapHighlight = cssBlockFor(componentsCss, ':is(button, [role="button"], a, summary, label[for])');
+    const pointerFocus = cssBlockFor(componentsCss, ':is(button, [role="button"], a, summary):focus:not(:focus-visible)');
+    const keyboardFocus = cssBlockFor(componentsCss, ':is(button, [role="button"], a, summary):focus-visible');
 
     expect(tapHighlight).toContain("-webkit-tap-highlight-color: transparent");
     expect(pointerFocus).toContain("outline: none");

@@ -26,6 +26,7 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { AiMarkdown } from "../components/AiMarkdown";
+import { MotionPresence } from "../components/MotionPresence";
 import type { AiChatAttachment, AiChatMessage, AiChatSession, AiKnowledgeScope, AppSettings, Asset, Block } from "../types";
 import { AiKnowledgeScopePicker } from "../components/AiKnowledgeScopePicker";
 import { copyTextToClipboard } from "../lib/clipboard";
@@ -829,8 +830,8 @@ export const AiChatPage = ({
         )}
       </section>
 
-      {contextDetailsOpen && attachment && (
-        <div className="ai-action-backdrop ai-context-details-backdrop" onClick={() => setContextDetailsOpen(false)}>
+      {attachment && (
+        <MotionPresence present={contextDetailsOpen} variant="sheet" className="ai-action-backdrop ai-context-details-backdrop" onClick={() => setContextDetailsOpen(false)}>
           <section className="ai-context-details" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="范围详情">
             <header>
               <div>
@@ -883,11 +884,10 @@ export const AiChatPage = ({
             )}
             <p className="ai-context-detail-note">AI 会优先使用命中片段，并在回答末尾标注依据来源。</p>
           </section>
-        </div>
+        </MotionPresence>
       )}
 
-      {moreActionsOpen && (
-        <div className="ai-action-backdrop" onClick={() => setMoreActionsOpen(false)}>
+      <MotionPresence present={moreActionsOpen} variant="sheet" className="ai-action-backdrop" onClick={() => setMoreActionsOpen(false)}>
           <section className="ai-action-sheet ai-more-actions" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="更多 AI 操作">
             <header>
               <h2>更多操作</h2>
@@ -928,11 +928,9 @@ export const AiChatPage = ({
               </button>
             </div>
           </section>
-        </div>
-      )}
+      </MotionPresence>
 
-      {learningActionsOpen && (
-        <div className="ai-action-backdrop" onClick={() => setLearningActionsOpen(false)}>
+      <MotionPresence present={learningActionsOpen} variant="sheet" className="ai-action-backdrop" onClick={() => setLearningActionsOpen(false)}>
           <section className="ai-action-sheet ai-learning-panel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="选择学习方式">
             <header>
               <div>
@@ -957,11 +955,10 @@ export const AiChatPage = ({
               {presets.length === 0 && <p className="helper-text">还没有保存学习预设，可以直接输入你的问题。</p>}
             </div>
           </section>
-        </div>
-      )}
+      </MotionPresence>
 
-      {imageActionsOpen && native && (
-        <div className="ai-action-backdrop" onClick={() => setImageActionsOpen(false)}>
+      {native && (
+        <MotionPresence present={imageActionsOpen} variant="sheet" className="ai-action-backdrop" onClick={() => setImageActionsOpen(false)}>
           <section className="ai-action-sheet ai-image-action-sheet" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="添加图片">
             <header>
               <h2>添加图片</h2>
@@ -986,11 +983,10 @@ export const AiChatPage = ({
               </button>
             </div>
           </section>
-        </div>
+        </MotionPresence>
       )}
 
-      {historyOpen && (
-        <div className="ai-history-backdrop" onClick={() => setHistoryOpen(false)}>
+      <MotionPresence present={historyOpen} variant="drawer" className="ai-history-backdrop" onClick={() => setHistoryOpen(false)}>
           <aside className="ai-history-drawer" onClick={(event) => event.stopPropagation()}>
             <header>
               <div>
@@ -1034,8 +1030,7 @@ export const AiChatPage = ({
               )}
             </div>
           </aside>
-        </div>
-      )}
+      </MotionPresence>
     </main>
   );
 };

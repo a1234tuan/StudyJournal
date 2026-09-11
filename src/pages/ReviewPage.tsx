@@ -18,6 +18,7 @@
   Undo2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 
 import type {
   AiProviderProfile,
@@ -31,6 +32,8 @@ import type {
   SubjectConfig,
 } from "../types";
 import { RichTextEditor } from "../components/RichTextEditor";
+import { MotionPresence } from "../components/MotionPresence";
+import { usePageTransitionLayerState } from "../components/PageTransition";
 import { RecordTagChips } from "../components/RecordTagChips";
 import { PageHeader } from "../components/ui";
 import { normalizeRecordContent } from "../lib/recordContent";
@@ -71,6 +74,7 @@ interface ReviewPageProps {
   currentRecordId?: string;
   reviewProgress?: ReviewSessionProgress;
   libraryState: ReviewLibraryState;
+  viewportOverlayHost?: HTMLElement | null;
   onModeChange: (mode: ReviewMode) => void;
   onQueueChange: (ids: string[]) => void;
   onCurrentRecordChange: (id?: string) => void;
@@ -274,6 +278,7 @@ export const ReviewPage = ({
   currentRecordId,
   reviewProgress,
   libraryState,
+  viewportOverlayHost,
   onModeChange,
   onQueueChange,
   onCurrentRecordChange,
@@ -315,6 +320,7 @@ export const ReviewPage = ({
   coachOpen: controlledCoachOpen,
   onCoachOpenChange,
 }: ReviewPageProps) => {
+  const pageLayerState = usePageTransitionLayerState();
   const touchStartYRef = useRef<number | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const [pullReady, setPullReady] = useState(false);
@@ -845,8 +851,7 @@ export const ReviewPage = ({
             >
               <MoreHorizontal size={19} />
             </button>
-            {headerMenuOpen && (
-              <div className="review-header-menu-popover" role="menu" aria-label="复习操作">
+            <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
                 <button
                   type="button"
                   role="menuitem"
@@ -907,8 +912,7 @@ export const ReviewPage = ({
                     )}
                   </>
                 )}
-              </div>
-            )}
+            </MotionPresence>
           </div>
         )}
       />}
@@ -997,7 +1001,7 @@ export const ReviewPage = ({
                 >
                   <MoreHorizontal size={19} />
                 </button>
-                {headerMenuOpen && <div className="review-header-menu-popover" role="menu" aria-label="复习操作">
+                <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
                     <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
                   </button>
@@ -1005,7 +1009,7 @@ export const ReviewPage = ({
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }} disabled={!onOpenStats}><BarChart3 size={16} /><span>学习统计</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span></button>
                   {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
-                </div>}
+                </MotionPresence>
               </div>
             </section>
             <article className={`review-record-card ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
@@ -1023,6 +1027,7 @@ export const ReviewPage = ({
                   contentRevision={currentRecord.updatedAt}
                   open={annotationOpen}
                   onOpenChange={setAnnotationOpen}
+                  viewportOverlayHost={viewportOverlayHost}
                 >
                   <RichTextEditor
                     value={normalizeRecordContent(currentRecord)}
@@ -1269,7 +1274,8 @@ export const ReviewPage = ({
                 </details>
               )}
             </article>
-            <section className={`review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
+            {(() => {
+              const ratingControls = <section className={`review-viewport-dock review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
               <section className="review-rating-bar">
                 {ratingConfig.map((item) => {
                   const preview = ratingPreviews.get(item.rating as typeof ACTIVE_REVIEW_RATINGS[number]);
@@ -1296,7 +1302,10 @@ export const ReviewPage = ({
                   );
                 })}
               </section>
-            </section>
+              </section>;
+              if (annotationOpen || pageLayerState === "exiting") return null;
+              return viewportOverlayHost ? createPortal(ratingControls, viewportOverlayHost) : ratingControls;
+            })()}
           </section>
         )
       ) : (
@@ -1465,8 +1474,7 @@ export const ReviewPage = ({
                         >
                           <MoreHorizontal size={18} />
                         </button>
-                        {actionsOpen && (
-                          <div className="review-card-action-popover" role="menu" aria-label={`${record.title} 的操作`}>
+                        <MotionPresence present={actionsOpen} variant="popover" portal={false} className="review-card-action-popover" role="menu" aria-label={`${record.title} 的操作`}>
                             <button type="button" role="menuitem" onClick={() => { setOpenActionRecordId(undefined); onOpenRecord(record); }}>
                               <Eye size={16} />
                               <span>预览</span>
@@ -1493,8 +1501,7 @@ export const ReviewPage = ({
                                 <span>搁置</span>
                               </button>
                             )}
-                          </div>
-                        )}
+                        </MotionPresence>
                       </div>
                     </div>
                   </article>

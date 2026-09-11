@@ -6,6 +6,17 @@
   min-width: 0;
 }
 
+.app-viewport-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.app-viewport-overlay > * {
+  pointer-events: auto;
+}
+
 .app-shell.immersive-task-active {
   grid-template-columns: minmax(0, 1fr);
 }

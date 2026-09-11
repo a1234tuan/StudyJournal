@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CalendarDays,
   CalendarCheck,
+  BookOpenText,
   ClipboardCheck,
   Home,
   Layers,
@@ -39,10 +40,11 @@ import { FavoritesPage } from "./pages/FavoritesPage";
 import { TrashPage } from "./pages/TrashPage";
 import { UsageGuidePage } from "./pages/UsageGuidePage";
 import { TemplateLibraryPage } from "./pages/TemplateLibraryPage";
-import { PageTransition } from "./components/PageTransition";
+import { PageTransition, type NavigationMotionIntent } from "./components/PageTransition";
 import { CloudSyncButton } from "./components/CloudSyncButton";
 import { CloudSyncConflictDialog } from "./components/CloudSyncConflictDialog";
 import { CloudSyncStatusToast } from "./components/CloudSyncStatusToast";
+import { MotionPresence, ViewportOverlayProvider } from "./components/MotionPresence";
 import { PlaybackProvider } from "./components/PlaybackProvider";
 import type { AiKnowledgeScope, RecordBlock, Subject } from "./types";
 import { buildAiKnowledgeContextPackAsync } from "./services/aiContextService";
@@ -209,6 +211,19 @@ type NavigationState = {
 type NavigationCommitOptions = {
   history?: "push" | "replace" | "none";
   scrollToTop?: boolean;
+  motion?: NavigationMotionIntent;
+};
+
+const navigationMotionBetween = (current: NavigationState, next: NavigationState): NavigationMotionIntent => {
+  if (current.activeTab !== next.activeTab) return "tab";
+  const currentDepth = getTabDepth(current.activeTab, current.tabMemory);
+  const nextDepth = getTabDepth(next.activeTab, next.tabMemory);
+  if (nextDepth > currentDepth) return "forward";
+  if (nextDepth < currentDepth) return "back";
+  return buildTabPageKey(current.activeTab, current.tabMemory, current.activeAiSessionId)
+    === buildTabPageKey(next.activeTab, next.tabMemory, next.activeAiSessionId)
+    ? "none"
+    : "replace";
 };
 
 export const App = () => {
@@ -228,10 +243,13 @@ export const App = () => {
   const [reviewRuntime, setReviewRuntime] = useState(() => createReviewSessionRuntime(todayISO()));
   const [desktopMigrationOpen, setDesktopMigrationOpen] = useState(false);
   const [visualTheme, setVisualTheme] = useState<VisualTheme>(() => readVisualTheme());
+  const [navigationMotion, setNavigationMotion] = useState<NavigationMotionIntent>("none");
+  const [viewportOverlayHost, setViewportOverlayHost] = useState<HTMLDivElement | null>(null);
   const lastBackPressRef = useRef(0);
   const backToastTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef<NavigationState>({ activeTab, tabMemory, activeAiSessionId });
   const webNavigationSessionRef = useRef<string | null>(null);
+  const webNavigationIndexRef = useRef(0);
   const historyScrollRestoreRef = useRef(0);
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
@@ -254,6 +272,8 @@ export const App = () => {
     const sessionId = webNavigationSessionRef.current;
     const webNavigationEnabled = !Capacitor.isNativePlatform() && !isDesktopPlatform() && Boolean(sessionId);
     const nextScrollY = options.scrollToTop ? 0 : window.scrollY;
+    const motion = options.motion ?? navigationMotionBetween(current, next);
+    let nextNavigationIndex = webNavigationIndexRef.current;
 
     if (webNavigationEnabled && sessionId && historyMode !== "none") {
       const currentSnapshot = createWebNavigationSnapshot(
@@ -262,13 +282,16 @@ export const App = () => {
         current.tabMemory,
         current.activeAiSessionId,
         window.scrollY,
+        webNavigationIndexRef.current,
       );
+      if (historyMode === "push") nextNavigationIndex += 1;
       const nextSnapshot = createWebNavigationSnapshot(
         sessionId,
         next.activeTab,
         next.tabMemory,
         next.activeAiSessionId,
         nextScrollY,
+        nextNavigationIndex,
       );
       if (historyMode === "push") {
         window.history.replaceState(currentSnapshot, "");
@@ -278,7 +301,9 @@ export const App = () => {
       }
     }
 
+    webNavigationIndexRef.current = nextNavigationIndex;
     navigationStateRef.current = next;
+    setNavigationMotion(motion);
     setActiveTab(next.activeTab);
     setTabMemory(next.tabMemory);
     setActiveAiSessionId(next.activeAiSessionId);
@@ -293,13 +318,13 @@ export const App = () => {
   }, [commitNavigation]);
 
   const switchTab = useCallback(
-    (tab: TabKey) => {
+    (tab: TabKey, motion: NavigationMotionIntent = "tab") => {
       clearBackHint();
       const current = navigationStateRef.current;
       if (current.activeTab === tab) {
         return;
       }
-      commitNavigation({ ...current, activeTab: tab });
+      commitNavigation({ ...current, activeTab: tab }, { motion });
     },
     [clearBackHint, commitNavigation],
   );
@@ -325,11 +350,11 @@ export const App = () => {
           podcastScreen: "editor",
         },
       },
-    });
+    }, { motion: current.activeTab === "more" && current.tabMemory.more.subRoute ? "back" : "tab" });
   }, [clearBackHint, commitNavigation]);
 
   const openMoreSubRoute = useCallback(
-    (subRoute: MoreSubRoute) => {
+    (subRoute: MoreSubRoute, motion?: NavigationMotionIntent) => {
       clearBackHint();
       const current = navigationStateRef.current;
       if (current.activeTab === "more" && current.tabMemory.more.subRoute === subRoute && !current.tabMemory.more.recordId) {
@@ -350,7 +375,10 @@ export const App = () => {
           podcastScreen: (subRoute === "podcasts" || subRoute === "ttsSettings" || subRoute === "podcastTemplates") ? current.tabMemory.more.podcastScreen : "editor",
         },
       };
-      commitNavigation({ ...current, activeTab: "more", tabMemory: nextMemory });
+      commitNavigation(
+        { ...current, activeTab: "more", tabMemory: nextMemory },
+        { motion: motion ?? (current.activeTab === "more" ? "forward" : "tab") },
+      );
     },
     [clearBackHint, commitNavigation],
   );
@@ -367,7 +395,7 @@ export const App = () => {
           ...current.tabMemory,
           more: { ...current.tabMemory.more, aiScreen },
         },
-      });
+      }, { motion: aiScreen === "scope" ? "forward" : "back" });
     },
     [commitNavigation],
   );
@@ -400,7 +428,7 @@ export const App = () => {
       };
       commitNavigation(
         { ...current, activeTab: tab, tabMemory: nextMemory },
-        { scrollToTop: sourceScrollY !== undefined },
+        { scrollToTop: sourceScrollY !== undefined, motion: "forward" },
       );
     },
     [clearBackHint, commitNavigation],
@@ -414,7 +442,7 @@ export const App = () => {
         ...current,
         activeTab: voiceRoute.returnTab,
         tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: undefined } },
-      });
+      }, { motion: "back" });
       return;
     }
     const nextMemory = popTabDepth(current.tabMemory, current.activeTab);
@@ -426,13 +454,13 @@ export const App = () => {
       && !isDesktopPlatform()
       && Boolean(sessionId)
       && isCurrentWebNavigationSession(window.history.state, sessionId!);
-    commitNavigation({ ...current, tabMemory: nextMemory }, { history: webNavigationEnabled ? "replace" : "none" });
+    commitNavigation({ ...current, tabMemory: nextMemory }, { history: webNavigationEnabled ? "replace" : "none", motion: "back" });
   }, [commitNavigation]);
 
   const aiWorkspaceOnBack = useCallback(() => {
     if (aiReturnTab) {
       setAiReturnTab(null);
-      switchTab(aiReturnTab);
+      switchTab(aiReturnTab, "back");
     } else {
       popCurrentTabDepth();
     }
@@ -447,7 +475,7 @@ export const App = () => {
       ...current,
       activeTab: "today",
       tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, recordId: undefined, adaptiveTaskId: taskId } },
-    });
+    }, { motion: "forward" });
   }, [commitNavigation]);
 
   const closeAdaptiveTask = useCallback(() => {
@@ -456,7 +484,7 @@ export const App = () => {
       ...current,
       activeTab: "review",
       tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, adaptiveTaskId: undefined } },
-    });
+    }, { motion: "back" });
   }, [commitNavigation]);
 
   const openVoiceRecall = useCallback((record?: RecordBlock, sourceKind: "record" | "review-card" = "review-card") => {
@@ -472,7 +500,7 @@ export const App = () => {
       ...current,
       activeTab: "review",
       tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: route } },
-    }, { scrollToTop: true });
+    }, { scrollToTop: true, motion: "forward" });
   }, [commitNavigation]);
 
   const updateVoiceRecallRoute = useCallback((route: VoiceRecallNavigationRoute) => {
@@ -490,7 +518,7 @@ export const App = () => {
       ...current,
       activeTab: returnTab,
       tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, voiceRecall: undefined } },
-    });
+    }, { motion: "back" });
   }, [commitNavigation]);
 
   const createJournalFromVoiceRecall = useCallback(async (subject: string, contentHtml: string) => {
@@ -510,7 +538,7 @@ export const App = () => {
         restoreScrollY: undefined,
       },
     };
-    commitNavigation({ ...current, activeTab: targetTab, tabMemory: nextMemory }, { scrollToTop: true });
+    commitNavigation({ ...current, activeTab: targetTab, tabMemory: nextMemory }, { scrollToTop: true, motion: "forward" });
   }, [app.createRecordBlock, commitNavigation]);
 
   const createRecordFromGlobalAction = useCallback(async () => {
@@ -594,11 +622,16 @@ export const App = () => {
       }
 
       clearBackHint();
+      const motion: NavigationMotionIntent = snapshot.navigationIndex > webNavigationIndexRef.current
+        ? "forward"
+        : snapshot.navigationIndex < webNavigationIndexRef.current ? "back" : "replace";
+      webNavigationIndexRef.current = snapshot.navigationIndex;
       navigationStateRef.current = {
         activeTab: snapshot.activeTab,
         tabMemory: snapshot.tabMemory,
         activeAiSessionId: snapshot.activeAiSessionId,
       };
+      setNavigationMotion(motion);
       setActiveTab(snapshot.activeTab);
       setTabMemory(snapshot.tabMemory);
       setActiveAiSessionId(snapshot.activeAiSessionId);
@@ -1454,6 +1487,7 @@ export const App = () => {
             currentRecordId={tabMemory.review.currentRecordId}
             reviewProgress={tabMemory.review.reviewProgress}
             libraryState={tabMemory.review.library}
+            viewportOverlayHost={viewportOverlayHost}
             onModeChange={(mode) =>
               updateNavigationState((current) =>
                 current.tabMemory.review.mode === mode
@@ -1579,6 +1613,7 @@ export const App = () => {
     aiWorkspaceActive ? "ai-chat-active" : "",
     podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
+    activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()
     && getTabDepth(activeTab, tabMemory) > 0
@@ -1592,13 +1627,13 @@ export const App = () => {
 
   return (
     <PlaybackProvider>
+    <ViewportOverlayProvider host={viewportOverlayHost}>
     <div className={shellClassName}>
       <aside className="sidebar">
         <div className="brand">
-          <span>学</span>
-          <div>
+          <span className="brand-mark" aria-hidden="true"><BookOpenText size={21} strokeWidth={1.8} /></span>
+          <div className="brand-copy">
             <strong>学习日志</strong>
-            <small>离线优先</small>
           </div>
           <CloudSyncButton
             className="sidebar-sync-button"
@@ -1658,7 +1693,7 @@ export const App = () => {
             </button>
           </div>
         )}
-        {aiWorkspaceActive || podcastScopeActive ? renderCurrentTab() : <PageTransition pageKey={pageKey}>{renderCurrentTab()}</PageTransition>}
+        <PageTransition pageKey={pageKey} motion={navigationMotion}>{renderCurrentTab()}</PageTransition>
       </div>
       {backToast && (
         <div className="app-toast" role="status" aria-live="polite">
@@ -1670,8 +1705,7 @@ export const App = () => {
           {reviewToast}
         </div>
       )}
-      {desktopMigrationOpen && (
-        <div className="desktop-migration-backdrop" role="presentation">
+      <MotionPresence present={desktopMigrationOpen} variant="modal" className="desktop-migration-backdrop" role="presentation">
           <section className="desktop-migration-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-migration-title">
             <p className="eyebrow">Desktop Migration</p>
             <h2 id="desktop-migration-title">从 Web 端迁移日志</h2>
@@ -1681,8 +1715,7 @@ export const App = () => {
               <button type="button" className="secondary-button" onClick={dismissDesktopMigration}>稍后处理</button>
             </div>
           </section>
-        </div>
-      )}
+      </MotionPresence>
       <CloudSyncConflictDialog onRestored={app.refresh} />
       <CloudSyncStatusToast />
       <nav className="bottom-nav">
@@ -1711,7 +1744,9 @@ export const App = () => {
           ) : itemButton;
         })}
       </nav>
+      <div ref={setViewportOverlayHost} className="app-viewport-overlay" />
     </div>
+    </ViewportOverlayProvider>
     </PlaybackProvider>
   );
 };

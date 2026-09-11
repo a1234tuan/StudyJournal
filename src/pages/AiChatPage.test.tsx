@@ -332,4 +332,19 @@ describe("AiChatPage", () => {
     expect(await screen.findByRole("dialog", { name: "选择学习方式" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /抽测此范围/ })).toBeInTheDocument();
   });
+
+  it("keeps the history drawer mounted but inert during its exit", async () => {
+    renderAiChatPage();
+    fireEvent.click(await screen.findByRole("button", { name: "打开历史聊天" }));
+    const title = await screen.findByRole("heading", { name: "聊天记录" });
+    const presence = title.closest(".motion-presence");
+
+    expect(presence).toHaveAttribute("data-motion-variant", "drawer");
+    fireEvent.click(screen.getByRole("button", { name: "关闭历史记录" }));
+
+    expect(presence).toHaveAttribute("data-motion-phase", "exiting");
+    expect(presence).toHaveAttribute("aria-hidden", "true");
+    expect(presence).toHaveAttribute("inert");
+    await waitFor(() => expect(document.querySelector(".ai-history-backdrop")).toBeNull());
+  });
 });

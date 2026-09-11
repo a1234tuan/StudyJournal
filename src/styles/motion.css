@@ -2,49 +2,98 @@
   display: grid;
   align-items: start;
   min-width: 0;
+  overflow-x: clip;
 }
 
 .page-transition-layer {
   grid-area: 1 / 1;
   min-width: 0;
+}
+
+.page-transition-layer-entering,
+.page-transition-layer-exiting {
   will-change: opacity, transform;
+}
+
+.page-transition-layer-entered {
+  transform: none;
 }
 
 .page-transition-layer-entering {
   z-index: 1;
-  animation: page-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .page-transition-layer-exiting {
   z-index: 0;
   pointer-events: none;
-  animation: page-exit 200ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.page-transition-layer-entering[data-motion="tab"],
+.page-transition-layer-entering[data-motion="replace"] {
+  animation: page-fade-enter 140ms ease-out both;
+}
+
+.page-transition-layer-exiting[data-motion="tab"],
+.page-transition-layer-exiting[data-motion="replace"] {
+  animation: page-fade-exit 120ms ease-in both;
+}
+
+.page-transition-layer-entering[data-motion="forward"] {
+  animation: page-forward-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.page-transition-layer-exiting[data-motion="forward"] {
+  animation: page-forward-exit 150ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.page-transition-layer-entering[data-motion="back"] {
+  animation: page-back-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.page-transition-layer-exiting[data-motion="back"] {
+  animation: page-back-exit 150ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .page-section-transition {
   animation: section-enter var(--motion-normal) cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-@keyframes page-enter {
+@keyframes page-fade-enter {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.992);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
   }
 }
 
-@keyframes page-exit {
+@keyframes page-fade-exit {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateY(-6px) scale(0.996);
   }
+}
+
+@keyframes page-forward-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes page-forward-exit {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-6px); }
+}
+
+@keyframes page-back-enter {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes page-back-exit {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(6px); }
 }
 
 @keyframes section-enter {
@@ -61,12 +110,79 @@
 .subject-log-list,
 .compact-audio-player,
 .audio-player-panel,
-.ocr-details {
+.ocr-details,
+.review-page .review-coach-workbench,
+.review-page .review-library,
+.review-page .review-empty-state,
+.review-page .review-session {
   animation: section-enter var(--motion-normal) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.review-bottom-controls,
+.review-annotation-toolbar {
+  animation: dock-enter 150ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .image-lightbox {
   animation: fade-in var(--motion-fast) ease both;
+}
+
+.motion-presence-exiting {
+  pointer-events: none !important;
+}
+
+.motion-presence-modal.motion-presence-entering,
+.motion-presence-sheet.motion-presence-entering,
+.motion-presence-drawer.motion-presence-entering {
+  animation: overlay-backdrop-in 160ms ease-out both;
+}
+
+.motion-presence-modal.motion-presence-exiting,
+.motion-presence-sheet.motion-presence-exiting,
+.motion-presence-drawer.motion-presence-exiting {
+  animation: overlay-backdrop-out 140ms ease-in both;
+}
+
+.motion-presence-modal.motion-presence-entering > :first-child {
+  animation: modal-panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.image-lightbox-presence,
+.record-reference-presence {
+  position: fixed;
+  inset: 0;
+}
+
+.image-lightbox-presence > .image-lightbox {
+  position: absolute;
+}
+
+.motion-presence-modal.motion-presence-exiting > :first-child {
+  animation: modal-panel-out 140ms ease-in both;
+}
+
+.motion-presence-sheet.motion-presence-entering > :first-child {
+  animation: sheet-panel-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.motion-presence-sheet.motion-presence-exiting > :first-child {
+  animation: sheet-panel-out 160ms ease-in both;
+}
+
+.motion-presence-drawer.motion-presence-entering > :first-child {
+  animation: drawer-panel-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.motion-presence-drawer.motion-presence-exiting > :first-child {
+  animation: drawer-panel-out 160ms ease-in both;
+}
+
+.motion-presence-popover.motion-presence-entering {
+  animation: popover-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.motion-presence-popover.motion-presence-exiting {
+  animation: popover-out 110ms ease-in both;
 }
 
 @keyframes fade-in {
@@ -77,6 +193,22 @@
     opacity: 1;
   }
 }
+
+@keyframes dock-enter {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes overlay-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modal-panel-in { from { opacity: 0; transform: translateY(5px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes modal-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(3px) scale(.99); } }
+@keyframes sheet-panel-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes sheet-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(12px); } }
+@keyframes drawer-panel-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes drawer-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(12px); } }
+@keyframes popover-in { from { opacity: 0; transform: translateY(-3px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes popover-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-2px) scale(.99); } }
 
 @media (prefers-reduced-motion: reduce) {
   *,

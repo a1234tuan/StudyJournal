@@ -35,6 +35,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { RecordAssetNode, RecordFormulaNode, RecordInlineMathNode, RecordReferenceNode, RecordTabStopNode, type RecordReferenceTarget } from "./RecordEditorNodes";
 import { ImageLightbox } from "./ImageLightbox";
+import { MotionPresence } from "./MotionPresence";
 import { RecordReferencePicker } from "./RecordReferencePicker";
 import {
   RecordCollapseBlockNode,
@@ -2097,22 +2098,22 @@ export const RichTextEditor = ({
         <SearchReplacePanel editor={editor} readOnly={readOnly} onClose={() => onFindReplaceClose?.()} />
       )}
       <EditorContent editor={editor} />
-      {imageGallery && (
-        <ImageLightbox
+      <MotionPresence present={Boolean(imageGallery)} variant="modal" className="image-lightbox-presence">
+        {imageGallery && <ImageLightbox
           images={imageGallery.images}
           initialIndex={imageGallery.initialIndex}
           onClose={() => setImageGallery(undefined)}
-        />
-      )}
-      {referencePicker && currentRecordId && (
-        <RecordReferencePicker
+        />}
+      </MotionPresence>
+      <MotionPresence present={Boolean(referencePicker && currentRecordId)} variant="modal" className="record-reference-presence">
+        {referencePicker && currentRecordId && <RecordReferencePicker
           currentRecordId={currentRecordId}
           records={referenceRecords}
           subjects={referenceSubjects}
           onSelect={insertRecordReference}
           onClose={() => setReferencePicker(undefined)}
-        />
-      )}
+        />}
+      </MotionPresence>
     </div>
   );
 };

@@ -67,6 +67,16 @@ describe("RecordCard", () => {
     expect(screen.getByLabelText("日志标签：同步、重点")).toHaveTextContent("重点");
   });
 
+  it("orders the title and excerpt before supporting metadata", () => {
+    render(<RecordCard record={record} onOpen={vi.fn()} />);
+
+    const title = screen.getByText(record.title);
+    const excerpt = screen.getByText("信号量机制实现");
+    const metadata = screen.getByText(`${record.date} · ${record.subject}`);
+    expect(title.compareDocumentPosition(excerpt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(excerpt.compareDocumentPosition(metadata) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("keeps action buttons from opening the record", () => {
     const onOpen = vi.fn();
     const onAskAi = vi.fn();

@@ -131,18 +131,16 @@
     color var(--motion-fast) ease;
 }
 
+:root,
+:is(button, [role="button"], a, summary, label[for]) {
   -webkit-tap-highlight-color: transparent;
 }
 
-:is(button, [role="button"]) {
-  -webkit-tap-highlight-color: transparent;
-}
-
-:is(button, [role="button"]):focus:not(:focus-visible) {
+:is(button, [role="button"], a, summary):focus:not(:focus-visible) {
   outline: none;
 }
 
-:is(button, [role="button"]):focus-visible {
+:is(button, [role="button"], a, summary):focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }

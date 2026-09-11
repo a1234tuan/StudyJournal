@@ -40,7 +40,8 @@
 .voice-summary-sheet { padding: 18px; }
 .voice-summary-sheet pre { margin: 0; white-space: pre-wrap; font: inherit; line-height: 1.7; }
 .voice-summary-actions { margin-top: 14px; }
-.voice-journal-confirm { max-width: 520px; margin-top: 18px; padding: 18px; display: grid; gap: 14px; }
+.voice-journal-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(5, 8, 7, .30); }
+.voice-journal-confirm { width: min(520px, 100%); max-height: calc(100dvh - 36px); overflow: auto; padding: 18px; display: grid; gap: 14px; box-shadow: var(--shadow-floating); }
 .voice-journal-confirm header { display: flex; align-items: center; justify-content: space-between; }
 .voice-journal-confirm h2, .voice-journal-confirm p { margin: 0; }
 .voice-history-list { display: grid; gap: 10px; }
