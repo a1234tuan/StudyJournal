@@ -1,7 +1,7 @@
 # Real-time 语音主动回忆实现基线
 
 > 状态：阶段 0–7 完成；真实 ASR / LLM / TTS 链路已用受控账号验证，Android 真机与计费核对仍是量产门槛
-> 二次审计修复：本轮采用手动录音、校对确认、句级 TTS；详细配置和 R1–R15 验收见 docs/second-audit-repair-acceptance.md。旧 live 记录不替代本轮设备与账户验收。
+> 二次审计修复：保留手动录音与校对确认，并增加自动听说半双工候选模式；回复采用流式 LLM、句级 TTS 和有限预取。旧 live 记录不替代本轮设备与账户验收。
 > 基线日期：2026-09-09
 > 产品边界：第一版是实时语音主动回忆，不是视频通话，也不是独立聊天中心。
 
@@ -11,7 +11,7 @@
 
 - `src/features/voiceRecall/domain.ts` 冻结主状态机：`idle -> preflight -> connecting -> listening -> finalizing-asr -> thinking -> speaking`，并支持 `paused`、`reconnecting`、`ending`、`failed`、`ended`。
 - `userMuted` 与 `systemCaptureGate` 是正交状态；系统播放结束不能解除用户静音。
-- 生产默认点击录音，保留长按说话；旧自动轮次会话按手动模式恢复。结束录音后必须校对确认，不根据停顿自动发送。
+- 生产保留点击录音和长按说话；自动听说模式使用本地能量端点判断发言结束，自动提交最终转写，不实现 AI 播放期间插话。恢复会话保持暂停，需用户主动继续。
 - `src/features/voiceRecall/contracts.ts` 提供协议无关的采集、ASR、LLM、TTS 异步事件接口。
 - localhost 隔离预览地址为 `http://127.0.0.1:4177/?preview=voice-recall`。它只使用模拟状态，不请求麦克风或真实 Provider。
 - 原型覆盖双视觉主题、Desktop/Android 窄屏、外发清单、静音、字幕开关、打断、错误、重连、返回/结束动作面板和安全区控制。通话页默认采用明亮声场，以连续对话字幕为主体、紧凑声纹表达运行状态，并把静音、字幕、当前轮次动作和结束固定为四键控制；深色声场保留为设备内备选。
@@ -26,8 +26,9 @@
 - `voiceRecallSessions`/`voiceRecallTurns` 是临时检查点；完整备份恢复会清除它们。`voiceRecallLocalHistory` 是用户主动保留的本机摘要，完整恢复默认保留，但它本身不来自备份。
 - 三张表均不进入 Firebase、ZIP/流式/native backup、知识导出、记录转移或 cloud mutation。
 - `VoiceRecallRuntimeController` 持有进程内活动会话、采集、播放、检查点节流与三次本机写入重试；页面卸载或失去焦点只暂停，不等同结束。
-- `TurnEndpointController` 仅保留为原型辅助，不接入当前生产自动发送。生产录音在 90 秒提示、120 秒结束并进入待确认转写。
+- `TurnEndpointController` 仅保留为原型辅助；生产自动模式使用 `VoiceActivityEndpoint`，普通静音约 2 秒、未完句约 4 秒，120 秒停止采集但不提交空文本。手动模式仍在结束录音后进入待确认转写。
 - `VoicePlaybackQueue` 使用递增 generation 丢弃打断后的晚到音频；`VoiceRecallCancellationTree` 分离会话、轮次和请求取消。
+- TTS 分段最多两段并行预取，播放仍严格按分段顺序；Android 当前播放完整音频段，尚未实现 PCM/Opus 无缝增量播放。
 - Web/Electron 使用 `WebVoiceCaptureAdapter` 输出单声道 PCM16 帧。Electron 主进程只允许应用自身 origin 请求 media 权限，并在窗口最小化时通知暂停。
 - Android 使用独立 `NativeVoiceCapture`/`VoiceCaptureController`，通过 `AudioRecord` 输出 PCM16 帧；它与普通 `NativeAudioRecorder` 双向互斥。
 

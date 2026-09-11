@@ -6,6 +6,9 @@
 
 ### Added
 
+- 增加自动听说半双工候选模式：本地检测用户发言结束后自动完成 ASR、LLM 回复和 TTS 播放，并在播放结束后重新监听；保留手动输入模式，不提供全双工插话。
+- 语音回复采用最多两段有限 TTS 预取，降低多句回复的分段等待；真实 Android 设备、网络和供应商延迟仍需单独验收。
+
 - 语音复述接入真实 `ASR → LLM → TTS` 链路：桌面端由主进程托管 ASR WebSocket（`study-journal:voice-asr-*`），Android 端新增 `NativeVoiceAsrPlugin`（OkHttp）；播放改为 Web Audio 真实出声，回复按句流式合成。阿里云 Paraformer 实时识别、DeepSeek 回复、Fish Audio 合成已于 2026-09-09 用受控账号完成真实验证。
 - 新增可选的线上验收测试：`aliyunAsrTransport.live.test.ts`（真实 ASR 会话）与 `voicePipeline.live.test.ts`（真实 LLM → TTS 回复链），未提供密钥时自动跳过，CI 保持确定性。
 - 完成日志编辑器移动端布局收口：顶部保存栏、标签区域、工具栏和正文统一宽度基准，新增低对比“标签”输入标题，并将更多格式/插入工具改为紧凑分组工具带。
