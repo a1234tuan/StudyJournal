@@ -116,7 +116,7 @@ const openCall = async (automatic = false) => {
     return <VoiceRecallWorkspace key={identity} route={route} blocks={[]} assets={[]} subjects={[]} templates={[]} settings={{ ...DEFAULT_SETTINGS, ai: undefined }} onRouteChange={setRoute} onBack={() => undefined} onCreateJournal={async () => undefined} repository={repository} runtime={controller} sessionFactory={sessionFactory} playbackSinkFactory={() => ({ play: async () => undefined, stop: () => undefined })} />;
   };
   const view = render(<Harness />);
-  if (automatic) fireEvent.click(screen.getByRole("button", { name: /自动讲话/ }));
+  fireEvent.click(screen.getByRole("button", { name: automatic ? /自动讲话/ : /点击录音/ }));
   fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
   fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "二次审计" } });
   fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));

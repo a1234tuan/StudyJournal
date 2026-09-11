@@ -137,7 +137,7 @@ export const VoiceRecallWorkspace = ({
     preferHtmlAudio: Capacitor.getPlatform() === "android",
   }),
 }: VoiceRecallWorkspaceProps) => {
-  const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("tap-to-record");
+  const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("auto-half-duplex");
   const [topic, setTopic] = useState(route.topic ?? "");
   const [learningGoal, setLearningGoal] = useState(route.learningGoal ?? "复述并发现理解缺口");
   const [knowledgeBoundary, setKnowledgeBoundary] = useState<"supplement" | "strict">("supplement");
@@ -511,7 +511,15 @@ export const VoiceRecallWorkspace = ({
 
   const submitTurn = async (automaticText?: string) => {
     const confirmedText = (automaticText ?? transcript).trim();
-    if (!route.sessionId || !confirmedText || submittingRef.current || (automaticText === undefined && (busy || capturing || transcribing))) return;
+    if (!route.sessionId || !confirmedText || submittingRef.current || (automaticText === undefined && busy)) return;
+    if (automaticText === undefined && (capturing || transcribing)) {
+      submittingRef.current = true;
+      await runtime.cancelActiveTurn();
+      frameQueueRef.current?.close();
+      frameQueueRef.current = undefined;
+      setCapturing(false);
+      setTranscribing(false);
+    }
     const session = sessionRef.current;
     if (!session) {
       setMessage("语音服务未就绪，请返回开始页重新连接。");
@@ -700,6 +708,7 @@ export const VoiceRecallWorkspace = ({
     if (state.status !== "listening") return { label: voiceRecallStatusCopy[state.status], icon: Mic };
     if (state.userMuted) return { label: "取消静音", icon: MicOff };
     if (state.inputMode === "push-to-talk") return { label: "按住说话", icon: Mic };
+    if (state.inputMode === "auto-half-duplex") return { label: capturing ? "自动听说中" : "准备自动听说", icon: Mic };
     return { label: capturing ? "结束录音并转写" : "开始说话", icon: Mic };
   }, [capturing, state]);
 
@@ -748,7 +757,7 @@ export const VoiceRecallWorkspace = ({
       setTeacherDraft("");
       return;
     }
-    if (state.status !== "listening" || state.inputMode === "push-to-talk") return;
+    if (state.status !== "listening" || state.inputMode === "push-to-talk" || state.inputMode === "auto-half-duplex") return;
     if (capturing) {
       void stopCapture();
       return;
@@ -847,7 +856,7 @@ export const VoiceRecallWorkspace = ({
         onTranscriptChange={setTranscript}
         onSubmitTranscript={() => void submitTurn()}
       />
-      {detailsOpen && <aside className="vr-details" aria-label="通话详情"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div><div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30) }, null, 2)}</pre></details></aside>}
+      {detailsOpen && <div className="vr-details-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsOpen(false); }}><aside className="vr-details" aria-label="通话详情" role="dialog" aria-modal="true"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div><div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30) }, null, 2)}</pre></details></aside></div>}
       {backOpen && <VoiceRecallExitSheet onPause={() => { void runtime.pause().then(() => onRouteChange({ ...route, screen: "start", sessionId: undefined })); setBackOpen(false); }} onEnd={() => { void finish(); setBackOpen(false); }} onContinue={() => setBackOpen(false)} />}
     </>;
   }

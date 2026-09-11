@@ -33,7 +33,7 @@ export class VoiceActivityEndpoint {
     this.metrics.rms = rms;
     if (this.previousSequence !== undefined) this.metrics.missingFrames += Math.max(0, frame.sequence - this.previousSequence - 1);
     this.previousSequence = frame.sequence;
-    const threshold = Math.max(this.accepted ? 0.012 : 0.018, this.noise * (this.accepted ? 2 : 3));
+    const threshold = Math.max(this.accepted ? 0.006 : 0.008, this.noise * (this.accepted ? 1.8 : 2.2));
     if (rms >= threshold) {
       this.candidateMs += duration;
       this.quietMs = 0;
@@ -41,7 +41,7 @@ export class VoiceActivityEndpoint {
       this.phase = this.accepted ? "speaking" : "armed";
     } else {
       this.metrics.silentFrames += 1;
-      if (!this.accepted) { this.candidateMs = 0; this.noise = Math.min(0.02, this.noise * 0.98 + rms * 0.02); }
+      if (!this.accepted) { this.candidateMs = 0; this.noise = Math.min(0.012, this.noise * 0.98 + rms * 0.02); }
       this.quietMs += duration;
       this.phase = this.accepted ? "endpoint-wait" : "armed";
       const incomplete = !this.partial.trim() || /(?:因为|所以|然后|或者|就是|包括|但是|而且|and|or|because)[，、,:：;；\s]*$/i.test(this.partial.trim());

@@ -21,6 +21,11 @@ try {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   npx cap sync android
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $assetRoot = Join-Path $androidRoot "app\src\main\assets\public"
+  $assetText = (Get-ChildItem -LiteralPath $assetRoot -Recurse -File | Get-Content -Raw) -join "`n"
+  foreach ($requiredText in @("自动讲话", "按住讲话", "点击录音", "语音回复速度")) {
+    if ($assetText -notlike "*$requiredText*") { throw "Android assets are missing production voice UI text: $requiredText" }
+  }
 } finally {
   Pop-Location
 }
