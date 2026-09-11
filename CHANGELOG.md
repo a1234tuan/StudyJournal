@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- 修复 Android 打包依赖调用目录、重复执行 Web 构建与 Capacitor 同步，以及部分 PowerShell 环境缺少 `Get-FileHash` 导致 release 构建中断的问题；Debug/Release 现在共用绝对路径驱动的 assets 校验流程。
 - 2026-09-09 二次审计 R1–R15：修复当前回答遗漏、多句转写覆盖、取消/静音/迟到授权、宿主帧类型与 ASR 截止时间、暂停恢复和 profile 凭据归属。
 - 批注以持久化代次拒绝评分后迟到保存；教练 signal 贯通实际请求及原子提交；角色超时独立；用量区分已观测、估算与未知；主动保存历史改为稳定分页且不自动淘汰。
 - 本次仅完成代码与安装包候选冻结；修复前的单次真实服务结果不代表冻结包已验收。详见 `docs/second-audit-repair-acceptance.md` 与 `docs/release-freeze-2026-09-09.md`。

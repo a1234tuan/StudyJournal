@@ -163,7 +163,7 @@ npm run android:build:debug
 npm run android:build:release
 ```
 
-release 构建需要在本机配置签名文件。请不要提交 keystore、`keystore.properties`、API Key、OCR Token 或任何私密配置。
+Debug 和 release 命令都会从仓库根目录重建 Web 资源、校验 `dist/index.html`、同步 Capacitor assets，并确认复制后的入口文件与生产构建一致，不需要提前单独运行 `android:sync`。Release 构建还需要在本机配置签名文件。请不要提交 keystore、`keystore.properties`、API Key、OCR Token 或任何私密配置。
 
 ## 可选服务配置
 

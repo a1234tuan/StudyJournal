@@ -35,10 +35,10 @@
     "test:firebase": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-firebase-emulator.ps1",
     "test:watch": "vitest",
     "android:add": "cap add android",
-    "android:sync": "npm run build && cap sync android",
+    "android:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-sync.ps1",
     "android:open": "cap open android",
-    "android:build:debug": "npm run android:sync && powershell -ExecutionPolicy Bypass -File scripts/android-debug-build.ps1",
-    "android:build:release": "npm run android:sync && powershell -ExecutionPolicy Bypass -File scripts/android-release-build.ps1",
+    "android:build:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-debug-build.ps1",
+    "android:build:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-release-build.ps1",
     "postinstall": "patch-package"
   },
   "dependencies": {

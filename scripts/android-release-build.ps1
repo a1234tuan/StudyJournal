@@ -13,26 +13,9 @@ if (-not (Test-Path $keystoreProperties)) {
   throw "Missing android\keystore.properties. Create a release keystore before building a release APK."
 }
 
-# Always rebuild the web renderer and copy it into Android assets. Running this
-# script directly must never package stale app assets from a previous build.
-Push-Location $repoRoot
-try {
-  npm run build
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  npx cap sync android
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  $assetRoot = Join-Path $androidRoot "app\src\main\assets\public"
-  $distIndex = Join-Path (Join-Path $repoRoot "dist") "index.html"
-  $assetIndex = Join-Path $assetRoot "index.html"
-  if (-not (Test-Path $distIndex) -or -not (Test-Path $assetIndex)) { throw "Production renderer index is missing from dist or Android assets." }
-  if ((Get-FileHash -LiteralPath $distIndex -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $assetIndex -Algorithm SHA256).Hash) { throw "Android assets index.html does not match the current production dist." }
-  $assetText = (Get-ChildItem -LiteralPath $assetRoot -Recurse -File -Include *.html,*.js,*.css | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
-  foreach ($requiredText in @("自动讲话", "按住讲话", "点击录音", "语音回复速度")) {
-    if ($assetText -notlike "*$requiredText*") { throw "Android assets are missing production voice UI text: $requiredText" }
-  }
-} finally {
-  Pop-Location
-}
+# Running this script directly must never package stale web assets.
+& (Join-Path $PSScriptRoot "android-sync.ps1")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $env:JAVA_HOME = $jdk
 $env:Path = "$jdk\bin;$env:Path"
@@ -79,8 +62,7 @@ Write-Host "Verified APK version: versionCode 14, versionName 0.2.3"
 
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 try {
-  $hashBytes = $sha256.ComputeHash([System.IO.File]::ReadAllBytes($targetApk))
-  $hashValue = ([System.BitConverter]::ToString($hashBytes)).Replace("-", "")
+  $hashValue = ([System.BitConverter]::ToString($sha256.ComputeHash([System.IO.File]::ReadAllBytes($targetApk)))).Replace("-", "")
 } finally {
   $sha256.Dispose()
 }
