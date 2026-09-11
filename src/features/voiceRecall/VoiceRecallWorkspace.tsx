@@ -134,7 +134,9 @@ export const VoiceRecallWorkspace = ({
     onStarted, onEnded,
     encoding: session.ttsEncoding,
     sampleRate: session.ttsSampleRate,
-    preferHtmlAudio: Capacitor.getPlatform() === "android",
+    // WebView HTML audio starts after the network round trip and is rejected
+    // on some Android devices; use the shared Web Audio decoder instead.
+    preferHtmlAudio: false,
   }),
 }: VoiceRecallWorkspaceProps) => {
   const [inputMode, setInputMode] = useState<VoiceRecallInputMode>("auto-half-duplex");
@@ -242,6 +244,9 @@ export const VoiceRecallWorkspace = ({
   }, [runtime]);
   useEffect(() => { void reloadHistory(); }, [reloadHistory]);
   useEffect(() => { void reloadTurns(); }, [reloadTurns]);
+  useEffect(() => {
+    if (route.screen === "call" && route.sessionId && runtimeState?.status !== "finalizing-asr") void reloadTurns();
+  }, [reloadTurns, route.screen, route.sessionId, runtimeState?.status]);
   useEffect(() => {
     if (route.screen !== "call" || !route.sessionId) return;
     let active = true;
@@ -459,7 +464,12 @@ export const VoiceRecallWorkspace = ({
       return;
     }
     setMessage("正在识别你的回答…");
-      if (live) await live.promise;
+      if (live) {
+        await Promise.race([
+          live.promise,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("语音识别响应超时，已停止本轮并准备重新监听。")), 35_000)),
+        ]);
+      }
       if (live?.error) throw live.error;
       const result = live?.result ?? await runtime.transcribeTurn({
         pipeline: session.pipeline,
@@ -488,8 +498,12 @@ export const VoiceRecallWorkspace = ({
       if (runtime.snapshot?.status === "finalizing-asr") runtime.dispatch({ type: "CANCEL_TURN" });
     } finally {
       queue.close();
+      liveAsrRef.current = undefined;
       captureStoppingRef.current = false;
-      if (runtime.isCurrentOperation(generation)) setTranscribing(false);
+      // Cancellation intentionally invalidates the generation, but this cleanup
+      // still must release the UI capture gate for the next automatic round.
+      setTranscribing(false);
+      setCapturePhase("armed");
     }
   };
   stopCaptureRef.current = stopCapture;
@@ -512,25 +526,25 @@ export const VoiceRecallWorkspace = ({
   const submitTurn = async (automaticText?: string) => {
     const confirmedText = (automaticText ?? transcript).trim();
     if (!route.sessionId || !confirmedText || submittingRef.current || (automaticText === undefined && busy)) return;
-    if (automaticText === undefined && (capturing || transcribing)) {
-      submittingRef.current = true;
-      await runtime.cancelActiveTurn();
-      frameQueueRef.current?.close();
-      frameQueueRef.current = undefined;
-      setCapturing(false);
-      setTranscribing(false);
-    }
     const session = sessionRef.current;
     if (!session) {
       setMessage("语音服务未就绪，请返回开始页重新连接。");
       return;
     }
+    const generation = runtime.operationGeneration;
     submittingRef.current = true;
     setBusy(true);
     setMessage("");
-    const generation = runtime.operationGeneration;
     const assertCurrent = () => { if (!runtime.isCurrentOperation(generation)) throw new DOMException("轮次已取消", "AbortError"); };
     try {
+      if (automaticText === undefined && (capturing || transcribing)) {
+        await runtime.cancelActiveTurn();
+        frameQueueRef.current?.close();
+        frameQueueRef.current = undefined;
+        setCapturing(false);
+        setTranscribing(false);
+        assertCurrent();
+      }
       ensureListening();
       const stored = await repository.getSession(route.sessionId);
       if (!stored || stored.sourceUnavailable) throw new VoiceConfigurationError("语音复述会话或学习来源已不可用。");
@@ -757,7 +771,13 @@ export const VoiceRecallWorkspace = ({
       setTeacherDraft("");
       return;
     }
-    if (state.status !== "listening" || state.inputMode === "push-to-talk" || state.inputMode === "auto-half-duplex") return;
+    if (state.inputMode === "auto-half-duplex") {
+      if (state.status === "paused") { resume(); return; }
+      if (autoBlocked && state.status === "listening") { setAutoBlocked(false); return; }
+      if (state.status === "listening" && !capturing && !busy && !transcribing) { void startCapture(); }
+      return;
+    }
+    if (state.status !== "listening" || state.inputMode === "push-to-talk") return;
     if (capturing) {
       void stopCapture();
       return;

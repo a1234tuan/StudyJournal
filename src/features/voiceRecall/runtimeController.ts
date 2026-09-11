@@ -188,6 +188,9 @@ export class VoiceRecallRuntimeController {
     this.capture = undefined;
     this.captureTask = undefined;
     await capture?.stop();
+    // Android voice-capture focus is only needed while the microphone is open.
+    // Keeping it across ASR/LLM/TTS lets playback compete with capture focus.
+    await this.focus.release();
   }
 
   /** Swap in the real audio sink once the TTS provider (and its encoding) is known. */
@@ -267,7 +270,6 @@ export class VoiceRecallRuntimeController {
   }) {
     if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
     const operationGeneration = this.operationEpoch;
-    await this.focus.acquire();
     await this.playback.interrupt();
     if (!this.isCurrentOperation(operationGeneration) || !this.session) throw new DOMException("轮次已取消", "AbortError");
     const turnSignal = this.cancellation.beginTurn();

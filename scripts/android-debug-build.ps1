@@ -17,7 +17,11 @@ try {
   npx cap sync android
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   $assetRoot = Join-Path (Join-Path $repoRoot "android") "app\src\main\assets\public"
-  $assetText = (Get-ChildItem -LiteralPath $assetRoot -Recurse -File | Get-Content -Raw) -join "`n"
+  $distIndex = Join-Path (Join-Path $repoRoot "dist") "index.html"
+  $assetIndex = Join-Path $assetRoot "index.html"
+  if (-not (Test-Path $distIndex) -or -not (Test-Path $assetIndex)) { throw "Production renderer index is missing from dist or Android assets." }
+  if ((Get-FileHash -LiteralPath $distIndex -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $assetIndex -Algorithm SHA256).Hash) { throw "Android assets index.html does not match the current production dist." }
+  $assetText = (Get-ChildItem -LiteralPath $assetRoot -Recurse -File -Include *.html,*.js,*.css | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
   foreach ($requiredText in @("自动讲话", "按住讲话", "点击录音", "语音回复速度")) {
     if ($assetText -notlike "*$requiredText*") { throw "Android assets are missing production voice UI text: $requiredText" }
   }

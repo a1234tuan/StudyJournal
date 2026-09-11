@@ -22,7 +22,7 @@ public final class NativeVoiceCapturePlugin extends Plugin {
     private android.media.AudioManager audioManager;
     private boolean legacyFocusHeld;
     private final android.media.AudioManager.OnAudioFocusChangeListener legacyFocusListener = change -> {
-        if (change < 0) { cancelPendingStart(); VoiceCaptureController.stop(); activeRequestId = null; notifyListeners("focusLost", new JSObject()); releaseAudioFocus(); }
+        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS) { cancelPendingStart(); VoiceCaptureController.stop(); activeRequestId = null; notifyListeners("focusLost", new JSObject()); releaseAudioFocus(); }
     };
 
     @PluginMethod
@@ -40,7 +40,7 @@ public final class NativeVoiceCapturePlugin extends Plugin {
                 .setAudioAttributes(new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
                 .setAcceptsDelayedFocusGain(false)
                 .setOnAudioFocusChangeListener(change -> {
-                    if (change < 0) {
+                    if (change == android.media.AudioManager.AUDIOFOCUS_LOSS) {
                         cancelPendingStart();
                         VoiceCaptureController.stop();
                         activeRequestId = null;

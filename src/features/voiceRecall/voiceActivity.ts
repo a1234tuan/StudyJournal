@@ -12,6 +12,7 @@ export class VoiceActivityEndpoint {
   phase: CapturePhase = "armed";
   readonly metrics = { frames: 0, missingFrames: 0, samples: 0, clippedSamples: 0, silentFrames: 0, rms: 0 };
   private previousSequence?: number;
+  private readonly candidateGapMs = 180;
 
   updatePartial(text: string) { this.partial = text; }
 
@@ -41,7 +42,10 @@ export class VoiceActivityEndpoint {
       this.phase = this.accepted ? "speaking" : "armed";
     } else {
       this.metrics.silentFrames += 1;
-      if (!this.accepted) { this.candidateMs = 0; this.noise = Math.min(0.012, this.noise * 0.98 + rms * 0.02); }
+      if (!this.accepted) {
+        this.candidateMs = Math.max(0, this.candidateMs - Math.min(duration, this.candidateGapMs));
+        this.noise = Math.min(0.012, this.noise * 0.98 + rms * 0.02);
+      }
       this.quietMs += duration;
       this.phase = this.accepted ? "endpoint-wait" : "armed";
       const incomplete = !this.partial.trim() || /(?:因为|所以|然后|或者|就是|包括|但是|而且|and|or|because)[，、,:：;；\s]*$/i.test(this.partial.trim());

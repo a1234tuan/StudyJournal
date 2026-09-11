@@ -55,7 +55,10 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
     play: async (chunk, signal) => {
       if (signal.aborted || chunk.byteLength === 0) return;
       const ctx = getContext();
-      if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+        if (ctx.state === "suspended") throw new Error("设备音频输出未恢复，请重试并确认系统音量。");
+      }
       if (signal.aborted) return;
 
       if (options.encoding === "provider-native" && options.preferHtmlAudio) {
