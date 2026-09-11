@@ -9,6 +9,17 @@ $env:JAVA_HOME = $jdk
 $env:Path = "$jdk\bin;$env:Path"
 $env:GRADLE_OPTS = "-Dhttps.protocols=TLSv1.2,TLSv1.3 -Djava.net.preferIPv4Stack=true $env:GRADLE_OPTS"
 
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+Push-Location $repoRoot
+try {
+  npm run build
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  npx cap sync android
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally {
+  Pop-Location
+}
+
 Push-Location "$PSScriptRoot\..\android"
 try {
   .\gradlew.bat assembleDebug

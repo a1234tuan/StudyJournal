@@ -149,19 +149,19 @@ export const VoiceRecallStartView = ({
       {knowledgeMode === "material" && <button className="vr-row-action" type="button" onClick={onAdjustScope}>调整范围 <ChevronRight /></button>}
     </section>
 
+    <section className="vr-mode-band vr-mode-band-visible" aria-labelledby="vr-mode-title">
+      <div><span className="vr-section-label">输入方式</span><h2 id="vr-mode-title">选择语音交互方式</h2></div>
+      <div className="vr-mode-grid">
+        {voiceRecallModeOptions.map((mode) => (
+          <button type="button" key={mode.id} className={inputMode === mode.id ? "is-selected" : ""} aria-pressed={inputMode === mode.id} onClick={() => onInputModeChange(mode.id)}>
+            <span>{mode.label}{inputMode === mode.id && <Check />}</span>
+            <small>{mode.note}</small>
+          </button>
+        ))}
+      </div>
+    </section>
     <details className="vr-advanced-details">
       <summary><span>更多设置</span><small>当前：{voiceRecallModeOptions.find((mode) => mode.id === inputMode)?.label ?? "自动轮次"}</small></summary>
-      <section className="vr-mode-band" aria-labelledby="vr-mode-title">
-        <div><span className="vr-section-label">输入方式</span><h2 id="vr-mode-title">需要时再调整说话方式</h2></div>
-        <div className="vr-mode-grid">
-          {voiceRecallModeOptions.map((mode) => (
-            <button type="button" key={mode.id} className={inputMode === mode.id ? "is-selected" : ""} aria-pressed={inputMode === mode.id} onClick={() => onInputModeChange(mode.id)}>
-              <span>{mode.label}{inputMode === mode.id && <Check />}</span>
-              <small>{mode.note}</small>
-            </button>
-          ))}
-        </div>
-      </section>
     </details>
 
     {providerSetup && <VoiceProviderSettings setup={providerSetup} />}
