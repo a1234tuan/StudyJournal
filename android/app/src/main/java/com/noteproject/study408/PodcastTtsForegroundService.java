@@ -249,6 +249,7 @@ public final class PodcastTtsForegroundService extends Service {
             String providerId = job.optString("providerId", "fish-audio");
             String model = job.optString("model", "");
             String voiceId = job.optString("voiceId", "");
+            String appId = job.optString("appId", "");
             String region = job.optString("region", "ap-guangzhou");
             String languageCode = job.optString("languageCode", "cmn-CN");
             JSONArray inputUnits = job.optJSONArray("units");
@@ -275,7 +276,7 @@ public final class PodcastTtsForegroundService extends Service {
                         String text = parts.optString(partIndex, "").trim();
                         if (text.isEmpty()) continue;
                         updateUnit(unitId, "generating", null, index + 1, inputUnits.length(), partIndex + 1, parts.length(), title + "语音片段 " + (partIndex + 1) + "/" + parts.length());
-                        byte[] audio = requestAudio(providerId, apiKey, apiKeySecondary, model, voiceId, region, languageCode, text, unitId, title, partIndex + 1, parts.length());
+                        byte[] audio = requestAudio(providerId, apiKey, apiKeySecondary, model, voiceId, appId, region, languageCode, text, unitId, title, partIndex + 1, parts.length());
                         if (audio == null || audio.length == 0) throw new IllegalStateException("TTS 返回了空音频。");
                         byte[] normalizedAudio = normalizeMp3Segment(audio);
                         if (!isLikelyMp3Audio(normalizedAudio)) throw new IllegalStateException("TTS 返回的内容不是有效的 MP3 音频。");
@@ -320,7 +321,7 @@ public final class PodcastTtsForegroundService extends Service {
         }
     }
 
-    private byte[] requestAudio(String providerId, String apiKey, String apiKeySecondary, String model, String voiceId, String region, String languageCode, String text, String unitId, String title, int partCurrent, int partTotal) throws Exception {
+    private byte[] requestAudio(String providerId, String apiKey, String apiKeySecondary, String model, String voiceId, String appId, String region, String languageCode, String text, String unitId, String title, int partCurrent, int partTotal) throws Exception {
         Exception lastError = null;
         for (int attempt = 1; attempt <= 3; attempt += 1) {
             if (cancelled) throw new InterruptedException("已取消");
@@ -333,7 +334,7 @@ public final class PodcastTtsForegroundService extends Service {
                     case "aliyun": result = requestAliyun(apiKey, model, voiceId, text); break;
                     case "tencent": result = requestTencent(apiKey, apiKeySecondary, voiceId, text, region); break;
                     case "google": result = requestGoogle(apiKey, voiceId, text, languageCode); break;
-                    case "doubao": result = requestDoubao(apiKey, model, voiceId, text); break;
+                    case "doubao": result = requestDoubao(apiKey, model, voiceId, appId, text); break;
                     default: {
                         String fishModel = model.isEmpty() ? "s2.1-pro-free" : model;
                         connection = (HttpURLConnection) new URL("https://api.fish.audio/v1/tts").openConnection();
@@ -433,7 +434,31 @@ public final class PodcastTtsForegroundService extends Service {
         return audioBytes;
     }
 
-    private byte[] requestDoubao(String apiKey, String model, String voiceId, String text) throws Exception {
+    private byte[] requestDoubao(String apiKey, String model, String voiceId, String appId, String text) throws Exception {
+        if ("volcano_tts".equals(model)) {
+            if (appId.isEmpty()) throw new IllegalStateException("豆包小模型 TTS 缺少旧版控制台 App ID。");
+            JSONObject payload = new JSONObject();
+            payload.put("app", new JSONObject().put("appid", appId).put("token", apiKey).put("cluster", "volcano_tts"));
+            payload.put("user", new JSONObject().put("uid", UUID.randomUUID().toString()));
+            payload.put("audio", new JSONObject().put("voice_type", voiceId).put("encoding", "mp3").put("rate", 16000).put("speed_ratio", 1).put("volume_ratio", 1).put("pitch_ratio", 1));
+            payload.put("request", new JSONObject().put("reqid", UUID.randomUUID().toString()).put("text", text).put("text_type", "plain").put("operation", "query"));
+            HttpURLConnection conn = openPost("https://openspeech.bytedance.com/api/v1/tts");
+            activeConnection = conn;
+            try {
+                conn.setRequestProperty("Authorization", "Bearer;" + apiKey);
+                writeBody(conn, payload.toString());
+                int code = conn.getResponseCode();
+                byte[] responseBytes = readAll(code >= 400 ? conn.getErrorStream() : conn.getInputStream());
+                String responseText = new String(responseBytes, StandardCharsets.UTF_8);
+                if (code < 200 || code >= 300) throw new IllegalStateException("豆包小模型 TTS 请求失败（" + code + "）：" + truncate(responseText.replaceAll("\\s+", " ").trim(), 180));
+                JSONObject result = new JSONObject(responseText);
+                if (result.optInt("code") != 3000 || result.optString("data", "").isEmpty()) throw new IllegalStateException("豆包小模型 TTS 请求失败：" + result.optString("message", "未返回音频"));
+                return Base64.decode(result.getString("data"), Base64.DEFAULT);
+            } finally {
+                conn.disconnect();
+                activeConnection = null;
+            }
+        }
         String resourceId = model.isEmpty() ? "seed-tts-2.0" : model;
         JSONObject request = new JSONObject();
         request.put("text", text);

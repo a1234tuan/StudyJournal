@@ -17,6 +17,7 @@ export interface NativePodcastTtsJobRequest {
   providerId: string;
   model: string;
   voiceId: string;
+  appId?: string;
   region?: string;
   languageCode?: string;
   units: NativePodcastTtsQueueUnit[];

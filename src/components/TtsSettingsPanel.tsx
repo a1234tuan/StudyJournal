@@ -27,8 +27,13 @@ const PROVIDER_TEMPLATES: Array<{ providerId: TtsProviderId; label: string; patc
   },
   {
     providerId: "doubao",
-    label: "豆包语音 1.0（暖心学姐）",
+    label: "豆包 TTS 1.0 大模型（暖心学姐）",
     patch: { providerName: "豆包语音 1.0", model: "seed-tts-1.0", voice: "ICL_zh_female_nuanxinxuejie_tob" },
+  },
+  {
+    providerId: "doubao",
+    label: "豆包小模型语音合成（旧版配额）",
+    patch: { providerName: "豆包小模型语音合成", model: "volcano_tts", voice: "BV700_streaming", appId: "" },
   },
 ];
 
@@ -112,6 +117,10 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
       setMessage(`请填写 ${current.providerName} 的音色 / Voice ID。`);
       return;
     }
+    if (current?.providerId === "doubao" && current.model === "volcano_tts" && !current.appId?.trim()) {
+      setMessage("豆包小模型语音合成需要填写旧版控制台 App ID。");
+      return;
+    }
     const nextConfig: TtsProviderConfig = { ...config, currentProviderId, providers };
     await storage.saveSettings({ ...settings, tts: nextConfig });
     await Promise.all(
@@ -188,6 +197,17 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                       <input value={profile.providerName} readOnly />
                     </label>
 
+                    {profile.providerId === "doubao" && profile.model === "volcano_tts" && (
+                      <label>
+                        旧版控制台 App ID
+                        <input
+                          value={profile.appId ?? ""}
+                          onChange={(e) => updateProvider(profile.id, { appId: e.target.value })}
+                          placeholder="控制台中的数字 App ID"
+                        />
+                      </label>
+                    )}
+
                     {profile.providerId !== "tencent" && (
                       <label>
                         {profile.providerId === "doubao" ? "模型 / Resource ID" : "模型"}
@@ -237,7 +257,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                     )}
 
                     <label>
-                      {needsSecondary ? "SecretId（API Key）" : "API Key"}
+                      {needsSecondary ? "SecretId（API Key）" : profile.providerId === "doubao" && profile.model === "volcano_tts" ? "Access Token" : "API Key"}
                       <span className="secret-input">
                         <input
                           type={showKey ? "text" : "password"}
@@ -247,7 +267,7 @@ export const TtsSettingsPanel = ({ settings, onChanged }: TtsSettingsPanelProps)
                             setApiKeys((c) => ({ ...c, [profile.id]: e.target.value }));
                             setDirtyKeyIds((c) => new Set(c).add(profile.id));
                           }}
-                          placeholder={profile.providerId === "fish-audio" ? "sk-..." : profile.providerId === "tencent" ? "AKIDxxxxxxxx" : "API Key"}
+                          placeholder={profile.providerId === "fish-audio" ? "sk-..." : profile.providerId === "tencent" ? "AKIDxxxxxxxx" : profile.providerId === "doubao" && profile.model === "volcano_tts" ? "旧版控制台 Access Token" : "API Key"}
                         />
                         <button
                           type="button"

@@ -33,3 +33,22 @@ export const decodeDoubaoTtsNdjson = (payload: string): Uint8Array => {
   }
   return result;
 };
+
+/** Decodes the legacy small-model V1 JSON response (success code 3000). */
+export const decodeDoubaoSmallTtsJson = (payload: string): Uint8Array => {
+  let item: { code?: unknown; message?: unknown; data?: unknown };
+  try {
+    item = JSON.parse(payload) as typeof item;
+  } catch {
+    throw new Error("豆包小模型 TTS 返回了无法解析的响应。");
+  }
+  if (Number(item.code) !== 3000) {
+    const detail = typeof item.message === "string" ? item.message : `错误码 ${String(item.code ?? "未知")}`;
+    throw new Error(`豆包小模型 TTS 请求失败：${detail}`);
+  }
+  if (typeof item.data !== "string" || !item.data) throw new Error("豆包小模型 TTS 未返回音频数据。");
+  const binary = atob(item.data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+};

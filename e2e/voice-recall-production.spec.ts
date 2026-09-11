@@ -38,11 +38,22 @@ test.describe("voice recall production workspace migration", () => {
     await expect(providerDetails.locator("summary").filter({ hasText: "TTS：" })).toContainText("Fish Audio");
     const llm = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "LLM：" }) });
     await llm.locator("summary").click();
+    await expect(llm.getByLabel("大语言模型服务")).toBeVisible();
     await expect(llm.getByLabel("模型", { exact: true })).toHaveValue("deepseek-v4-pro");
     const asr = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "ASR：" }) });
     await asr.locator("summary").click();
+    await expect(asr.getByLabel("语音识别服务")).toBeVisible();
+    await asr.getByLabel("语音识别服务").selectOption("voice-asr-doubao-seed-streaming");
+    await expect(asr.getByLabel("Resource ID")).toHaveValue("volc.seedasr.sauc.duration");
+    await asr.getByLabel("语音识别服务").selectOption("voice-asr-aliyun-paraformer");
     await asr.getByLabel("热词列表 ID").fill("test-local-vocabulary");
     await expect(llm.getByLabel("模型", { exact: true })).toBeVisible();
+    const tts = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "TTS：" }) });
+    await tts.locator("summary").click();
+    await expect(tts.getByLabel("语音合成服务")).toBeVisible();
+    await tts.getByLabel("语音合成服务").selectOption("voice-tts-doubao-small");
+    await expect(tts.getByLabel("模型", { exact: true })).toHaveValue("volcano_tts");
+    await expect(tts.getByLabel("旧版控制台 App ID")).toBeVisible();
 
     await page.getByRole("button", { name: "本机历史" }).click();
     await expect(page.locator(".vr-history")).toBeVisible();

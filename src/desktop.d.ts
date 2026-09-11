@@ -40,6 +40,7 @@ declare global {
           providerId: string;
           apiKey: string;
           apiKeySecondary?: string;
+          appId?: string;
           model: string;
           voiceId: string;
           text: string;

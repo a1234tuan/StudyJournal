@@ -449,6 +449,7 @@ export const startKnowledgePodcastAudioJob = async (podcastId: string, onlyUnitI
         providerId: ttsProfile.providerId,
         model: ttsProfile.model,
         voiceId: ttsProfile.voice,
+        appId: ttsProfile.appId,
         region: ttsProfile.region,
         languageCode: ttsProfile.languageCode,
         units: queue,

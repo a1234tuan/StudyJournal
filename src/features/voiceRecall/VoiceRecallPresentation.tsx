@@ -25,8 +25,9 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 
 import type { VoiceRecallInputMode, VoiceRecallState } from "./domain";
+import type { AiProviderProfile } from "../../types";
 import type { VoiceRecallLocalHistory } from "./localTypes";
-import type { VoiceProviderEditableConfig, VoiceProviderTemplate } from "./providerProfiles";
+import type { AsrProviderProfile, VoiceProviderEditableConfig, VoiceProviderTemplate, VoiceTtsProviderProfile } from "./providerProfiles";
 import "./voiceRecallPresentation.css";
 import { VoiceTranscript } from "./VoiceTranscript";
 import { VoiceProviderSettings } from "./VoiceProviderSettings";
@@ -36,6 +37,9 @@ export type VoiceRecallKnowledgeMode = "material" | "topic";
 
 export interface VoiceRecallProviderSetup {
   templates: readonly VoiceProviderTemplate[];
+  asrProfiles: readonly AsrProviderProfile[];
+  llmProfiles: readonly AiProviderProfile[];
+  ttsProfiles: readonly VoiceTtsProviderProfile[];
   selectedTemplateId: string;
   summaries: Readonly<Record<string, { statusLabel: string; asr: string; llm: string; tts: string }>>;
   onTemplateChange: (templateId: string) => void;

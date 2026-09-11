@@ -23,7 +23,8 @@ test.describe("voice recall isolated prototype", () => {
     await expect(page.getByText("Provider 配置", { exact: true })).toBeVisible();
     await expect(page.locator("select")).toHaveCount(4);
     await expect(page.locator("select").nth(0)).toContainText("voice-mock-cn");
-    await expect(page.locator("select").nth(1)).toContainText("豆包流式 ASR");
+    await expect(page.locator("select").nth(1)).toContainText("豆包流式语音识别 1.0");
+    await expect(page.locator("select").nth(1)).toContainText("豆包流式语音识别 2.0");
     await expect(page.locator("select").nth(3)).toContainText("Fish Audio");
     await page.locator("select").nth(3).selectOption("voice-tts-doubao-seed-20");
     await expect(page.locator("select").nth(3)).toHaveValue("voice-tts-doubao-seed-20");

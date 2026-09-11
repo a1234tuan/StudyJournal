@@ -15,7 +15,7 @@
 - 构建、签名状态、包路径及复现步骤：`docs/release-freeze-2026-09-09.md`。
 - R1–R15 修复与自动化记录：`docs/second-audit-repair-acceptance.md`。
 - 生产语音支持按住讲话、点击录音和候选自动听说半双工；自动模式按本地端点判断结束后进入 ASR → LLM → 句级 TTS 播放，不提供全双工插话。
-- 自动听说半双工已完成 Android 真机多轮验证；按住讲话、点击录音、字幕键盘输入、暂停/继续/结束动作、保存/整理/不保留等仍未完成真机验收。barge-in、SiliconFlow 实时 ASR、豆包 TTS、PCM/Opus 无缝播放仍未实现。
+- 自动听说半双工已完成 Android 真机多轮验证；按住讲话、点击录音、字幕键盘输入、暂停/继续/结束动作、保存/整理/不保留等仍未完成真机验收。冻结后已增加 ASR、LLM、TTS 独立切换与豆包 ASR 1.0/2.0、TTS 2.0、小模型 TTS 的协议预接入，但真实账号与真机尚未验证；barge-in、SiliconFlow 实时 ASR、PCM/Opus 无缝播放仍未实现。
 
 ## 产品定位
 
@@ -43,9 +43,9 @@
 
 产品级 UI/UX 重构也已完成自动化收口：默认使用“温润阅读”，可在设置中切换到“清爽现代”，两套视觉主题与浅色/深色模式相互独立且只保存在当前设备。新的首页、日志资料库、连续编辑器、复习与学习助教、搜索、设置、备份、录音、播客和 AI 页面共用同一信息架构。2026-09-08 的后续改进进一步收紧主页面顶部空间，并在只读复习卡片中加入本地批注工具和跨 Tab 评分撤回；正式保存、FSRS 评分与云同步协议保持不变，具体实现边界见 [docs/review-annotation-and-rating-undo-plan.md](docs/review-annotation-and-rating-undo-plan.md)。完整单元测试、Desktop/Android 窄屏 E2E、Firebase Emulator 和生产构建均已通过；Android 真机软键盘、中文 IME、系统返回和真实账号配额仍需发布前人工验收。
 
-> 当前自动化基线：140 个 Vitest 文件、889 项测试（其中 2 项为需密钥的线上验收，未提供时跳过），44 个 Desktop/Android-narrow Playwright 场景，以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真机音频行为与真实 Firebase 配额仍属于人工发布门槛。
+> 当前自动化基线：153 个确定性 Vitest 文件、961 项测试（另有 2 个需密钥的 live 文件，普通验收明确排除），Desktop/Android-narrow 共收集 46 个 Playwright 场景（45 个通过、1 个仅适用于 Desktop 的断言在 Android-narrow 跳过），以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真机音频行为与真实 Firebase 配额仍属于人工发布门槛。
 
-实时语音主动回忆已接入真实 `ASR → LLM → TTS` 链路：复习页的生产工作区可从只读日志或当前复习卡进入，语音经真实识别后在“转写校对”阶段由用户确认，再由模型生成简短追问并真实播放；缺少任一环节凭据或平台不支持直连时会拒绝开始通话，而不是呈现模拟通话。阿里云 Paraformer 识别、DeepSeek 回复与 Fish Audio 合已于 2026-09-09 用受控账号验证，Android 使用原生 WebSocket 插件、桌面使用主进程代理。本机摘要、云同步/备份隔离、模板升级与不可信内容边界均有反向证明测试。`?preview=voice-recall` 仍是隔离的 Mock 交互原型，`?preview=stage3` 用于验收复习卡入口、生产工作区和日志编辑器，`?preview=coach` 用于验收 Coach 语音答案。Android 真机与账单核对仍是发布门槛，详见 [docs/realtime-voice-recall-implementation.md](docs/realtime-voice-recall-implementation.md)。
+实时语音主动回忆已接入真实、可独立选择的 `ASR → LLM → TTS` 链路：复习页的生产工作区可从只读日志或当前复习卡进入，并可分别选择 ASR、已配置的 LLM 和 TTS。阿里云 Paraformer、DeepSeek 与 Fish Audio 主链已于 2026-09-09 用受控账号验证；豆包流式 ASR 1.0/2.0、TTS 2.0 和小模型 TTS 已完成协议与 Desktop/Android 宿主预接入，但尚未用已激活真实账号验证。豆包端到端实时语音属于独立会话链路，不能作为模块化阶段混搭。缺少任一环节凭据或平台不支持时会拒绝开始通话。本机摘要、云同步/备份隔离、模板升级与不可信内容边界均有反向证明测试。`?preview=voice-recall` 仍是隔离的 Mock 交互原型。兼容边界见 [docs/doubao-voice-provider-compatibility.md](docs/doubao-voice-provider-compatibility.md)。
 
 ## 下载
 
@@ -269,7 +269,7 @@ npm run android:build:release
 - 云端复习事件历史目前只增不减；在引入可验证 checkpoint 与事件 tombstone 前不能直接清理。
 - Android 自动备份保留最近 5 个快照，但当前界面不提供选择历史快照回退。
 - AI 看图、长上下文和输出质量取决于模型供应商与 API 兼容性。
-- 实时语音复述已接入真实 Provider（阿里云 ASR / DeepSeek / Fish Audio，2026-09-09 受控账号验证）；Web 端因浏览器限制不提供真实语音链路，真实费用与配额、Android 真机回声消除、蓝牙、音频焦点、来电、后台和弱网仍未验收。
+- 实时语音复述默认 Provider（阿里云 ASR / DeepSeek / Fish Audio）已于 2026-09-09 受控验证；豆包候选仅完成协议兼容和宿主编译，尚未验证真实权限、音色、额度或账单。Web 端因浏览器限制不提供真实语音链路；Android 真机回声消除、蓝牙、音频焦点、来电、后台和弱网仍未验收。
 - 单个超大资源文件仍可能受 Android WebView、IndexedDB、Blob 和设备内存限制。
 
 ## 参与贡献与安全

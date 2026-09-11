@@ -64,6 +64,7 @@ export const normalizeTtsProvider = (profile: Partial<TtsProviderProfile>): TtsP
     providerName: typeof profile.providerName === "string" ? profile.providerName.trim() : fallback.providerName,
     model: typeof profile.model === "string" ? profile.model.trim() : fallback.model,
     voice: typeof profile.voice === "string" ? profile.voice.trim() : fallback.voice,
+    appId: typeof profile.appId === "string" ? profile.appId.trim() : fallback.appId,
     region: typeof profile.region === "string" ? profile.region.trim() : fallback.region,
     languageCode: typeof profile.languageCode === "string" ? profile.languageCode.trim() : fallback.languageCode,
   };

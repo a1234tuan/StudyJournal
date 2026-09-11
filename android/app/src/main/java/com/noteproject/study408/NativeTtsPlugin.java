@@ -60,6 +60,7 @@ public class NativeTtsPlugin extends Plugin {
         String apiKeySecondary = call.getString("apiKeySecondary", "").trim();
         String model = call.getString("model", "").trim();
         String voiceId = call.getString("voiceId", "").trim();
+        String appId = call.getString("appId", "").trim();
         String text = call.getString("text", "");
         String region = call.getString("region", "ap-guangzhou").trim();
         String languageCode = call.getString("languageCode", "cmn-CN").trim();
@@ -77,7 +78,7 @@ public class NativeTtsPlugin extends Plugin {
                     case "aliyun": synthesizeAliyun(call, apiKey, model, voiceId, text); break;
                     case "tencent": synthesizeTencent(call, apiKey, apiKeySecondary, voiceId, text, region); break;
                     case "google": synthesizeGoogle(call, apiKey, voiceId, text, languageCode); break;
-                    case "doubao": synthesizeDoubao(call, apiKey, model, voiceId, text); break;
+                    case "doubao": synthesizeDoubao(call, apiKey, model, voiceId, appId, text); break;
                     default: synthesizeFishAudio(call, apiKey, model, voiceId, text); break;
                 }
             } catch (Exception error) {
@@ -153,7 +154,35 @@ public class NativeTtsPlugin extends Plugin {
         resolveAudio(call, audioBytes);
     }
 
-    private void synthesizeDoubao(PluginCall call, String apiKey, String model, String voiceId, String text) throws Exception {
+    private void synthesizeDoubao(PluginCall call, String apiKey, String model, String voiceId, String appId, String text) throws Exception {
+        if ("volcano_tts".equals(model)) {
+            if (appId.isEmpty()) {
+                call.reject("豆包小模型 TTS 缺少旧版控制台 App ID。");
+                return;
+            }
+            JSONObject payload = new JSONObject();
+            payload.put("app", new JSONObject().put("appid", appId).put("token", apiKey).put("cluster", "volcano_tts"));
+            payload.put("user", new JSONObject().put("uid", UUID.randomUUID().toString()));
+            payload.put("audio", new JSONObject().put("voice_type", voiceId).put("encoding", "mp3").put("rate", 16000).put("speed_ratio", 1).put("volume_ratio", 1).put("pitch_ratio", 1));
+            payload.put("request", new JSONObject().put("reqid", UUID.randomUUID().toString()).put("text", text).put("text_type", "plain").put("operation", "query"));
+            HttpURLConnection conn = openPost("https://openspeech.bytedance.com/api/v1/tts");
+            conn.setRequestProperty("Authorization", "Bearer;" + apiKey);
+            writeBody(conn, payload.toString());
+            int code = conn.getResponseCode();
+            byte[] responseBytes = readAll(code >= 400 ? conn.getErrorStream() : conn.getInputStream());
+            String responseText = new String(responseBytes, StandardCharsets.UTF_8);
+            if (code < 200 || code >= 300) {
+                call.reject("豆包小模型 TTS 请求失败（" + code + "）：" + truncate(responseText));
+                return;
+            }
+            JSONObject result = new JSONObject(responseText);
+            if (result.optInt("code") != 3000 || result.optString("data", "").isEmpty()) {
+                call.reject("豆包小模型 TTS 请求失败：" + result.optString("message", "未返回音频"));
+                return;
+            }
+            resolveAudio(call, Base64.decode(result.getString("data"), Base64.DEFAULT));
+            return;
+        }
         String resourceId = model.isEmpty() ? "seed-tts-2.0" : model;
         JSONObject payload = new JSONObject();
         JSONObject request = new JSONObject();

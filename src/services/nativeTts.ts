@@ -7,6 +7,7 @@ export interface TtsSynthesisOptions {
   apiKey: string;
   /** Tencent Cloud only: SecretKey (apiKey is the SecretId). */
   apiKeySecondary?: string;
+  appId?: string;
   model: string;
   voiceId: string;
   text: string;

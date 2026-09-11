@@ -40,7 +40,7 @@
 - `TransportAsrStreamAdapter` 把豆包/阿里云的鉴权、帧协议和宿主实现隔离在 `VoiceAsrTransport`，领域流水线不依赖 WebSocket/SSE。
 - 提供缓冲式现有 TTS Provider 降级和系统朗读兜底。
 - 提供请求超时、显式用户重试、熔断、连接测试、本机用量统计和脱敏诊断原语。
-- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 组合阿里云 Paraformer ASR、用户配置的 LLM 与 Fish Audio TTS，三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包语音因测试应用未开通流式服务保留为备选。
+- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 默认组合阿里云 Paraformer ASR、当前 LLM 与当前 TTS，开始页允许三阶段独立选择。默认三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包 ASR/TTS 已完成协议预接入，因没有已激活真实账号仍只作为候选。
 - Web 默认只允许 Mock、自建中继或明确 `browserDirectSupported` 的配置。候选豆包、阿里云和 Fish Audio 模板禁止 Web 长期密钥直连。
 
 ### 阶段 3：生产工作区与本机历史
@@ -117,6 +117,7 @@
 - Provider：`providerProfiles.ts`、`providerFactory.ts`、`openAiLlmStreamAdapter.ts`、`fishAudioTtsStreamAdapter.ts`、`transportAsrAdapter.ts`
 - 真实链路解析：`productionPipeline.ts`、`credentials.ts`、`runtimePlatform.ts`
 - 阿里云 ASR：`aliyunAsrProtocol.ts`、`aliyunAsrTransport.ts`
+- 豆包 ASR：`doubaoAsrProtocol.ts`、`doubaoAsrTransport.ts`（SAUC V3，兼容 ASR 1.0/2.0 资源 ID 与新旧鉴权）
 - 宿主桥接：`bridgeVoiceSocket.ts`、`desktopVoiceSocket.ts`、`androidVoiceSocket.ts`
 - 播放：`audioPlaybackSink.ts`、`playbackQueue.ts`
 - 提示词与队列：`teacherPrompt.ts`、`asyncQueue.ts`
@@ -127,7 +128,7 @@
 
 ## 4. 尚未完成与禁止误报
 
-- 阿里云 ASR 与 Fish Audio TTS 已验证单次会话；豆包流式 ASR/TTS 因测试应用未开通服务仍不可用（401 `load grant not found` / `Invalid X-Api-Key`），保留为候选。
+- 阿里云 ASR 与 Fish Audio TTS 已验证单次会话；豆包流式 ASR 1.0/2.0、大模型 TTS 2.0 和小模型 TTS 已完成确定性协议测试及 Desktop/Android 宿主编译，但真实服务仍未验证，保留为候选。豆包端到端实时语音需要独立会话运行时，当前不作为模块化 Provider 选项。
 - 语音 LLM 与 TTS 的并发、取消、长会话稳定性与真实账单仍未核对。
 - Android 尚未完成真实设备的回声消除、蓝牙、音频焦点、来电、后台、弱网和噪声语料验收。
 - 通话界面的生产视觉回归需要桌面/真机验收（Web 端不提供真实语音链路，因此 Playwright 只覆盖“未配置时拒绝启动”）。

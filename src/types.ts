@@ -441,6 +441,8 @@ export interface TtsProviderProfile {
   providerName: string;
   model: string;
   voice: string;
+  /** Volcengine small-model TTS only: legacy console App ID. The Access Token remains device-local. */
+  appId?: string;
   /** Tencent Cloud requires a signing region (e.g. ap-guangzhou). */
   region?: string;
   /** Google Cloud TTS voices are scoped to a BCP-47 language code (e.g. cmn-CN). */

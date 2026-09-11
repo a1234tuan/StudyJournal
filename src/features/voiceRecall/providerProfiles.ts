@@ -45,12 +45,15 @@ export interface VoiceProviderDeviceOverrides {
   templateId: string;
   asr?: Partial<Pick<AsrProviderProfile, "endpoint" | "model" | "resourceId" | "language" | "recognitionOptions">>;
   llm?: Partial<Pick<AiProviderProfile, "baseUrl" | "model" | "temperature" | "maxTokens" | "contextWindowTokens">>;
-  tts?: Partial<Pick<VoiceTtsProviderProfile, "endpoint" | "model" | "voice" | "firstChunkTimeoutMs">>;
+  tts?: Partial<Pick<VoiceTtsProviderProfile, "endpoint" | "model" | "voice" | "appId" | "firstChunkTimeoutMs">>;
 }
 
 export interface VoiceProviderEditableConfig {
   asrOptions?: Pick<import("./aliyunAsrProtocol").AliyunAsrSessionConfig, "languageHints" | "vocabularyId" | "disfluencyRemovalEnabled" | "semanticPunctuationEnabled" | "maxSentenceSilence" | "multiThresholdModeEnabled" | "inverseTextNormalizationEnabled">;
   templateId: string;
+  asrProfileId?: string;
+  llmProfileId?: string;
+  ttsProfileId?: string;
   asrEndpoint: string;
   asrModel: string;
   asrResourceId: string;
@@ -59,6 +62,7 @@ export interface VoiceProviderEditableConfig {
   ttsEndpoint: string;
   ttsModel: string;
   ttsVoice: string;
+  ttsAppId?: string;
 }
 
 export interface ResolvedVoiceProviderTemplate {
@@ -87,13 +91,29 @@ export const BUILT_IN_ASR_PROFILES: readonly AsrProviderProfile[] = [
   {
     id: "voice-asr-doubao-streaming",
     providerId: "doubao",
-    providerName: "豆包流式 ASR",
+    providerName: "豆包流式语音识别 1.0",
     endpoint: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
     transport: "websocket",
+    model: "bigmodel",
     resourceId: "volc.bigasr.sauc.duration",
     language: "zh-CN",
     acceptedSampleRates: [16_000],
     acceptedFormats: ["pcm-s16le", "opus"],
+    punctuation: true,
+    inverseTextNormalization: true,
+    browserDirectSupported: false,
+  },
+  {
+    id: "voice-asr-doubao-seed-streaming",
+    providerId: "doubao",
+    providerName: "豆包流式语音识别 2.0",
+    endpoint: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+    transport: "websocket",
+    model: "bigmodel",
+    resourceId: "volc.seedasr.sauc.duration",
+    language: "zh-CN",
+    acceptedSampleRates: [16_000],
+    acceptedFormats: ["pcm-s16le"],
     punctuation: true,
     inverseTextNormalization: true,
     browserDirectSupported: false,
@@ -155,6 +175,19 @@ export const BUILT_IN_VOICE_TTS_PROFILES: readonly VoiceTtsProviderProfile[] = [
     browserDirectSupported: false,
   },
   {
+    id: "voice-tts-doubao-small",
+    providerId: "doubao",
+    providerName: "豆包小模型语音合成",
+    model: "volcano_tts",
+    voice: "BV700_streaming",
+    endpoint: "https://openspeech.bytedance.com/api/v1/tts",
+    transport: "http-stream",
+    streaming: false,
+    audioFormat: "provider-native",
+    firstChunkTimeoutMs: 12_000,
+    browserDirectSupported: false,
+  },
+  {
     id: "voice-tts-aliyun-qwen-audio-30",
     providerId: "aliyun",
     providerName: "阿里云百炼",
@@ -168,6 +201,42 @@ export const BUILT_IN_VOICE_TTS_PROFILES: readonly VoiceTtsProviderProfile[] = [
     browserDirectSupported: false,
   },
 ] as const;
+
+const voiceTtsDefaults = (profile: TtsProviderProfile): Omit<VoiceTtsProviderProfile, keyof TtsProviderProfile> => {
+  const doubaoSmall = profile.providerId === "doubao" && profile.model === "volcano_tts";
+  const endpoint = profile.providerId === "fish-audio"
+    ? "https://api.fish.audio/v1/tts"
+    : profile.providerId === "aliyun"
+      ? "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio"
+      : profile.providerId === "tencent"
+        ? "https://tts.tencentcloudapi.com"
+        : profile.providerId === "google"
+          ? "https://texttospeech.googleapis.com/v1/text:synthesize"
+          : doubaoSmall
+            ? "https://openspeech.bytedance.com/api/v1/tts"
+            : "https://openspeech.bytedance.com/api/v3/tts/unidirectional";
+  return {
+    endpoint,
+    transport: "http-stream",
+    streaming: profile.providerId === "fish-audio" || (profile.providerId === "doubao" && !doubaoSmall),
+    audioFormat: "provider-native",
+    firstChunkTimeoutMs: doubaoSmall ? 12_000 : 8_000,
+    browserDirectSupported: false,
+  };
+};
+
+/** Voice recall accepts ordinary TTS settings profiles as well as built-in
+ * presets. Secrets remain keyed by the original settings profile id. */
+export const createVoiceTtsProfiles = (
+  configured: readonly TtsProviderProfile[] = [],
+): VoiceTtsProviderProfile[] => {
+  const profiles = configured.map((profile) => ({ ...voiceTtsDefaults(profile), ...profile }));
+  const ids = new Set(profiles.map((profile) => profile.id));
+  for (const profile of BUILT_IN_VOICE_TTS_PROFILES) {
+    if (profile.id !== "voice-tts-mock" && !ids.has(profile.id)) profiles.push({ ...profile });
+  }
+  return profiles;
+};
 
 export const BUILT_IN_VOICE_TEMPLATES: readonly VoiceProviderTemplate[] = [
   {
@@ -219,6 +288,10 @@ export const readVoiceProviderConfig = (): VoiceProviderEditableConfig | undefin
     if (!value?.templateId) return undefined;
     return {
       templateId: value.templateId,
+      asrProfileId: typeof value.asrProfileId === "string" ? value.asrProfileId : undefined,
+      llmProfileId: typeof value.llmProfileId === "string" ? value.llmProfileId : undefined,
+      ttsProfileId: typeof value.ttsProfileId === "string" ? value.ttsProfileId : undefined,
+      asrOptions: value.asrOptions,
       asrEndpoint: value.asrEndpoint ?? "",
       asrModel: value.asrModel ?? "",
       asrResourceId: value.asrResourceId ?? "",
@@ -227,6 +300,7 @@ export const readVoiceProviderConfig = (): VoiceProviderEditableConfig | undefin
       ttsEndpoint: value.ttsEndpoint ?? "",
       ttsModel: value.ttsModel ?? "",
       ttsVoice: value.ttsVoice ?? "",
+      ttsAppId: typeof value.ttsAppId === "string" ? value.ttsAppId : undefined,
     };
   } catch {
     return undefined;

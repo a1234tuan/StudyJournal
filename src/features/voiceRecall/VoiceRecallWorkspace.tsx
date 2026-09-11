@@ -57,7 +57,7 @@ import {
 import {
   BUILT_IN_VOICE_TEMPLATES,
   BUILT_IN_ASR_PROFILES,
-  BUILT_IN_VOICE_TTS_PROFILES,
+  createVoiceTtsProfiles,
   USER_VOICE_TEMPLATES,
   getVoiceProviderTemplateSummary,
   readVoiceProviderTemplateId,
@@ -691,29 +691,60 @@ export const VoiceRecallWorkspace = ({
     const timer = setTimeout(() => { void startCapture(); }, 200);
     return () => clearTimeout(timer);
   }, [route.screen, route.sessionId, state, autoBlocked, backOpen, busy, transcribing, capturing, transcript]);
-  // The disclosure must name the model that will actually run: the template's
-  // LLM id is aspirational, the configured AI provider is what gets called.
+  const asrProfiles = useMemo(() => BUILT_IN_ASR_PROFILES.filter((profile) => profile.providerId !== "mock"), []);
+  const llmProfiles = useMemo(() => settings.ai?.providers ?? [], [settings.ai]);
+  const ttsProfiles = useMemo(() => createVoiceTtsProfiles(settings.tts?.providers), [settings.tts]);
+  const activeProviderConfig = useMemo<VoiceProviderEditableConfig>(() => {
+    const template = USER_VOICE_TEMPLATES.find((item) => item.templateId === providerTemplateId) ?? USER_VOICE_TEMPLATES[0];
+    const current = providerConfig?.templateId === providerTemplateId ? providerConfig : undefined;
+    const asr = asrProfiles.find((item) => item.id === (current?.asrProfileId ?? template.asrProfileId)) ?? asrProfiles[0];
+    const llm = llmProfiles.find((item) => item.id === (current?.llmProfileId ?? getCurrentAiProvider(settings.ai)?.id)) ?? llmProfiles[0];
+    const ttsId = current?.ttsProfileId ?? getCurrentTtsProvider(settings.tts)?.id ?? template.ttsProfileId;
+    const tts = ttsProfiles.find((item) => item.id === ttsId) ?? ttsProfiles[0];
+    return {
+      templateId: template.templateId,
+      asrProfileId: asr?.id,
+      llmProfileId: llm?.id,
+      ttsProfileId: tts?.id,
+      asrOptions: current?.asrOptions ?? asr?.recognitionOptions,
+      asrEndpoint: current?.asrEndpoint || asr?.endpoint || "",
+      asrModel: current?.asrModel || asr?.model || "",
+      asrResourceId: current?.asrResourceId || asr?.resourceId || "",
+      llmBaseUrl: current?.llmBaseUrl || llm?.baseUrl || "",
+      llmModel: current?.llmModel || llm?.model || "",
+      ttsEndpoint: current?.ttsEndpoint || tts?.endpoint || "",
+      ttsModel: current?.ttsModel || tts?.model || "",
+      ttsVoice: current?.ttsVoice || tts?.voice || "",
+      ttsAppId: current?.ttsAppId ?? tts?.appId,
+    };
+  }, [asrProfiles, llmProfiles, providerConfig, providerTemplateId, settings.ai, settings.tts, ttsProfiles]);
   const llmLabel = useMemo(() => {
-    const provider = getCurrentAiProvider(settings.ai);
-    return provider ? `${provider.providerName} · ${providerConfig?.llmModel || provider.model}` : "未配置的 AI 供应商";
-  }, [settings.ai, providerConfig]);
+    const provider = llmProfiles.find((item) => item.id === activeProviderConfig.llmProfileId);
+    return provider ? `${provider.providerName} · ${activeProviderConfig.llmModel || provider.model}` : "未配置的 AI 供应商";
+  }, [activeProviderConfig, llmProfiles]);
   const providerSummaries = useMemo(() => Object.fromEntries(USER_VOICE_TEMPLATES.map((template) => [
     template.templateId,
-    { ...getVoiceProviderTemplateSummary(template), llm: llmLabel, tts: getCurrentTtsProvider(settings.tts) ? `${getCurrentTtsProvider(settings.tts)!.providerName} · ${providerConfig?.ttsVoice || getCurrentTtsProvider(settings.tts)!.voice}` : getVoiceProviderTemplateSummary(template).tts },
-  ])), [llmLabel, settings.tts, providerConfig]);
+    {
+      ...getVoiceProviderTemplateSummary(template),
+      asr: asrProfiles.find((profile) => profile.id === activeProviderConfig.asrProfileId)?.providerName ?? getVoiceProviderTemplateSummary(template).asr,
+      llm: llmLabel,
+      tts: (() => {
+        const provider = ttsProfiles.find((profile) => profile.id === activeProviderConfig.ttsProfileId);
+        return provider ? `${provider.providerName} · ${activeProviderConfig.ttsVoice || provider.voice}` : getVoiceProviderTemplateSummary(template).tts;
+      })(),
+    },
+  ])), [activeProviderConfig, asrProfiles, llmLabel, ttsProfiles]);
   const providerSetup = useMemo(() => ({
     templates: USER_VOICE_TEMPLATES,
+    asrProfiles,
+    llmProfiles,
+    ttsProfiles,
     selectedTemplateId: USER_VOICE_TEMPLATES.some((template) => template.templateId === providerTemplateId) ? providerTemplateId : USER_VOICE_TEMPLATES[0].templateId,
     summaries: providerSummaries,
     onTemplateChange: (templateId: string) => { setProviderTemplateId(templateId); setProviderConfig((current) => current?.templateId === templateId ? current : undefined); writeVoiceProviderTemplateId(templateId); },
-    config: providerConfig?.templateId === providerTemplateId ? providerConfig : (() => {
-      const template = USER_VOICE_TEMPLATES.find((item) => item.templateId === providerTemplateId) ?? USER_VOICE_TEMPLATES[0];
-      const asr = BUILT_IN_ASR_PROFILES.find((item) => item.id === template.asrProfileId);
-      const tts = BUILT_IN_VOICE_TTS_PROFILES.find((item) => item.id === template.ttsProfileId);
-      return { templateId: template.templateId, asrEndpoint: asr?.endpoint ?? "", asrModel: asr?.model ?? "", asrResourceId: asr?.resourceId ?? "", llmBaseUrl: getCurrentAiProvider(settings.ai)?.baseUrl ?? "", llmModel: getCurrentAiProvider(settings.ai)?.model ?? "", ttsEndpoint: tts?.endpoint ?? "", ttsModel: getCurrentTtsProvider(settings.tts)?.model ?? tts?.model ?? "", ttsVoice: getCurrentTtsProvider(settings.tts)?.voice ?? tts?.voice ?? "" };
-    })(),
+    config: activeProviderConfig,
     onConfigChange: (config: VoiceProviderEditableConfig) => { setProviderConfig(config); writeVoiceProviderConfig(config); },
-  }), [providerConfig, providerSummaries, providerTemplateId, settings.ai, settings.tts]);
+  }), [activeProviderConfig, asrProfiles, llmProfiles, providerSummaries, providerTemplateId, ttsProfiles]);
   // The waveform and "正在识别" caption must follow the real microphone, not a
   // state-machine flag, otherwise the UI claims to listen while capture is off.
   const active = capturing && !state.userMuted && !state.systemCaptureGate;

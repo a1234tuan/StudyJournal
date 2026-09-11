@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeDoubaoTtsNdjson } from "./doubaoTts";
+import { decodeDoubaoSmallTtsJson, decodeDoubaoTtsNdjson } from "./doubaoTts";
 
 describe("decodeDoubaoTtsNdjson", () => {
   it("concatenates multiple successful base64 chunks in order", () => {
@@ -32,5 +32,15 @@ describe("decodeDoubaoTtsNdjson", () => {
   it("surfaces provider errors", () => {
     expect(() => decodeDoubaoTtsNdjson(JSON.stringify({ code: 3001, message: "invalid speaker" })))
       .toThrow("invalid speaker");
+  });
+});
+
+describe("decodeDoubaoSmallTtsJson", () => {
+  it("decodes a successful legacy response", () => {
+    expect(new TextDecoder().decode(decodeDoubaoSmallTtsJson(JSON.stringify({ code: 3000, data: btoa("audio") })))).toBe("audio");
+  });
+
+  it("surfaces a legacy provider error", () => {
+    expect(() => decodeDoubaoSmallTtsJson(JSON.stringify({ code: 3001, message: "invalid app id" }))).toThrow("invalid app id");
   });
 });

@@ -17,7 +17,7 @@ import { getCurrentAiProvider } from "../lib/aiProviders";
 import { calculateAiRequestBudget, sendChatCompletionDetailed } from "./aiClientService";
 import { storage } from "./storageAdapter";
 import { signTencentRequest } from "../lib/tencentSigning";
-import { decodeDoubaoTtsNdjson } from "../lib/doubaoTts";
+import { decodeDoubaoSmallTtsJson, decodeDoubaoTtsNdjson } from "../lib/doubaoTts";
 import { synthesizeOnHost } from "./nativeTts";
 
 export const FISH_AUDIO_PROVIDER_ID = "fish-audio";
@@ -740,8 +740,26 @@ export class DoubaoTtsProvider implements TextToSpeechProvider {
   constructor(private readonly profile: TtsProviderProfile, private readonly apiKey: string) {}
 
   async synthesize(text: string, options: { signal?: AbortSignal }): Promise<Blob> {
-    const hosted = await synthesizeOnHost({ providerId: "doubao", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, text, format: "mp3" }, ttsRequestSignal(options.signal));
+    const hosted = await synthesizeOnHost({ providerId: "doubao", apiKey: this.apiKey, model: this.profile.model, voiceId: this.profile.voice, appId: this.profile.appId, text, format: "mp3" }, ttsRequestSignal(options.signal));
     if (hosted) return hosted;
+    if (this.profile.model === "volcano_tts") {
+      if (!this.profile.appId?.trim()) throw new Error("豆包小模型 TTS 缺少旧版控制台 App ID。");
+      const response = await fetch("https://openspeech.bytedance.com/api/v1/tts", {
+        method: "POST",
+        headers: { Authorization: `Bearer;${this.apiKey.trim()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app: { appid: this.profile.appId.trim(), token: this.apiKey.trim(), cluster: "volcano_tts" },
+          user: { uid: globalThis.crypto?.randomUUID?.() ?? "study-journal" },
+          audio: { voice_type: this.profile.voice, encoding: "mp3", rate: 16_000, speed_ratio: 1, volume_ratio: 1, pitch_ratio: 1 },
+          request: { reqid: globalThis.crypto?.randomUUID?.() ?? String(Date.now()), text, text_type: "plain", operation: "query" },
+        }),
+        signal: ttsRequestSignal(options.signal),
+      });
+      const payload = await response.text();
+      if (!response.ok) throw new Error(`豆包小模型 TTS 请求失败（${response.status}）：${payload.replace(/\s+/g, " ").slice(0, 240)}`);
+      const audio = decodeDoubaoSmallTtsJson(payload);
+      return new Blob([audio.slice().buffer], { type: "audio/mpeg" });
+    }
     const resourceId = this.profile.model.trim() || "seed-tts-2.0";
     const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let response: Response;

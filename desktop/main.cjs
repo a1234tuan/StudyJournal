@@ -614,12 +614,34 @@ const synthesizeDesktopTts = async (options, signal) => {
   const apiKeySecondary = typeof options?.apiKeySecondary === "string" ? options.apiKeySecondary.trim() : "";
   const model = typeof options?.model === "string" ? options.model.trim() : "";
   const voiceId = typeof options?.voiceId === "string" ? options.voiceId.trim() : "";
+  const appId = typeof options?.appId === "string" ? options.appId.trim() : "";
   const text = typeof options?.text === "string" ? options.text : "";
   const region = typeof options?.region === "string" ? options.region.trim() : "ap-guangzhou";
   const languageCode = typeof options?.languageCode === "string" ? options.languageCode.trim() : "cmn-CN";
   if (!apiKey || !voiceId || !text.trim()) throw new Error("TTS 请求配置不完整。");
 
   if (providerId === "doubao") {
+    if (model === "volcano_tts") {
+      if (!appId) throw new Error("豆包小模型 TTS 缺少旧版控制台 App ID。");
+      const resp = await net.fetch("https://openspeech.bytedance.com/api/v1/tts", {
+        method: "POST",
+        headers: { Authorization: `Bearer;${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app: { appid: appId, token: apiKey, cluster: "volcano_tts" },
+          user: { uid: randomUUID() },
+          audio: { voice_type: voiceId, encoding: "mp3", rate: 16000, speed_ratio: 1, volume_ratio: 1, pitch_ratio: 1 },
+          request: { reqid: randomUUID(), text, text_type: "plain", operation: "query" },
+        }),
+        signal,
+      });
+      const payload = await resp.text();
+      if (!resp.ok) throw new Error(`豆包小模型 TTS 请求失败（${resp.status}）：${payload.replace(/\s+/g, " ").slice(0, 240)}`);
+      const result = JSON.parse(payload);
+      if (Number(result?.code) !== 3000 || typeof result?.data !== "string" || !result.data) {
+        throw new Error(`豆包小模型 TTS 请求失败：${String(result?.message || result?.code || "未返回音频")}`);
+      }
+      return { data: result.data, mimeType: "audio/mpeg" };
+    }
     const resourceId = model || "seed-tts-2.0";
     const resp = await net.fetch("https://openspeech.bytedance.com/api/v3/tts/unidirectional", {
       method: "POST",

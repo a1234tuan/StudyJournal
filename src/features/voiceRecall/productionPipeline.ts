@@ -1,4 +1,4 @@
-import type { AppSettings } from "../../types";
+import type { AiSecret, AppSettings } from "../../types";
 import { formatUiError } from "../../lib/uiError";
 import { getCurrentAiProvider } from "../../lib/aiProviders";
 import { getCurrentTtsProvider } from "../../lib/ttsProviders";
@@ -7,11 +7,12 @@ import { resolveVoiceSecret, voiceAsrSecretId } from "./credentials";
 import { createAndroidVoiceSocketFactory } from "./androidVoiceSocket";
 import { createDesktopVoiceSocketFactory } from "./desktopVoiceSocket";
 import { createAliyunAsrTransport, type VoiceSocketFactory } from "./aliyunAsrTransport";
+import { createDoubaoAsrTransport } from "./doubaoAsrTransport";
 import { DEFAULT_ALIYUN_ASR_CONFIG } from "./aliyunAsrProtocol";
 import { VoiceRecallPipeline } from "./pipeline";
 import {
   BUILT_IN_ASR_PROFILES,
-  BUILT_IN_VOICE_TTS_PROFILES,
+  createVoiceTtsProfiles,
   USER_VOICE_TEMPLATES,
   resolveVoiceProviderTemplate,
   type AsrProviderProfile,
@@ -59,7 +60,7 @@ export interface CreateProductionVoiceSessionInput {
   fetchImplementation?: typeof fetch;
   socketFactory?: VoiceSocketFactory;
   /** Test seam: inject a transport instead of opening a real socket. */
-  asrTransportFactory?: (profile: AsrProviderProfile, apiKey: string) => VoiceAsrTransport;
+  asrTransportFactory?: (profile: AsrProviderProfile, secret: AiSecret) => VoiceAsrTransport;
 }
 
 const overridesFromConfig = (
@@ -83,6 +84,7 @@ const overridesFromConfig = (
       ...(config.ttsEndpoint ? { endpoint: config.ttsEndpoint } : {}),
       ...(config.ttsModel ? { model: config.ttsModel } : {}),
       ...(config.ttsVoice ? { voice: config.ttsVoice } : {}),
+      ...(config.ttsAppId ? { appId: config.ttsAppId } : {}),
     },
   };
 };
@@ -91,16 +93,17 @@ const buildAsrTransport = (
   input: CreateProductionVoiceSessionInput,
   platform: VoiceRuntimePlatform,
   profile: AsrProviderProfile,
-  apiKey: string,
+  secret: AiSecret,
 ): VoiceAsrTransport => {
-  if (input.asrTransportFactory) return input.asrTransportFactory(profile, apiKey);
+  if (input.asrTransportFactory) return input.asrTransportFactory(profile, secret);
+  const socketFactory = input.socketFactory ?? hostSocketFactory(platform);
   if (profile.providerId === "aliyun-bailian") {
-    const socketFactory = input.socketFactory ?? hostSocketFactory(platform);
     const silence = profile.recognitionOptions?.maxSentenceSilence;
     if (silence !== undefined && (!Number.isInteger(silence) || silence < 200 || silence > 6000)) throw new VoiceConfigurationError("ASR 句级静音阈值必须在 200–6000 毫秒之间。");
-    return createAliyunAsrTransport({ apiKey, socketFactory, config: profile.recognitionOptions });
+    return createAliyunAsrTransport({ apiKey: secret.apiKey, socketFactory, config: profile.recognitionOptions });
   }
-  throw new VoiceConfigurationError(`${profile.providerName} 的实时识别传输尚未接入，请改用阿里云 Paraformer。`);
+  if (profile.providerId === "doubao") return createDoubaoAsrTransport({ secret, socketFactory });
+  throw new VoiceConfigurationError(`${profile.providerName} 的实时识别传输尚未接入。`);
 };
 
 /** The WebSocket must live in a privileged host: the renderer cannot set an
@@ -127,31 +130,45 @@ export const createProductionVoiceSession = async (
   const platform = input.platform ?? voiceRuntimePlatform();
   const baseTemplate = input.templateId ? USER_VOICE_TEMPLATES.find((item) => item.templateId === input.templateId) : USER_VOICE_TEMPLATES[0];
   if (!baseTemplate) throw new VoiceConfigurationError("语音模板已失效，请重新选择。");
-  const configuredLlm = getCurrentAiProvider(input.settings.ai);
+  const configuredLlm = input.config?.llmProfileId
+    ? input.settings.ai?.providers.find((profile) => profile.id === input.config?.llmProfileId)
+    : getCurrentAiProvider(input.settings.ai);
   if (!configuredLlm) throw new VoiceConfigurationError("请先在“更多 → AI 设置”里配置 AI 供应商。");
   const llmProfile = { ...configuredLlm, maxTokens: Math.min(configuredLlm.maxTokens || VOICE_LLM_MAX_TOKENS, VOICE_LLM_MAX_TOKENS) };
-  // The template's LLM id is aspirational; the user's configured provider is what
-  // actually runs, so bind the template to it before resolving.
   const configuredTts = getCurrentTtsProvider(input.settings.tts);
-  if (configuredTts && configuredTts.providerId !== "fish-audio") throw new VoiceConfigurationError("本轮语音复述需要选择 Fish Audio 配置。");
-  const baseTts = BUILT_IN_VOICE_TTS_PROFILES.find((profile) => profile.id === baseTemplate.ttsProfileId)!;
-  const ttsProfile = configuredTts ? { ...baseTts, id: configuredTts.id, model: configuredTts.model, voice: configuredTts.voice } : baseTts;
-  if (configuredTts?.id === llmProfile.id) throw new VoiceConfigurationError("AI 与 TTS 使用了相同的旧密钥槽，请为 Fish Audio 新建独立配置并重新填写密钥。");
-  const template = { ...baseTemplate, llmProfileId: llmProfile.id, ttsProfileId: ttsProfile.id };
+  const ttsProfiles = createVoiceTtsProfiles(input.settings.tts?.providers);
+  const selectedAsrId = input.config?.asrProfileId || baseTemplate.asrProfileId;
+  const selectedTtsId = input.config?.ttsProfileId || configuredTts?.id || baseTemplate.ttsProfileId;
+  const asrProfile = BUILT_IN_ASR_PROFILES.find((profile) => profile.id === selectedAsrId);
+  const ttsProfile = ttsProfiles.find((profile) => profile.id === selectedTtsId);
+  if (!asrProfile) throw new VoiceConfigurationError("所选 ASR 配置已失效，请重新选择。");
+  if (!ttsProfile) throw new VoiceConfigurationError("所选 TTS 配置已失效，请重新选择。");
+  if (ttsProfile.id === llmProfile.id) throw new VoiceConfigurationError("AI 与 TTS 使用了相同的本机密钥槽，请为两者建立独立配置。");
+  const template = { ...baseTemplate, asrProfileId: asrProfile.id, llmProfileId: llmProfile.id, ttsProfileId: ttsProfile.id };
 
   const resolved = resolveVoiceProviderTemplate({
     template,
-    asrProfiles: BUILT_IN_ASR_PROFILES,
+    asrProfiles: [asrProfile],
     llmProfiles: [llmProfile],
-    ttsProfiles: [ttsProfile],
+    ttsProfiles,
     overrides: overridesFromConfig(input.config, template.templateId),
   });
+  if (resolved.tts.providerId === "doubao" && resolved.tts.model === "volcano_tts" && !resolved.tts.appId?.trim()) {
+    throw new VoiceConfigurationError("豆包小模型 TTS 缺少旧版控制台 App ID，请在语音服务或 TTS 设置中填写。");
+  }
+  const compatibleTtsCredentialIds = input.settings.tts?.providers
+    .filter((profile) => profile.providerId === resolved.tts.providerId)
+    .filter((profile) => resolved.tts.providerId !== "doubao" || (profile.model === "volcano_tts") === (resolved.tts.model === "volcano_tts"))
+    .map((profile) => profile.id);
 
-  if (resolved.tts.endpoint !== baseTts.endpoint) throw new VoiceConfigurationError("当前句级 TTS 仅支持 Fish Audio 官方端点，请还原 TTS 端点配置。");
   const [asrSecret, llmSecret, ttsSecret] = await Promise.all([
     resolveVoiceSecret({ profileId: voiceAsrSecretId(resolved.asr), providerId: resolved.asr.providerId }),
     resolveVoiceSecret({ profileId: llmProfile.id }),
-    resolveVoiceSecret({ profileId: resolved.tts.id, fallbackIds: configuredTts ? [] : ["fish-audio"] }),
+    resolveVoiceSecret({
+      profileId: resolved.tts.id,
+      providerId: resolved.tts.providerId === "doubao" ? undefined : resolved.tts.providerId,
+      fallbackIds: compatibleTtsCredentialIds,
+    }),
   ]);
   if (!asrSecret) throw new VoiceConfigurationError(`缺少 ${resolved.asr.providerName} 的密钥，请在语音服务设置中填写。`);
   if (!llmSecret) throw new VoiceConfigurationError(`缺少 ${llmProfile.providerName} 的 API Key，请在“更多 → AI 设置”中填写。`);
@@ -160,7 +177,7 @@ export const createProductionVoiceSession = async (
   const asr = createVoiceAsrAdapter({
     profile: resolved.asr,
     platform,
-    transport: buildAsrTransport(input, platform, resolved.asr, asrSecret.apiKey),
+    transport: buildAsrTransport(input, platform, resolved.asr, asrSecret),
   });
   const llm = createVoiceLlmAdapter({
     profile: resolved.llm,
