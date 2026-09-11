@@ -20,6 +20,9 @@ import { createBridgeVoiceSocketFactory, type VoiceSocketBridgeEvent } from "../
 import { AdaptiveReviewPage } from "../../features/reviewCoach/AdaptiveReviewPage";
 import { coachTestTask, completeCoachTestSnapshot } from "../../features/reviewCoach/reviewCoachTestFixtures";
 import { createProductionVoiceSession } from "../../features/voiceRecall/productionPipeline";
+import { WebVoiceCaptureAdapter } from "./webVoiceCapture";
+import { createAsyncQueue } from "./asyncQueue";
+import type { VoiceAudioFrame } from "./contracts";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -98,7 +101,7 @@ describe("Second audit: host protocol and coach cancellation", () => {
   });
 });
 
-const openCall = async () => {
+const openCall = async (automatic = false) => {
   const database = new StudyJournalDatabase("second-audit-" + crypto.randomUUID());
   await database.open();
   const repository = new VoiceRecallRepository(database);
@@ -113,10 +116,11 @@ const openCall = async () => {
     return <VoiceRecallWorkspace key={identity} route={route} blocks={[]} assets={[]} subjects={[]} templates={[]} settings={{ ...DEFAULT_SETTINGS, ai: undefined }} onRouteChange={setRoute} onBack={() => undefined} onCreateJournal={async () => undefined} repository={repository} runtime={controller} sessionFactory={sessionFactory} playbackSinkFactory={() => ({ play: async () => undefined, stop: () => undefined })} />;
   };
   const view = render(<Harness />);
+  if (automatic) fireEvent.click(screen.getByRole("button", { name: /自动讲话/ }));
   fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
   fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "二次审计" } });
   fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
   fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
   await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
   return { database, repository, runtime, pipeline, sessionFactory, view, Harness };
@@ -129,6 +133,38 @@ const submitText = (text: string) => {
 };
 
 describe("Second audit: desired behavior regression probes (no network)", () => {
+  it("automatically transcribes and submits three rounds, then stops on pause", async () => {
+    const queues: ReturnType<typeof createAsyncQueue<VoiceAudioFrame>>[] = [];
+    vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* (_options, signal) {
+      const queue = createAsyncQueue<VoiceAudioFrame>();
+      queues.push(queue);
+      const abort = () => queue.close();
+      signal.addEventListener("abort", abort, { once: true });
+      try { for await (const frame of queue) { if (signal.aborted) break; yield frame; } }
+      finally { signal.removeEventListener("abort", abort); queue.close(); }
+    });
+    vi.spyOn(WebVoiceCaptureAdapter.prototype, "stop").mockResolvedValue(undefined);
+    const { runtime, repository, pipeline } = await openCall(true);
+    const respond = vi.spyOn(pipeline, "respond");
+    for (let round = 0; round < 3; round += 1) {
+      await waitFor(() => expect(queues).toHaveLength(round + 1));
+      await act(async () => {
+        const voice = new Uint8Array(new Int16Array(6400).fill(3000).buffer);
+        const silence = new Uint8Array(16000 * 4 * 2);
+        queues[round].push({ sequence: 0, data: voice, capturedAtMonotonicMs: 0, format: { encoding: "pcm-s16le", sampleRate: 16000, channelCount: 1 } });
+        await Promise.resolve();
+        queues[round].push({ sequence: 1, data: silence, capturedAtMonotonicMs: 400, format: { encoding: "pcm-s16le", sampleRate: 16000, channelCount: 1 } });
+      });
+      await waitFor(async () => expect(await repository.listTurns(runtime.activeSessionId!)).toHaveLength(round + 1));
+    }
+    expect(respond).toHaveBeenCalledTimes(3);
+    await act(async () => { await runtime.pause(); });
+    const count = queues.length;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(queues).toHaveLength(count);
+    expect(runtime.snapshot?.status).toBe("paused");
+  });
+
   it("R1 includes the CURRENT confirmed answer in the LLM request", async () => {
     const { runtime } = await openCall();
     const request = vi.spyOn(runtime, "respondTurn");

@@ -12,6 +12,12 @@ export interface AliyunAsrSessionConfig {
   format: "pcm" | "opus" | "mp3" | "wav";
   punctuation?: boolean;
   languageHints?: string[];
+  vocabularyId?: string;
+  disfluencyRemovalEnabled?: boolean;
+  semanticPunctuationEnabled?: boolean;
+  maxSentenceSilence?: number;
+  multiThresholdModeEnabled?: boolean;
+  inverseTextNormalizationEnabled?: boolean;
 }
 
 export const DEFAULT_ALIYUN_ASR_CONFIG: AliyunAsrSessionConfig = {
@@ -19,6 +25,12 @@ export const DEFAULT_ALIYUN_ASR_CONFIG: AliyunAsrSessionConfig = {
   sampleRate: 16_000,
   format: "pcm",
   punctuation: true,
+  languageHints: ["zh", "en"],
+  disfluencyRemovalEnabled: false,
+  semanticPunctuationEnabled: false,
+  maxSentenceSilence: 1300,
+  multiThresholdModeEnabled: false,
+  inverseTextNormalizationEnabled: true,
 };
 
 export type AliyunAsrEvent =
@@ -42,6 +54,12 @@ export const buildAliyunRunTask = (taskId: string, config: AliyunAsrSessionConfi
         sample_rate: config.sampleRate,
         punctuation_prediction_enabled: config.punctuation ?? true,
         ...(config.languageHints?.length ? { language_hints: config.languageHints } : {}),
+        ...(config.vocabularyId?.trim() ? { vocabulary_id: config.vocabularyId.trim() } : {}),
+        ...(config.disfluencyRemovalEnabled !== undefined ? { disfluency_removal_enabled: config.disfluencyRemovalEnabled } : {}),
+        ...(config.semanticPunctuationEnabled !== undefined ? { semantic_punctuation_enabled: config.semanticPunctuationEnabled } : {}),
+        ...(config.maxSentenceSilence !== undefined ? { max_sentence_silence: config.maxSentenceSilence } : {}),
+        ...(config.multiThresholdModeEnabled !== undefined ? { multi_threshold_mode_enabled: config.multiThresholdModeEnabled } : {}),
+        ...(config.inverseTextNormalizationEnabled !== undefined ? { inverse_text_normalization_enabled: config.inverseTextNormalizationEnabled } : {}),
       },
       input: {},
     },

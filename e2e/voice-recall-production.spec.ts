@@ -32,17 +32,17 @@ test.describe("voice recall production workspace migration", () => {
   test("shows device-local provider templates and the redesigned local history", async ({ page }) => {
     await page.goto("/?preview=voice-recall-production");
 
-    const providerDetails = page.locator(".vr-provider-details");
-    await providerDetails.locator("summary").click();
-    await expect(providerDetails.getByLabel("预置链路")).toHaveValue("voice-default-cn");
-    await providerDetails.getByLabel("预置链路").selectOption("voice-default-cn");
-    await expect(providerDetails.getByText("阿里云 Paraformer 实时 ASR")).toBeVisible();
-    // The disclosure names the model that will actually run, not the template's aspirational id.
-    await expect(providerDetails.getByText(/deepseek-v4-pro/)).toBeVisible();
-    await expect(providerDetails.getByText(/Fish Audio/)).toBeVisible();
-    await page.reload();
-    await page.locator(".vr-provider-details summary").click();
-    await expect(page.getByLabel("预置链路")).toHaveValue("voice-default-cn");
+    const providerDetails = page.getByRole("region", { name: "本机语音服务配置" });
+    await expect(providerDetails.locator("summary")).toHaveCount(3);
+    await expect(providerDetails.locator("summary").filter({ hasText: "ASR：" })).toContainText("阿里云");
+    await expect(providerDetails.locator("summary").filter({ hasText: "TTS：" })).toContainText("Fish Audio");
+    const llm = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "LLM：" }) });
+    await llm.locator("summary").click();
+    await expect(llm.getByLabel("模型", { exact: true })).toHaveValue("deepseek-v4-pro");
+    const asr = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "ASR：" }) });
+    await asr.locator("summary").click();
+    await asr.getByLabel("热词列表 ID").fill("test-local-vocabulary");
+    await expect(llm.getByLabel("模型", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "本机历史" }).click();
     await expect(page.locator(".vr-history")).toBeVisible();

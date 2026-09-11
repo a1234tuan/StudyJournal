@@ -29,6 +29,7 @@ export interface VoiceCaptureOptions {
 }
 
 export interface VoiceCaptureAdapter {
+  diagnostics?: Record<string, string | number | boolean>;
   readonly id: string;
   requestPermission(): Promise<"granted" | "denied" | "prompt">;
   start(options: VoiceCaptureOptions, signal: AbortSignal): AsyncIterable<VoiceAudioFrame>;
@@ -78,6 +79,7 @@ export type TtsStreamEvent =
   | { type: "completed" };
 
 export interface TtsStreamRequest extends VoiceOperationContext {
+  rate?: number;
   text: string;
   voice: string;
 }

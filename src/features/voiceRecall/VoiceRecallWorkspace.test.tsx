@@ -143,7 +143,7 @@ describe("VoiceRecallWorkspace", () => {
     expect(start).toBeEnabled();
     fireEvent.click(start);
     expect(screen.getByRole("button", { name: "确认并连接" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
     await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
@@ -162,7 +162,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
     fireEvent.click(start);
     expect(screen.getByRole("button", { name: "确认并连接" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
     await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
@@ -201,7 +201,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
     fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
     await screen.findByText(/请先在“更多 → AI 设置”里配置 AI 供应商/);

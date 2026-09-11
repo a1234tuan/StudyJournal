@@ -25,7 +25,7 @@ export const createAliyunAsrTransport = (options: {
   openTimeoutMs?: number;
   finalTimeoutMs?: number;
 }): VoiceAsrTransport => ({
-  open: async ({ profile, turnId, signal }): Promise<VoiceAsrTransportSession> => {
+  open: async ({ profile, turnId, signal, format }): Promise<VoiceAsrTransportSession> => {
     if (signal.aborted) throw new DOMException("ASR cancelled", "AbortError");
     const socket = (options.socketFactory ?? defaultSocketFactory)(profile.endpoint || DEFAULT_ALIYUN_ASR_ENDPOINT, {
       Authorization: "bearer " + options.apiKey.trim().replace(/^Bearer\s+/i, ""),
@@ -65,7 +65,7 @@ export const createAliyunAsrTransport = (options: {
       if (closed) return;
       deadline(options.openTimeoutMs ?? 10_000);
       Promise.resolve().then(() => {
-        if (!closed) return socket.send(buildAliyunRunTask(turnId, { ...DEFAULT_ALIYUN_ASR_CONFIG, model: profile.model ?? DEFAULT_ALIYUN_ASR_CONFIG.model, ...options.config }));
+        if (!closed) return socket.send(buildAliyunRunTask(turnId, { ...DEFAULT_ALIYUN_ASR_CONFIG, ...options.config, model: profile.model ?? DEFAULT_ALIYUN_ASR_CONFIG.model, sampleRate: format.sampleRate, format: "pcm" }));
       }).catch(fail);
     };
     socket.onmessage = (event) => {
@@ -87,6 +87,11 @@ export const createAliyunAsrTransport = (options: {
     return {
       events: queue,
       send: async (frame) => {
+        if (frame.format.encoding !== "pcm-s16le" || frame.format.sampleRate !== format.sampleRate || frame.format.channelCount !== 1 || frame.data.byteLength % 2 !== 0) {
+          const error = new Error("实际采集音频与 ASR 请求格式不一致");
+          fail(error);
+          throw error;
+        }
         if (signal.aborted || closed) throw new DOMException("ASR cancelled", "AbortError");
         try { await socket.send(frame.data); } catch (error) { fail(error); throw error; }
       },

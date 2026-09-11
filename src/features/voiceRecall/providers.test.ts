@@ -138,7 +138,7 @@ describe("voice provider adapters", () => {
     });
     expect(result.transcript).toContain("提取练习");
     expect(result.teacherText).toContain("再举一个");
-    expect(audio).toEqual(["回答抓住了提取练习。", "再举一个你自己的例子。"]);
+    expect(audio).toEqual(["回答抓住了提取练习。再举一个你自己的例子。"]);
     expect(result.usage).toMatchObject({ asrSeconds: 1, llmInputTokens: 24, llmOutputTokens: 16 });
   });
 

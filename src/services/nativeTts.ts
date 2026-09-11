@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { TtsProviderId } from "../types";
 
 export interface TtsSynthesisOptions {
+  speed?: number;
   providerId: TtsProviderId;
   apiKey: string;
   /** Tencent Cloud only: SecretKey (apiKey is the SecretId). */
@@ -15,7 +16,8 @@ export interface TtsSynthesisOptions {
 }
 
 interface NativeTtsPlugin {
-  synthesize(options: TtsSynthesisOptions): Promise<{ data: string; mimeType?: string }>;
+  synthesize(options: TtsSynthesisOptions & { requestId: string }): Promise<{ data: string; mimeType?: string }>;
+  cancel(options: { requestId: string }): Promise<void>;
 }
 
 const NativeTts = registerPlugin<NativeTtsPlugin>("NativeTts");
@@ -30,9 +32,20 @@ const base64ToBlob = (data: string, mimeType = "audio/mpeg"): Blob => {
 export const synthesizeOnHost = async (options: TtsSynthesisOptions, signal?: AbortSignal): Promise<Blob | undefined> => {
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
     if (signal?.aborted) throw new DOMException("TTS cancelled", "AbortError");
-    const result = await NativeTts.synthesize(options);
-    if (signal?.aborted) throw new DOMException("TTS cancelled", "AbortError");
-    return base64ToBlob(result.data, result.mimeType);
+    const requestId = `tts-${crypto.randomUUID()}`;
+    return new Promise<Blob>((resolve, reject) => {
+      const abort = () => {
+        void NativeTts.cancel({ requestId }).catch(() => undefined);
+        reject(new DOMException("TTS cancelled", "AbortError"));
+      };
+      const pending = NativeTts.synthesize({ ...options, requestId });
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      pending.then((result) => {
+        if (signal?.aborted) return;
+        try { resolve(base64ToBlob(result.data, result.mimeType)); } catch (error) { reject(error); }
+      }, reject).finally(() => signal?.removeEventListener("abort", abort));
+    });
   }
   const desktopTts = typeof window !== "undefined" ? window.studyJournalDesktop?.tts : undefined;
   if (desktopTts) {

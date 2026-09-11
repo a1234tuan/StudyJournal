@@ -28,6 +28,8 @@ import type { VoiceRecallInputMode, VoiceRecallState } from "./domain";
 import type { VoiceRecallLocalHistory } from "./localTypes";
 import type { VoiceProviderEditableConfig, VoiceProviderTemplate } from "./providerProfiles";
 import "./voiceRecallPresentation.css";
+import { VoiceTranscript } from "./VoiceTranscript";
+import { VoiceProviderSettings } from "./VoiceProviderSettings";
 
 export type VoiceRecallVisualTheme = "reading" | "modern";
 export type VoiceRecallKnowledgeMode = "material" | "topic";
@@ -42,6 +44,7 @@ export interface VoiceRecallProviderSetup {
 }
 
 export const voiceRecallModeOptions: Array<{ id: VoiceRecallInputMode; label: string; note: string }> = [
+  { id: "auto-half-duplex", label: "自动讲话", note: "自动听取停顿，自动回复并继续" },
   { id: "push-to-talk", label: "按住讲话", note: "松开后转写，确认后发送" },
   { id: "tap-to-record", label: "点击录音", note: "再次点击结束" },
 ];
@@ -161,24 +164,7 @@ export const VoiceRecallStartView = ({
       </section>
     </details>
 
-    {providerSetup && <details className="vr-provider-details">
-      <summary><span>语音服务</span><small>{providerSetup.summaries[providerSetup.selectedTemplateId]?.statusLabel === "待真实链路验证" ? "可用性取决于本机配置" : providerSetup.summaries[providerSetup.selectedTemplateId]?.statusLabel ?? "本机配置"}</small></summary>
-      <div className="vr-provider-body">
-        <label><span>预置链路</span><select value={providerSetup.selectedTemplateId} onChange={(event) => providerSetup.onTemplateChange(event.target.value)}>{providerSetup.templates.map((template) => <option key={template.templateId} value={template.templateId}>{template.templateId}@{template.version}</option>)}</select></label>
-        {providerSetup.summaries[providerSetup.selectedTemplateId] && <dl><div><dt>ASR</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].asr}</dd></div><div><dt>LLM</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].llm}</dd></div><div><dt>TTS</dt><dd>{providerSetup.summaries[providerSetup.selectedTemplateId].tts}</dd></div></dl>}
-        <div className="vr-provider-edit-grid">
-          <label><span>ASR Endpoint</span><input value={providerSetup.config.asrEndpoint} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, asrEndpoint: event.target.value })} /></label>
-          <label><span>ASR 模型</span><input value={providerSetup.config.asrModel} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, asrModel: event.target.value })} placeholder="可留空" /></label>
-          <label><span>Resource ID</span><input value={providerSetup.config.asrResourceId} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, asrResourceId: event.target.value })} placeholder="豆包 ASR 可选" /></label>
-          <label><span>LLM Base URL</span><input value={providerSetup.config.llmBaseUrl} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, llmBaseUrl: event.target.value })} /></label>
-          <label><span>LLM 模型</span><input value={providerSetup.config.llmModel} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, llmModel: event.target.value })} /></label>
-          <label><span>TTS Endpoint</span><input value={providerSetup.config.ttsEndpoint} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, ttsEndpoint: event.target.value })} /></label>
-          <label><span>TTS 模型</span><input value={providerSetup.config.ttsModel} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, ttsModel: event.target.value })} /></label>
-          <label><span>音色 ID</span><input value={providerSetup.config.ttsVoice} onChange={(event) => providerSetup.onConfigChange({ ...providerSetup.config, ttsVoice: event.target.value })} /></label>
-        </div>
-        <p>本机只保存服务配置标识和覆盖项；API Key 分别由 AI、TTS 与 ASR 的本机凭据设置管理，不会进入语音路由、备份或云同步。开始前会检查三段配置是否可用。</p>
-      </div>
-    </details>}
+    {providerSetup && <VoiceProviderSettings setup={providerSetup} />}
 
     {children}
 
@@ -191,6 +177,11 @@ export const VoiceRecallStartView = ({
 );
 
 export interface VoiceRecallCallViewProps {
+  playbackActive?: boolean;
+  speechRate?: number;
+  onSpeechRateChange?: (rate: number) => void;
+  turns?: readonly import("./localTypes").VoiceRecallTurnLocal[];
+  hasCurrentReply?: boolean;
   state: VoiceRecallState;
   theme: VoiceRecallVisualTheme;
   callPalette: "bright" | "dark";
@@ -270,6 +261,11 @@ const connectionLabel = (status: VoiceRecallState["status"]): string => {
 };
 
 export const VoiceRecallCallView = ({
+  playbackActive,
+  speechRate = 1.2,
+  onSpeechRateChange,
+  turns = [],
+  hasCurrentReply = true,
   state,
   theme,
   callPalette,
@@ -311,20 +307,23 @@ export const VoiceRecallCallView = ({
 
       <section className="vr-conversation" aria-live="polite">
         <div className="vr-call-context"><span><BookOpen />{contextLabel}</span><span>{questionLabel}</span></div>
-        <div className="vr-dialogue">
-          {captionsVisible && <p className="vr-user-turn"><span>{state.transcript ? "你" : "提示"}</span>{state.transcript || (active ? "正在识别你的回答…" : "先不看笔记，直接从记忆里回答。")}</p>}
-          <div className="vr-assistant-turn"><span>学习助教</span><h1>{state.status === "ended" ? "这次复述到这里" : title}</h1></div>
-        </div>
+        <VoiceTranscript turns={captionsVisible ? turns : []} revision={transcript + title}>
+          <div className="vr-dialogue">
+            {captionsVisible && (transcript || state.transcript !== turns.at(-1)?.confirmedText) && <p className="vr-user-turn"><span>{transcript || state.transcript ? "你" : "提示"}</span>{transcript || state.transcript || (active ? "正在识别你的回答…" : "先不看笔记，直接从记忆里回答。")}</p>}
+            {(!turns.length || hasCurrentReply) && <div className="vr-assistant-turn"><span>学习助教</span><h1>{state.status === "ended" ? "这次复述到这里" : title}</h1></div>}
+          </div>
+        </VoiceTranscript>
         {state.userMuted && <p className="vr-gate-message"><MicOff />你已静音，系统不会自动解除</p>}
         {!state.userMuted && state.systemCaptureGate && <p className="vr-gate-message"><Volume2 />教师播放中，麦克风暂时关闭</p>}
         {state.status === "failed" && <p className="vr-error-message">网络连接已中断。已确认的文本仍保留在本机。</p>}
         {message && <p className="vr-error-message">{message}</p>}
       </section>
 
-      {(transcriptEditorOpen || transcript) && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim()} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
-      <section className="vr-turn-cue" aria-label="当前通话状态"><div className={`vr-voice-field is-${state.status} ${active ? "is-active" : ""}`} aria-hidden="true"><Waveform active={active || state.status === "speaking"} reduced={reduceMotion} /></div><strong>{voiceRecallStatusCopy[state.status]}</strong><span>{interactionHint}</span></section>
+      {(transcriptEditorOpen || (transcript && state.inputMode !== "auto-half-duplex")) && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim()} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
+      <section className="vr-turn-cue" aria-label="当前通话状态"><div className={`vr-voice-field is-${state.status} ${active ? "is-active" : ""}`} aria-hidden="true"><Waveform active={active || state.status === "speaking"} reduced={reduceMotion} /></div><strong>{state.status === "speaking" && playbackActive === false ? "正在准备语音" : voiceRecallStatusCopy[state.status]}</strong><span>{interactionHint}</span></section>
 
       <footer className="vr-controls">
+        {onSpeechRateChange && <label className="vr-speech-rate">语速（下轮生效）<select aria-label="语音回复速度" value={speechRate} onChange={(event) => onSpeechRateChange(Number(event.target.value))}><option value={1}>1.0×</option><option value={1.2}>1.2×</option><option value={1.5}>1.5×</option></select></label>}
         {state.status === "failed" ? <button className="vr-retry" type="button" onClick={onRetry}><RotateCcw />重新连接</button>
           : state.status === "paused" ? <button className="vr-retry" type="button" onClick={onResume}><Play />继续通话</button>
             : state.status === "ended" ? <button className="vr-retry" type="button" onClick={onBack}><Check />返回复习</button>

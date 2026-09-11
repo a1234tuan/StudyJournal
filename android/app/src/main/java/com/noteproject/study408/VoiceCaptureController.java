@@ -17,6 +17,32 @@ final class VoiceCaptureController {
     private static volatile boolean running;
     private static volatile boolean paused;
     private static int activeSampleRate;
+    private static android.media.audiofx.AcousticEchoCanceler echoCanceler;
+    private static android.media.audiofx.NoiseSuppressor noiseSuppressor;
+    private static android.media.audiofx.AutomaticGainControl gainControl;
+    private static boolean echoEnabled;
+    private static boolean noiseEnabled;
+    private static boolean gainEnabled;
+
+    static synchronized boolean isEchoEnabled() { return echoEnabled; }
+    static synchronized boolean isNoiseEnabled() { return noiseEnabled; }
+    static synchronized boolean isGainEnabled() { return gainEnabled; }
+
+    private static void enableProcessing(int sessionId) {
+        try {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) { echoCanceler = android.media.audiofx.AcousticEchoCanceler.create(sessionId); if (echoCanceler != null) echoEnabled = echoCanceler.setEnabled(true) == 0 && echoCanceler.getEnabled(); }
+            if (android.media.audiofx.NoiseSuppressor.isAvailable()) { noiseSuppressor = android.media.audiofx.NoiseSuppressor.create(sessionId); if (noiseSuppressor != null) noiseEnabled = noiseSuppressor.setEnabled(true) == 0 && noiseSuppressor.getEnabled(); }
+            if (android.media.audiofx.AutomaticGainControl.isAvailable()) { gainControl = android.media.audiofx.AutomaticGainControl.create(sessionId); if (gainControl != null) gainEnabled = gainControl.setEnabled(true) == 0 && gainControl.getEnabled(); }
+        } catch (RuntimeException error) { releaseProcessing(); }
+    }
+
+    private static void releaseProcessing() {
+        if (echoCanceler != null) echoCanceler.release();
+        if (noiseSuppressor != null) noiseSuppressor.release();
+        if (gainControl != null) gainControl.release();
+        echoCanceler = null; noiseSuppressor = null; gainControl = null;
+        echoEnabled = false; noiseEnabled = false; gainEnabled = false;
+    }
 
     private VoiceCaptureController() {}
 
@@ -51,10 +77,11 @@ final class VoiceCaptureController {
             throw new IOException("无法初始化实时语音采集。");
         }
         recorder = next;
+        enableProcessing(next.getAudioSessionId());
         activeSampleRate = sampleRate;
         paused = false;
         running = true;
-        next.startRecording();
+        try { next.startRecording(); } catch (RuntimeException error) { stop(); throw new IOException("无法启动麦克风", error); }
         captureThread = new Thread(() -> captureLoop(next, frameSize, listener), "native-voice-capture");
         captureThread.start();
     }
@@ -91,6 +118,7 @@ final class VoiceCaptureController {
     static synchronized void stop() {
         running = false;
         paused = false;
+        releaseProcessing();
         AudioRecord current = recorder;
         recorder = null;
         activeSampleRate = 0;

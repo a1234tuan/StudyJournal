@@ -23,6 +23,7 @@ import { createVoiceAsrAdapter, createVoiceLlmAdapter, createVoiceTtsAdapter } f
 import type { VoiceAsrTransport } from "./transportAsrAdapter";
 import { voicePlatformUnsupportedMessage, voiceRuntimePlatform, type VoiceRuntimePlatform } from "./runtimePlatform";
 import type { VoicePlaybackEncoding } from "./audioPlaybackSink";
+import { VoiceStageError, describeVoiceStage } from "./diagnostics";
 
 /** Voice replies are spoken, so they must stay short: a long answer costs more
  * TTS and forces the user to wait. Clamped regardless of the chat setting. */
@@ -38,7 +39,7 @@ export class VoiceConfigurationError extends Error {
 }
 
 export const describeVoiceError = (error: unknown): string =>
-  error instanceof VoiceConfigurationError ? error.message : formatUiError(error, "voice-recall");
+  error instanceof VoiceConfigurationError ? error.message : error instanceof VoiceStageError ? describeVoiceStage(error) : formatUiError(error, "voice-recall");
 
 export interface ProductionVoiceSession {
   pipeline: VoiceRecallPipeline;
@@ -69,6 +70,7 @@ const overridesFromConfig = (
   return {
     templateId,
     asr: {
+      recognitionOptions: config.asrOptions,
       ...(config.asrEndpoint ? { endpoint: config.asrEndpoint } : {}),
       ...(config.asrModel ? { model: config.asrModel } : {}),
       ...(config.asrResourceId ? { resourceId: config.asrResourceId } : {}),
@@ -94,7 +96,9 @@ const buildAsrTransport = (
   if (input.asrTransportFactory) return input.asrTransportFactory(profile, apiKey);
   if (profile.providerId === "aliyun-bailian") {
     const socketFactory = input.socketFactory ?? hostSocketFactory(platform);
-    return createAliyunAsrTransport({ apiKey, socketFactory });
+    const silence = profile.recognitionOptions?.maxSentenceSilence;
+    if (silence !== undefined && (!Number.isInteger(silence) || silence < 200 || silence > 6000)) throw new VoiceConfigurationError("ASR 句级静音阈值必须在 200–6000 毫秒之间。");
+    return createAliyunAsrTransport({ apiKey, socketFactory, config: profile.recognitionOptions });
   }
   throw new VoiceConfigurationError(`${profile.providerName} 的实时识别传输尚未接入，请改用阿里云 Paraformer。`);
 };

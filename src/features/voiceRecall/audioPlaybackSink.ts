@@ -3,6 +3,8 @@ import type { VoicePlaybackSink } from "./playbackQueue";
 export type VoicePlaybackEncoding = "provider-native" | "pcm-s16le";
 
 export interface VoicePlaybackSinkOptions {
+  onStarted?: () => void;
+  onEnded?: () => void;
   /** `provider-native` chunks are decoded as compressed audio (e.g. Fish Audio MP3);
    * `pcm-s16le` chunks are raw little-endian samples and are converted directly. */
   encoding: VoicePlaybackEncoding;
@@ -29,6 +31,7 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
   let context: AudioContext | undefined;
   let current: AudioBufferSourceNode | undefined;
   let currentAudio: HTMLAudioElement | undefined;
+  const decoded = new WeakMap<Uint8Array, Promise<AudioBuffer>>();
 
   const getContext = (): AudioContext => {
     context ??= (options.contextFactory ?? (() => new AudioContext()))();
@@ -43,6 +46,12 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
   };
 
   return {
+    prepare: async (chunk, signal) => {
+      if (signal.aborted || options.encoding !== "provider-native" || options.preferHtmlAudio) return;
+      const pending = getContext().decodeAudioData(chunk.slice().buffer as ArrayBuffer);
+      decoded.set(chunk, pending);
+      await pending;
+    },
     play: async (chunk, signal) => {
       if (signal.aborted || chunk.byteLength === 0) return;
       const ctx = getContext();
@@ -56,10 +65,10 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
         await new Promise<void>((resolve, reject) => {
           const cleanup = () => { URL.revokeObjectURL(url); signal.removeEventListener("abort", abort); audio.onended = null; audio.onerror = null; if (currentAudio === audio) currentAudio = undefined; };
           const abort = () => { audio.pause(); cleanup(); resolve(); };
-          audio.onended = () => { cleanup(); resolve(); };
+          audio.onended = () => { cleanup(); options.onEnded?.(); resolve(); };
           audio.onerror = () => { cleanup(); reject(new Error("Android 音频播放失败。")); };
           signal.addEventListener("abort", abort, { once: true });
-          void audio.play().catch((error) => { cleanup(); reject(error); });
+          void audio.play().then(() => { if (!signal.aborted) options.onStarted?.(); }, (error) => { cleanup(); reject(error); });
         });
         return;
       }
@@ -69,7 +78,7 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
         buffer = ctx.createBuffer(1, samples.length, options.sampleRate ?? 16_000);
         buffer.copyToChannel(samples, 0);
       } else {
-        buffer = await ctx.decodeAudioData(chunk.slice().buffer as ArrayBuffer);
+        buffer = await (decoded.get(chunk) ?? ctx.decodeAudioData(chunk.slice().buffer as ArrayBuffer));
       }
       if (signal.aborted) return;
 
@@ -88,8 +97,9 @@ export const createVoicePlaybackSink = (options: VoicePlaybackSinkOptions): Voic
           finish();
         };
         signal.addEventListener("abort", onAbort, { once: true });
-        source.onended = finish;
+        source.onended = () => { if (!signal.aborted) options.onEnded?.(); finish(); };
         source.start();
+        options.onStarted?.();
       });
     },
     stop: () => { stopCurrent(); },

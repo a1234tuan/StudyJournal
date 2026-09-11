@@ -18,6 +18,50 @@ import com.getcapacitor.annotation.PermissionCallback;
 public final class NativeVoiceCapturePlugin extends Plugin {
     private PluginCall pendingStartCall;
     private String activeRequestId;
+    private android.media.AudioFocusRequest focusRequest;
+    private android.media.AudioManager audioManager;
+    private boolean legacyFocusHeld;
+    private final android.media.AudioManager.OnAudioFocusChangeListener legacyFocusListener = change -> {
+        if (change < 0) { cancelPendingStart(); VoiceCaptureController.stop(); activeRequestId = null; notifyListeners("focusLost", new JSObject()); releaseAudioFocus(); }
+    };
+
+    @PluginMethod
+    public void acquireFocus(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (focusRequest != null || legacyFocusHeld) { call.resolve(); return; }
+            audioManager = (android.media.AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (audioManager == null) { call.reject("系统音频焦点不可用"); return; }
+            if (android.os.Build.VERSION.SDK_INT < 26) {
+                legacyFocusHeld = audioManager.requestAudioFocus(legacyFocusListener, android.media.AudioManager.STREAM_VOICE_CALL, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+                if (legacyFocusHeld) call.resolve(); else call.reject("无法获得音频焦点");
+                return;
+            }
+            focusRequest = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener(change -> {
+                    if (change < 0) {
+                        cancelPendingStart();
+                        VoiceCaptureController.stop();
+                        activeRequestId = null;
+                        notifyListeners("focusLost", new JSObject());
+                        releaseAudioFocus();
+                    }
+                }).build();
+            if (audioManager.requestAudioFocus(focusRequest) != android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { releaseAudioFocus(); call.reject("无法获得音频焦点，请暂停其他音频后重试"); return; }
+            call.resolve();
+        });
+    }
+
+    private void releaseAudioFocus() {
+        if (audioManager != null && focusRequest != null && android.os.Build.VERSION.SDK_INT >= 26) audioManager.abandonAudioFocusRequest(focusRequest);
+        if (audioManager != null && legacyFocusHeld) audioManager.abandonAudioFocus(legacyFocusListener);
+        legacyFocusHeld = false;
+        focusRequest = null;
+    }
+
+    @PluginMethod
+    public void releaseFocus(PluginCall call) { getActivity().runOnUiThread(() -> { releaseAudioFocus(); call.resolve(); }); }
 
     @PluginMethod
     public void start(PluginCall call) {
@@ -98,12 +142,16 @@ public final class NativeVoiceCapturePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("capturing", VoiceCaptureController.isCapturing());
         result.put("paused", VoiceCaptureController.isPaused());
+        result.put("echoCancellation", VoiceCaptureController.isEchoEnabled());
+        result.put("noiseSuppression", VoiceCaptureController.isNoiseEnabled());
+        result.put("autoGainControl", VoiceCaptureController.isGainEnabled());
         if (VoiceCaptureController.getSampleRate() > 0) result.put("sampleRate", VoiceCaptureController.getSampleRate());
         call.resolve(result);
     }
 
     @Override
     public void handleOnDestroy() {
+        releaseAudioFocus();
         cancelPendingStart();
         VoiceCaptureController.stop();
         super.handleOnDestroy();

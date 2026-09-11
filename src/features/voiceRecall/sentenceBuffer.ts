@@ -1,5 +1,6 @@
 export class SpeakableSentenceBuffer {
   private buffer = "";
+  constructor(private readonly minimumCharacters = 1) {}
 
   append(delta: string): string[] {
     this.buffer += delta;
@@ -12,8 +13,7 @@ export class SpeakableSentenceBuffer {
       const abbreviationPoint = char === "." && /[A-Za-z]/.test(this.buffer[index - 1] ?? "") && /[A-Za-z]/.test(next);
       if (!decimalPoint && !abbreviationPoint && /[。！？!?；;\n]/.test(char)) {
         const sentence = this.buffer.slice(boundary + 1, index + 1).trim();
-        if (sentence) sentences.push(sentence);
-        boundary = index;
+        if (sentence.length >= this.minimumCharacters) { sentences.push(sentence); boundary = index; }
       }
     }
     if (boundary >= 0) this.buffer = this.buffer.slice(boundary + 1);

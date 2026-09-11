@@ -1,4 +1,5 @@
 import type { TtsProviderProfile } from "../../types";
+import { synthesizeOnHost } from "../../services/nativeTts";
 import { createTtsProvider } from "../../services/knowledgePodcastService";
 import type { TtsStreamAdapter, TtsStreamEvent, TtsStreamRequest } from "./contracts";
 
@@ -6,8 +7,8 @@ export class BufferedTtsFallbackAdapter implements TtsStreamAdapter {
   readonly profileId: string;
 
   constructor(
-    profile: TtsProviderProfile,
-    apiKey: string,
+    private readonly profile: TtsProviderProfile,
+    private readonly apiKey: string,
     apiKeySecondary?: string,
   ) {
     this.profileId = profile.id;
@@ -19,7 +20,8 @@ export class BufferedTtsFallbackAdapter implements TtsStreamAdapter {
   async *synthesize(request: TtsStreamRequest): AsyncIterable<TtsStreamEvent> {
     request.signal.throwIfAborted();
     yield { type: "usage", characters: request.text.length };
-    const blob = await this.provider.synthesize(request.text, { signal: request.signal });
+    const hosted = this.profile.providerId === "fish-audio" ? await synthesizeOnHost({ providerId: "fish-audio", apiKey: this.apiKey, model: this.profile.model, voiceId: request.voice || this.profile.voice, text: request.text, format: "mp3", speed: request.rate }, request.signal) : undefined;
+    const blob = hosted ?? await this.provider.synthesize(request.text, { signal: request.signal });
     const chunk = new Uint8Array(await blob.arrayBuffer());
     if (chunk.byteLength) {
       yield { type: "audio", chunk, format: { encoding: "provider-native", sampleRate: 16_000, channelCount: 1 } };

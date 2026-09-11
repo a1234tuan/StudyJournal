@@ -424,6 +424,13 @@
   gap: clamp(26px, 5vh, 48px);
   margin: clamp(36px, 8vh, 86px) auto 0;
 }
+.vr-transcript-region { display: flex; flex: 1; flex-direction: column; min-height: 0; width: 100%; }
+.vr-transcript-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 0; }
+.vr-transcript-turn { padding: 12px 0; border-bottom: 1px solid var(--vr-call-line); }
+.vr-transcript-turn p { white-space: pre-wrap; font-size: 1rem; margin: 8px 0; }
+.vr-transcript-turn .vr-user-turn { margin-left: 18px; }
+.vr-transcript-scroll .vr-dialogue { gap: 14px; margin-top: 18px; }
+.vr-new-messages { align-self: center; color: var(--vr-call-accent); background: var(--vr-call-surface); border: 1px solid var(--vr-call-line); padding: 8px 12px; }
 .vr-user-turn {
   max-width: 680px;
   margin: 0;
@@ -498,6 +505,7 @@
 .vr-turn-cue > span { font-size: .68rem; }
 
 .vr-controls {
+  flex-wrap: wrap;
   display: flex;
   min-height: 118px;
   gap: clamp(10px, 3.8vw, 34px);
@@ -506,6 +514,10 @@
   padding: 10px 18px max(14px, env(safe-area-inset-bottom));
   background: var(--vr-call-lower);
 }
+.vr-speech-rate { flex-basis: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; font-size: .75rem; color: var(--vr-call-muted); }
+.vr-provider-body details { padding: 10px 0; border-bottom: 1px solid var(--vr-line); }
+.vr-provider-body summary { cursor: pointer; font-weight: 600; }
+.vr-provider-body details > label { margin-top: 10px; }
 .vr-control-secondary, .vr-main-control-wrap {
   display: grid;
   width: 76px;
@@ -633,6 +645,11 @@
 .vr-details .vr-theme-toggle button[aria-pressed="true"] { color: var(--vr-call-text); background: var(--vr-call-line); }
 
 .vr-sheet-backdrop {
+  --vr-call-surface-strong: var(--color-surface-raised);
+  --vr-call-text: var(--color-text);
+  --vr-call-muted: var(--color-muted);
+  --vr-call-line: var(--color-border);
+  --vr-call-accent: var(--color-primary);
   position: fixed;
   z-index: 20;
   inset: 0;
@@ -640,8 +657,7 @@
   align-items: flex-end;
   justify-content: center;
   padding: 18px;
-  background: rgba(5, 8, 7, .68);
-  backdrop-filter: blur(5px);
+  background: rgba(5, 8, 7, .30);
 }
 .vr-sheet {
   width: min(540px, 100%);

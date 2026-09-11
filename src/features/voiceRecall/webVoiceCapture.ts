@@ -11,6 +11,7 @@ const floatToPcm16 = (input: Float32Array): Uint8Array => {
 };
 
 export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
+  diagnostics: Record<string, string | number | boolean> = {};
   readonly id = "web-audio-pcm";
   private stream?: MediaStream;
   private context?: AudioContext;
@@ -36,9 +37,12 @@ export class WebVoiceCaptureAdapter implements VoiceCaptureAdapter {
     } });
     if (signal.aborted) { stream.getTracks().forEach((track) => track.stop()); return; }
     this.stream = stream;
+    const settings = stream.getAudioTracks?.()[0]?.getSettings?.();
+    this.diagnostics = { echoCancellation: settings?.echoCancellation ?? "unknown", noiseSuppression: settings?.noiseSuppression ?? "unknown", autoGainControl: settings?.autoGainControl ?? "unknown" };
     await window.studyJournalDesktop?.voice.setCaptureActive(true);
     if (signal.aborted) { await this.stop(); return; }
     this.context = new AudioContext({ sampleRate: options.preferredFormat.sampleRate });
+    this.diagnostics.sampleRate = this.context.sampleRate;
     this.source = this.context.createMediaStreamSource(this.stream);
     this.processor = this.context.createScriptProcessor(2048, 1, 1);
     this.queue = createAsyncQueue<VoiceAudioFrame>();

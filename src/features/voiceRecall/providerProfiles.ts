@@ -5,6 +5,7 @@ export type VoiceProviderTemplateStatus = "candidate" | "verified" | "deprecated
 export type VoiceProviderTransport = "websocket" | "sse" | "http-stream" | "native-sdk" | "mock";
 
 export interface AsrProviderProfile {
+  recognitionOptions?: Partial<import("./aliyunAsrProtocol").AliyunAsrSessionConfig>;
   id: string;
   providerId: "doubao" | "aliyun-bailian" | "openai-compatible" | "custom" | "mock";
   providerName: string;
@@ -42,12 +43,13 @@ export interface VoiceProviderTemplate {
 
 export interface VoiceProviderDeviceOverrides {
   templateId: string;
-  asr?: Partial<Pick<AsrProviderProfile, "endpoint" | "model" | "resourceId" | "language">>;
+  asr?: Partial<Pick<AsrProviderProfile, "endpoint" | "model" | "resourceId" | "language" | "recognitionOptions">>;
   llm?: Partial<Pick<AiProviderProfile, "baseUrl" | "model" | "temperature" | "maxTokens" | "contextWindowTokens">>;
   tts?: Partial<Pick<VoiceTtsProviderProfile, "endpoint" | "model" | "voice" | "firstChunkTimeoutMs">>;
 }
 
 export interface VoiceProviderEditableConfig {
+  asrOptions?: Pick<import("./aliyunAsrProtocol").AliyunAsrSessionConfig, "languageHints" | "vocabularyId" | "disfluencyRemovalEnabled" | "semanticPunctuationEnabled" | "maxSentenceSilence" | "multiThresholdModeEnabled" | "inverseTextNormalizationEnabled">;
   templateId: string;
   asrEndpoint: string;
   asrModel: string;

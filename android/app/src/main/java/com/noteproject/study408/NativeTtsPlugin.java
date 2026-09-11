@@ -23,6 +23,36 @@ import org.json.JSONObject;
 
 @CapacitorPlugin(name = "NativeTts")
 public class NativeTtsPlugin extends Plugin {
+    private static final class RequestState {
+        private boolean cancelled;
+        private final java.util.List<HttpURLConnection> connections = new java.util.ArrayList<>();
+        synchronized HttpURLConnection track(HttpURLConnection connection) throws java.io.IOException {
+            if (cancelled) { connection.disconnect(); throw new java.io.IOException("TTS cancelled"); }
+            connections.add(connection);
+            return connection;
+        }
+        synchronized void close() {
+            cancelled = true;
+            for (HttpURLConnection connection : connections) connection.disconnect();
+            connections.clear();
+        }
+    }
+    private final java.util.Map<String, RequestState> activeRequests = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ThreadLocal<RequestState> currentRequest = new ThreadLocal<>();
+
+    @PluginMethod
+    public void cancel(PluginCall call) {
+        RequestState state = activeRequests.get(call.getString("requestId", ""));
+        if (state != null) state.close();
+        call.resolve();
+    }
+
+    private HttpURLConnection trackedConnection(String url) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        RequestState state = currentRequest.get();
+        return state == null ? connection : state.track(connection);
+    }
+
     @PluginMethod
     public void synthesize(PluginCall call) {
         String providerId = call.getString("providerId", "fish-audio");
@@ -37,7 +67,11 @@ public class NativeTtsPlugin extends Plugin {
             call.reject("TTS 请求配置不完整。");
             return;
         }
+        String requestId = call.getString("requestId", UUID.randomUUID().toString());
+        RequestState state = new RequestState();
+        if (activeRequests.putIfAbsent(requestId, state) != null) { call.reject("重复的 TTS 操作"); return; }
         execute(() -> {
+            currentRequest.set(state);
             try {
                 switch (providerId) {
                     case "aliyun": synthesizeAliyun(call, apiKey, model, voiceId, text); break;
@@ -48,6 +82,10 @@ public class NativeTtsPlugin extends Plugin {
                 }
             } catch (Exception error) {
                 call.reject(error.getMessage() != null ? error.getMessage() : "TTS 请求失败。", error);
+            } finally {
+                state.close();
+                activeRequests.remove(requestId, state);
+                currentRequest.remove();
             }
         });
     }
@@ -59,6 +97,9 @@ public class NativeTtsPlugin extends Plugin {
         payload.put("reference_id", voiceId);
         payload.put("format", "mp3");
         payload.put("normalize", true);
+        double speed = call.getDouble("speed", 1.0);
+        if (!Double.isFinite(speed) || speed < 0.5 || speed > 2.0) throw new IllegalArgumentException("无效语速");
+        payload.put("prosody", new JSONObject().put("speed", speed));
         payload.put("mp3_bitrate", 64);
         payload.put("latency", "normal");
         payload.put("chunk_length", 300);
@@ -100,7 +141,7 @@ public class NativeTtsPlugin extends Plugin {
         }
         JSONObject json = new JSONObject(new String(respBytes, StandardCharsets.UTF_8));
         String audioUrl = json.getJSONObject("output").getJSONObject("audio").getString("url");
-        HttpURLConnection audioConn = (HttpURLConnection) new URL(audioUrl).openConnection();
+        HttpURLConnection audioConn = trackedConnection(audioUrl);
         audioConn.setConnectTimeout(30000);
         audioConn.setReadTimeout(120000);
         int audioCode = audioConn.getResponseCode();
@@ -226,7 +267,7 @@ public class NativeTtsPlugin extends Plugin {
         payload.put("voice", voice);
         payload.put("audioConfig", audioConfig);
         String urlStr = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + java.net.URLEncoder.encode(apiKey, "UTF-8");
-        HttpURLConnection conn = (HttpURLConnection) new java.net.URL(urlStr).openConnection();
+        HttpURLConnection conn = trackedConnection(urlStr);
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(30_000);
         conn.setReadTimeout(30_000);
@@ -255,7 +296,7 @@ public class NativeTtsPlugin extends Plugin {
     }
 
     private HttpURLConnection openPost(String urlStr) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        HttpURLConnection conn = trackedConnection(urlStr);
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(120000);

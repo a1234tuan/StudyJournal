@@ -23,6 +23,80 @@ public class NativeAiPlugin extends Plugin {
     /** In-flight chat requests, keyed by the renderer-supplied request id, so a
      * cancelled generation stops the paid request instead of running to completion. */
     private final Map<String, HttpURLConnection> activeConnections = new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.atomic.AtomicBoolean> streamRequests = new ConcurrentHashMap<>();
+
+    @PluginMethod
+    public void stream(PluginCall call) {
+        String requestId = call.getString("requestId", "");
+        String apiKey = call.getString("apiKey", "").trim();
+        String baseUrl = call.getString("baseUrl", "");
+        String model = call.getString("model", "");
+        if (requestId.isEmpty() || apiKey.isEmpty() || baseUrl.isEmpty() || model.isEmpty()) { call.reject("语音 AI 配置不完整", "CONFIGURATION"); return; }
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        if (streamRequests.putIfAbsent(requestId, cancelled) != null) { call.reject("重复请求", "CONFIGURATION"); return; }
+        execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                if (cancelled.get()) throw new java.io.IOException("cancelled");
+                JSONObject payload = new JSONObject();
+                payload.put("model", model);
+                payload.put("messages", new JSONArray(call.getString("messagesJson", "[]")));
+                payload.put("temperature", call.getDouble("temperature", 0.7));
+                payload.put("max_tokens", Math.min(call.getInt("maxTokens", 320), 320));
+                payload.put("thinking", new JSONObject().put("type", "disabled"));
+                payload.put("stream", true);
+                payload.put("stream_options", new JSONObject().put("include_usage", true));
+                connection = openConnection(normalizeChatUrl(baseUrl), call.getInt("timeoutMs", 20000));
+                activeConnections.put(requestId, connection);
+                if (cancelled.get()) throw new java.io.IOException("cancelled");
+                connection.setRequestProperty("Authorization", "Bearer " + apiKey.replaceFirst("(?i)^Bearer\\s+", ""));
+                connection.setRequestProperty("Accept", "text/event-stream");
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setDoOutput(true);
+                try (OutputStream output = connection.getOutputStream()) { output.write(payload.toString().getBytes(StandardCharsets.UTF_8)); }
+                int status = connection.getResponseCode();
+                if (status < 200 || status >= 300) { call.reject("语音 AI 请求失败", "HTTP_" + status); return; }
+                boolean completed = false;
+                StringBuilder data = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while (!cancelled.get() && (line = reader.readLine()) != null) {
+                        if (line.isEmpty()) {
+                            if (data.length() == 0) continue;
+                            String event = data.toString().trim();
+                            data.setLength(0);
+                            if (event.equals("[DONE]")) { completed = true; break; }
+                            JSONObject json = new JSONObject(event);
+                            JSONArray choices = json.optJSONArray("choices");
+                            JSONObject choice = choices == null ? null : choices.optJSONObject(0);
+                            JSONObject delta = choice == null ? null : choice.optJSONObject("delta");
+                            if (delta != null && !delta.isNull("content")) {
+                                String text = delta.optString("content", "");
+                                if (!text.isEmpty()) { JSObject token = new JSObject(); token.put("requestId", requestId); token.put("type", "token"); token.put("text", text); notifyListeners("voiceAiEvent", token); }
+                            }
+                            JSONObject usage = json.optJSONObject("usage");
+                            if (usage != null) {
+                                JSObject metering = new JSObject(); metering.put("requestId", requestId); metering.put("type", "usage");
+                                if (!usage.isNull("prompt_tokens")) metering.put("inputTokens", usage.optInt("prompt_tokens"));
+                                if (!usage.isNull("completion_tokens")) metering.put("outputTokens", usage.optInt("completion_tokens"));
+                                notifyListeners("voiceAiEvent", metering);
+                            }
+                        } else if (line.startsWith("data:")) { if (data.length() > 0) data.append("\n"); data.append(line.substring(5).trim()); }
+                        if (data.length() > 1048576) throw new java.io.IOException("event too large");
+                    }
+                }
+                if (cancelled.get() || !completed) throw new java.io.IOException("incomplete stream");
+                JSObject done = new JSObject(); done.put("requestId", requestId); done.put("type", "completed"); notifyListeners("voiceAiEvent", done);
+                call.resolve();
+            } catch (Exception error) {
+                call.reject("语音 AI 流未完成", cancelled.get() ? "CANCELLED" : error instanceof java.net.SocketTimeoutException ? "TIMEOUT" : "RESPONSE", error);
+            } finally {
+                streamRequests.remove(requestId);
+                activeConnections.remove(requestId);
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
 
     @PluginMethod
     public void chat(PluginCall call) {
@@ -138,6 +212,8 @@ public class NativeAiPlugin extends Plugin {
     @PluginMethod
     public void cancel(PluginCall call) {
         String requestId = call.getString("requestId", "").trim();
+        java.util.concurrent.atomic.AtomicBoolean pending = streamRequests.get(requestId);
+        if (pending != null) pending.set(true);
         JSObject result = new JSObject();
         HttpURLConnection connection = requestId.isEmpty() ? null : activeConnections.remove(requestId);
         if (connection == null) {

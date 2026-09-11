@@ -10,6 +10,7 @@ import type {
 import { VoicePlaybackQueue, type VoicePlaybackSink } from "./playbackQueue";
 import { VoiceRecallCancellationTree } from "./cancellation";
 import { VoiceAudioFocusManager } from "./audioFocus";
+import { recordVoiceStage, stageFailure } from "./diagnostics";
 import { createVoiceRecallState, transitionVoiceRecallState, type VoiceRecallAction, type VoiceRecallState } from "./domain";
 import type { VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
 import type { VoiceRecallPipeline, VoiceRecallPipelineEvents } from "./pipeline";
@@ -28,10 +29,13 @@ export class VoiceRecallRuntimeController {
   private capture?: VoiceCaptureAdapter;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private captureTask?: Promise<void>;
+  private captureController?: AbortController;
   private operationEpoch = 0;
+  currentOperationId = "";
   productionSession?: import("./productionPipeline").ProductionVoiceSession;
 
   get operationGeneration() { return this.operationEpoch; }
+  get captureDiagnostics() { return this.capture?.diagnostics ?? {}; }
 
   isCurrentOperation(generation: number) { return generation === this.operationEpoch; }
 
@@ -74,7 +78,7 @@ export class VoiceRecallRuntimeController {
     this.cancellation = new VoiceRecallCancellationTree();
     const id = crypto.randomUUID();
     this.state = createVoiceRecallState(request.mode);
-    this.state = transitionVoiceRecallState(this.state, { type: "SET_INPUT_MODE", mode: request.inputMode === "auto-half-duplex" ? "tap-to-record" : request.inputMode });
+    this.state = transitionVoiceRecallState(this.state, { type: "SET_INPUT_MODE", mode: request.inputMode });
     this.session = {
       id,
       mode: request.mode,
@@ -106,7 +110,7 @@ export class VoiceRecallRuntimeController {
     this.state = {
       ...createVoiceRecallState(session.mode),
       status: "paused",
-      inputMode: session.checkpoint.inputMode === "auto-half-duplex" ? "tap-to-record" : session.checkpoint.inputMode,
+      inputMode: session.checkpoint.inputMode,
       userMuted: session.checkpoint.userMuted,
       transcript: session.checkpoint.lastConfirmedText ?? "",
     };
@@ -129,7 +133,10 @@ export class VoiceRecallRuntimeController {
 
   async commitTurn(turn: VoiceRecallTurnLocal, generation = this.operationEpoch) {
     if (!this.session || turn.sessionId !== this.session.id) throw new Error("语音复述轮次与当前会话不匹配");
-    this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "", () => this.isCurrentOperation(generation));
+    recordVoiceStage(turn.operationId, "storage", "start");
+    try { this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "", () => this.isCurrentOperation(generation)); }
+    catch (error) { recordVoiceStage(turn.operationId, "storage", "failed"); throw stageFailure("storage", error); }
+    recordVoiceStage(turn.operationId, "storage", "completed");
     return turn;
   }
 
@@ -154,9 +161,12 @@ export class VoiceRecallRuntimeController {
     if (!this.state || !this.session) throw new Error("当前没有活动的语音复述会话");
     const generation = this.operationEpoch;
     await this.stopCapture();
-    if (!this.isCurrentOperation(generation) || this.state?.status === "paused" || this.state?.userMuted) return;
+    if (!this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) return;
+    await this.focus.acquire();
+    if (!this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) return;
     this.capture = adapter;
-    const turnSignal = this.cancellation.beginTurn();
+    this.captureController = new AbortController();
+    const turnSignal = this.captureController.signal;
     this.captureTask = (async () => {
       for await (const frame of adapter.start(options, turnSignal)) {
         if (turnSignal.aborted) break;
@@ -172,7 +182,8 @@ export class VoiceRecallRuntimeController {
   }
 
   async stopCapture() {
-    if (this.capture) this.cancellation.cancelTurn("capture-stopped");
+    this.captureController?.abort("capture-stopped");
+    this.captureController = undefined;
     const capture = this.capture;
     this.capture = undefined;
     this.captureTask = undefined;
@@ -186,7 +197,7 @@ export class VoiceRecallRuntimeController {
     void previous.interrupt();
   }
 
-  enqueueAudio(chunk: Uint8Array) {
+  enqueueAudio(chunk: Uint8Array, segmentId?: string) {
     return this.playback.enqueue(chunk);
   }
 
@@ -194,8 +205,8 @@ export class VoiceRecallRuntimeController {
     return this.playback.interrupt();
   }
 
-  waitForPlayback() {
-    return this.playback.waitUntilIdle();
+  async waitForPlayback() {
+    try { await this.playback.waitUntilIdle(); } catch (error) { throw stageFailure("playback", error); }
   }
 
   /** Phase 1 of a turn: captured audio -> confirmed transcript. */
@@ -204,6 +215,7 @@ export class VoiceRecallRuntimeController {
     execute: (operationId: string, observe: (usage: Partial<import("./providerRuntime").VoiceUsageTotals>) => void) => Promise<Result>,
   ) {
     const operationId = crypto.randomUUID();
+    this.currentOperationId = operationId;
     let observed: Partial<import("./providerRuntime").VoiceUsageTotals> = {};
     let pending = Promise.resolve();
     let persistenceError: unknown;
@@ -218,7 +230,7 @@ export class VoiceRecallRuntimeController {
       return { ...result, operationId, observedUsage: observed };
     } finally {
       await pending;
-      if (persistenceError) throw persistenceError;
+      if (persistenceError) throw stageFailure("storage", persistenceError);
     }
   }
 
@@ -247,6 +259,7 @@ export class VoiceRecallRuntimeController {
 
   /** Phase 2 of a turn: confirmed transcript -> streamed reply + real playback. */
   async respondTurn(input: {
+    rate?: number;
     pipeline: VoiceRecallPipeline;
     messages: readonly VoiceTeacherMessage[];
     voice: string;
@@ -254,6 +267,7 @@ export class VoiceRecallRuntimeController {
   }) {
     if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
     const operationGeneration = this.operationEpoch;
+    await this.focus.acquire();
     await this.playback.interrupt();
     if (!this.isCurrentOperation(operationGeneration) || !this.session) throw new DOMException("轮次已取消", "AbortError");
     const turnSignal = this.cancellation.beginTurn();
@@ -264,13 +278,15 @@ export class VoiceRecallRuntimeController {
       turnId: crypto.randomUUID(),
       operationId,
       messages: input.messages,
+      rate: input.rate,
       voice: input.voice,
       generation,
       signal: turnSignal,
       events: {
+        waitForAudioCapacity: () => this.playback.waitForCapacity(2),
         onUsage,
         onTeacherToken: (token) => { if (!turnSignal.aborted) input.events?.onTeacherToken?.(token); },
-        onAudio: (chunk, generation) => { if (!turnSignal.aborted) return input.events?.onAudio?.(chunk, generation); },
+        onAudio: (chunk, generation, segmentId) => { if (!turnSignal.aborted) return input.events?.onAudio?.(chunk, generation, segmentId); },
       },
     }));
     if (turnSignal.aborted) throw new DOMException("语音轮次已取消", "AbortError");
@@ -281,6 +297,7 @@ export class VoiceRecallRuntimeController {
     if (!this.state || this.state.status === "paused" || this.state.status === "ended") return;
     await this.cancelActiveTurn();
     this.dispatch({ type: "PAUSE" });
+    await this.focus.release();
     await this.persistNow();
   }
 
@@ -292,6 +309,7 @@ export class VoiceRecallRuntimeController {
     this.session.endedAt = new Date().toISOString();
     await this.persistNow();
     this.focus.stop();
+    await this.focus.release();
     this.cancellation.cancelSession();
     this.session = undefined;
   }

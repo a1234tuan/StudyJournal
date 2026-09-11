@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { buildAliyunFinishTask, buildAliyunRunTask, parseAliyunAsrMessage } from "./aliyunAsrProtocol";
 
 describe("Aliyun Paraformer wire protocol", () => {
+  it("sends explicit language, vocabulary and sentence options", () => {
+    const parameters = JSON.parse(buildAliyunRunTask("task", { model: "paraformer-realtime-v2", sampleRate: 16000, format: "pcm", languageHints: ["zh", "en"], vocabularyId: "test-vocabulary", maxSentenceSilence: 2000, disfluencyRemovalEnabled: false, semanticPunctuationEnabled: false, multiThresholdModeEnabled: true, inverseTextNormalizationEnabled: true })).payload.parameters;
+    expect(parameters).toMatchObject({ language_hints: ["zh", "en"], vocabulary_id: "test-vocabulary", max_sentence_silence: 2000, disfluency_removal_enabled: false, semantic_punctuation_enabled: false, multi_threshold_mode_enabled: true, inverse_text_normalization_enabled: true });
+  });
   it("builds a run-task frame with the configured model and format", () => {
     const frame = JSON.parse(buildAliyunRunTask("task-1", { model: "paraformer-realtime-v2", sampleRate: 16_000, format: "pcm", punctuation: true }));
     expect(frame).toEqual({

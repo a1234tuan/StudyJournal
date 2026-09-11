@@ -20,7 +20,7 @@ interface NativeAiPlugin {
   cancel(options: { requestId: string }): Promise<{ cancelled: boolean }>;
 }
 
-const NativeAi = registerPlugin<NativeAiPlugin>("NativeAi");
+export const NativeAi = registerPlugin<NativeAiPlugin>("NativeAi");
 
 export const canUseNativeAi = (): boolean =>
   Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";

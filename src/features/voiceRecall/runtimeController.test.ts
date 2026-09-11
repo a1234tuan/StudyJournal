@@ -41,11 +41,11 @@ describe("VoiceRecallRuntimeController", () => {
     runtime.dispatch({ type: "CONNECT" });
     runtime.dispatch({ type: "CONNECTED" });
     await runtime.pause();
-    expect(await database.voiceRecallSessions.get(id)).toMatchObject({ status: "paused", checkpoint: { inputMode: "tap-to-record" } });
+    expect(await database.voiceRecallSessions.get(id)).toMatchObject({ status: "paused", checkpoint: { inputMode: "auto-half-duplex" } });
 
     const restored = new VoiceRecallRuntimeController(new VoiceRecallRepository(database));
     await restored.restoreSession(id);
-    expect(restored.snapshot).toMatchObject({ status: "paused", captureRequested: false });
+    expect(restored.snapshot).toMatchObject({ status: "paused", captureRequested: false, inputMode: "auto-half-duplex" });
     database.close();
   });
 
@@ -71,10 +71,18 @@ describe("VoiceRecallRuntimeController", () => {
     };
 
     await runtime.createSession(request);
+    runtime.dispatch({ type: "OPEN_PREFLIGHT" });
+    runtime.dispatch({ type: "CONFIRM_DISCLOSURE", confirmed: true });
+    runtime.dispatch({ type: "CONNECT" });
+    runtime.dispatch({ type: "CONNECTED" });
     await runtime.startCapture(capture, options, () => undefined);
     await Promise.resolve();
     await runtime.end();
     await runtime.createSession(request);
+    runtime.dispatch({ type: "OPEN_PREFLIGHT" });
+    runtime.dispatch({ type: "CONFIRM_DISCLOSURE", confirmed: true });
+    runtime.dispatch({ type: "CONNECT" });
+    runtime.dispatch({ type: "CONNECTED" });
     await runtime.startCapture(capture, options, () => undefined);
     await Promise.resolve();
 

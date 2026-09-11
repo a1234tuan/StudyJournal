@@ -31,6 +31,7 @@ export class FishAudioTtsStreamAdapter implements TtsStreamAdapter {
           reference_id: request.voice || this.profile.voice,
           format: "mp3",
           normalize: true,
+          prosody: { speed: request.rate ?? 1.2 },
           mp3_bitrate: 64,
           latency: "normal",
           chunk_length: 200,

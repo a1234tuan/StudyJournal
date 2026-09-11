@@ -720,10 +720,12 @@ const synthesizeDesktopTts = async (options, signal) => {
   // Fish Audio (default)
   const fishModel = model || "s2.1-pro-free";
   const fishToken = apiKey.replace(/^Bearer\s+/i, "");
+  const speed = options.speed ?? 1;
+  if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) throw new Error("无效语速");
   const response = await net.fetch("https://api.fish.audio/v1/tts", {
     method: "POST",
     headers: { Authorization: `Bearer ${fishToken}`, "Content-Type": "application/json", Accept: "audio/mpeg", model: fishModel },
-    body: JSON.stringify({ text, reference_id: voiceId, format: "mp3", normalize: true, mp3_bitrate: 64, latency: "normal", chunk_length: 300 }),
+    body: JSON.stringify({ text, reference_id: voiceId, format: "mp3", normalize: true, mp3_bitrate: 64, latency: "normal", chunk_length: 300, prosody: { speed } }),
     signal,
   });
   const buffer = Buffer.from(await response.arrayBuffer());

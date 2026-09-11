@@ -12,16 +12,18 @@ interface NativeVoiceFrameEvent {
 }
 
 interface NativeVoiceCapturePlugin {
+  acquireFocus(): Promise<void>;
+  releaseFocus(): Promise<void>;
   start(options: { sampleRate: number; frameSize: number; requestId: string }): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
   stop(options: { requestId: string }): Promise<void>;
-  status(): Promise<{ capturing: boolean; paused: boolean; sampleRate?: number }>;
+  status(): Promise<{ capturing: boolean; paused: boolean; sampleRate?: number; echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean }>;
   addListener(eventName: "audioFrame", listener: (event: NativeVoiceFrameEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "captureError", listener: (event: { message?: string; requestId?: string }) => void): Promise<PluginListenerHandle>;
 }
 
-const NativeVoiceCapture = registerPlugin<NativeVoiceCapturePlugin>("NativeVoiceCapture");
+export const NativeVoiceCapture = registerPlugin<NativeVoiceCapturePlugin>("NativeVoiceCapture");
 
 const decodeBase64 = (value: string): Uint8Array => {
   const binary = atob(value);
@@ -34,6 +36,7 @@ export const canUseNativeVoiceCapture = (): boolean =>
   Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
 export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
+  diagnostics: Record<string, string | number | boolean> = {};
   readonly id = "android-native-pcm";
   private readonly requestId = crypto.randomUUID();
   private listener?: PluginListenerHandle;
@@ -79,6 +82,8 @@ export class NativeVoiceCaptureAdapter implements VoiceCaptureAdapter {
     if (signal.aborted) return;
     await NativeVoiceCapture.start({ sampleRate: options.preferredFormat.sampleRate, frameSize: 2048, requestId: this.requestId });
     if (signal.aborted) return;
+    const status = await NativeVoiceCapture.status();
+    this.diagnostics = { sampleRate: status.sampleRate ?? options.preferredFormat.sampleRate, echoCancellation: status.echoCancellation, noiseSuppression: status.noiseSuppression, autoGainControl: status.autoGainControl };
     while (!done) {
       const value = values.shift();
       if (value) yield value;
