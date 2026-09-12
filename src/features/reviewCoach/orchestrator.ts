@@ -127,6 +127,16 @@ export interface GenerateQuizTurnInput {
   signal?: AbortSignal;
 }
 
+const MAX_HISTORY_ANSWER_CHARS = 2_000;
+const MAX_HISTORY_RATIONALE_CHARS = 1_000;
+
+const truncateHistoryText = (value: string | undefined, maxChars: number) => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length <= maxChars ? trimmed : trimmed.slice(0, maxChars) + "…[已截断]";
+};
+
 export interface SubmitQuizAnswerInput {
   turnId: string;
   answerText: string;
@@ -662,14 +672,18 @@ export class ReviewCoachOrchestrator {
       task = await this.dependencies.repository.transitionTask(task.id, "in-progress", this.dependencies.clock.now());
       snapshot = await this.dependencies.repository.getFormalSnapshot();
     }
-    const turns = snapshot.adaptiveQuizTurns.filter((item) => item.taskId === task!.id && item.status !== "invalid").sort((a, b) => a.sequence - b.sequence);
+    const turns = snapshot.adaptiveQuizTurns.filter((item) => item.taskId === task!.id && item.status !== "invalid" && !item.deletedAt).sort((a, b) => a.sequence - b.sequence);
     const active = turns.find((item) => item.status === "displayed");
     if (active) return active;
     if (turns.length >= blueprint.maxTurns) throw new Error("本次训练已达到蓝图轮次上限，请提交本次结果。");
     const verification = snapshot.delayedVerifications.find((item) => item.taskId === task!.id && ["queued", "in-progress"].includes(item.status));
     const sourceOutcome = verification ? snapshot.taskOutcomeEvents.find((item) => item.id === verification.sourceOutcomeEventId) : undefined;
-    const sourceTurns = sourceOutcome ? snapshot.adaptiveQuizTurns.filter((item) => item.taskId === sourceOutcome.taskId && item.status !== "invalid") : [];
+    const sourceTurns = sourceOutcome ? snapshot.adaptiveQuizTurns.filter((item) => item.taskId === sourceOutcome.taskId && item.status !== "invalid" && !item.deletedAt) : [];
     const previousTurns = verification ? [...sourceTurns, ...turns] : turns;
+    const answerHistoryIds = new Set(previousTurns
+      .filter((item) => item.status === "answered" && item.answerText && item.answerText !== "[skipped]")
+      .slice(-3)
+      .map((item) => item.id));
     const previous = turns.at(-1);
     const previousBranch = previous?.answerText === "[skipped]" ? "skipped" : previous?.assessment;
     const branch = previousBranch ? blueprint.branches.find((item) => item.when === previousBranch) : undefined;
@@ -680,7 +694,15 @@ export class ReviewCoachOrchestrator {
         task: { id: task.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: task.contentVersion },
         blueprint,
         decisionBlockContent: input.decisionBlockContent,
-        previousTurns: previousTurns.map((item) => ({ sequence: item.sequence, practiceType: item.practiceType, question: item.question, assessment: item.assessment, hintsUsed: item.hintsUsed.length })),
+      previousTurns: previousTurns.map((item) => ({
+        sequence: item.sequence,
+        practiceType: item.practiceType,
+        question: item.question,
+        assessment: item.assessment,
+        hintsUsed: item.hintsUsed.length,
+        answerText: answerHistoryIds.has(item.id) ? truncateHistoryText(item.answerText, MAX_HISTORY_ANSWER_CHARS) : undefined,
+        assessmentRationale: answerHistoryIds.has(item.id) ? truncateHistoryText(item.assessmentRationale, MAX_HISTORY_RATIONALE_CHARS) : undefined,
+      })),
         requestedStrategy: verification ? "continue" : branch?.nextStrategy ?? (turns.length === 0 ? blueprint.initialPracticeType : "continue"),
         verificationMode: verification ? { verificationId: verification.id, requireFreshRetrieval: true } : undefined,
         priorQualityFailure: lastQualityReason || undefined,

@@ -63,6 +63,44 @@ describe("review coach event validation and replay", () => {
     });
   });
 
+  it("applies self-assessments and verifications in chronological order", () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.taskOutcomeEvents.push({
+      ...snapshot.taskOutcomeEvents.find((event) => event.kind === "self-assessment")!,
+      id: "newer-not-mastered",
+      subjectiveOutcome: "not-mastered",
+      occurredAt: "2026-09-12T08:00:00.000Z",
+      idempotencyKey: "newer-not-mastered",
+    });
+    expect(replayAllDecisionBlockStates(snapshot, "2026-09-12T08:00:00.000Z")[0].status).toBe("not-mastered");
+  });
+
+  it("derives verification timestamps and pending ids independently of input order", () => {
+    const snapshot = completeCoachTestSnapshot();
+    const first = snapshot.delayedVerifications[0];
+    const laterPending = { ...first, id: "pending-later", status: "scheduled" as const, verificationOutcome: undefined, lastVerifiedAt: undefined, updatedAt: "2026-09-12T08:00:00.000Z", verificationDueAt: "2026-09-12T08:00:00.000Z", idempotencyKey: "pending-later" };
+    const earlierCompleted = { ...first, id: "completed-earlier", status: "completed" as const, verificationOutcome: "retained" as const, lastVerifiedAt: "2026-09-10T08:00:00.000Z", updatedAt: "2026-09-10T08:00:00.000Z", idempotencyKey: "completed-earlier" };
+    const state = replayDecisionBlockState({
+      block: snapshot.decisionBlocks[0], feedback: [], queueItems: [], blueprints: snapshot.sessionBlueprints,
+      tasks: snapshot.adaptiveReviewTasks, turns: snapshot.adaptiveQuizTurns, outcomes: snapshot.taskOutcomeEvents,
+      verifications: [laterPending, earlierCompleted], replayedAt: "2026-09-12T08:00:00.000Z",
+    });
+    expect(state).toMatchObject({ lastVerifiedAt: earlierCompleted.lastVerifiedAt, pendingVerificationId: laterPending.id });
+  });
+
+  it("does not treat missing verification results as a zero retention rate", () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.delayedVerifications = [];
+    const effect = replayInterventionEffectSummaries({
+      interpretations: snapshot.feedbackInterpretations,
+      blueprints: snapshot.sessionBlueprints,
+      tasks: [snapshot.adaptiveReviewTasks[0], { ...snapshot.adaptiveReviewTasks[0], id: "task-2", idempotencyKey: "task-2" }, { ...snapshot.adaptiveReviewTasks[0], id: "task-3", idempotencyKey: "task-3" }],
+      turns: [], outcomes: [], verifications: [], replayedAt: "2026-09-12T08:00:00.000Z",
+    })[0];
+    expect(effect.retentionRate).toBeUndefined();
+    expect(effect.delayedRetainedCount + effect.delayedDecayedCount).toBe(0);
+  });
+
   it("keeps effect evidence separated by provider model and prompt version", () => {
     const snapshot = completeCoachTestSnapshot();
     const secondBlueprint = {

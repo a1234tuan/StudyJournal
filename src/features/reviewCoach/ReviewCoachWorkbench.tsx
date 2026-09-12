@@ -276,7 +276,13 @@ export const ReviewCoachWorkbench = ({
           {interventionEffectSummaries.slice(0, 3).map((effect) => (
             <div key={effect.id}>
               <span><strong>{effect.problemType} · {effect.practiceType}</strong><small>{effect.sampleCount} 次样本 · 近 30 天 {effect.recentSampleCount} 次</small></span>
-              <b>{effect.evidenceStatus === "insufficient" ? "证据不足" : `保持率 ${Math.round((effect.retentionRate ?? 0) * 100)}%`}</b>
+              <b>{(() => {
+                const verificationCount = effect.delayedRetainedCount + effect.delayedDecayedCount;
+                if (verificationCount === 0) return "尚无已完成的延迟验证";
+                if (verificationCount < 3) return "验证样本较少：用户自评保持 " + effect.delayedRetainedCount + " / " + verificationCount;
+                if (effect.retentionRate === undefined || !Number.isFinite(effect.retentionRate)) return "结果暂不可计算";
+                return "用户自评保持率 " + Math.round(effect.retentionRate * 100) + "%（" + effect.delayedRetainedCount + "/" + verificationCount + "）";
+              })()}</b>
             </div>
           ))}
         </div>

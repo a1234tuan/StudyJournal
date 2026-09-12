@@ -18,6 +18,17 @@ const inputRef = (block: string, suffix: string): AnalysisInputRef => ({
 });
 
 describe("ReviewCoachOrchestrator", () => {
+  it("passes recent answers and rationales into the next turn without exposing skipped turns", async () => {
+    const snapshot = (await import("./reviewCoachTestFixtures")).completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...snapshot.adaptiveReviewTasks[0], status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...snapshot.adaptiveQuizTurns[0], status: "answered", answerText: "具体的错误回答", assessmentRationale: "遗漏了关键顺序" };
+    const generateTurn = vi.fn(async (_input: unknown) => ({ status: "ok" as const, practiceType: "variation" as const, answerMode: "open" as const, question: "下一题", answerCriteria: ["before enqueue"], sourceEvidence: snapshot.sessionBlueprints[0].evidence, hints: [] }));
+    const repository = { getFormalSnapshot: vi.fn(async () => snapshot), addQuizTurn: vi.fn(async (turn: any) => turn) } as unknown as ReviewCoachRepository;
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "next" }, clock: { now: () => stamp }, aiGateway: { generateTurn, planSession: vi.fn(), interpretFeedback: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() } });
+    await orchestrator.generateQuizTurn({ taskId: snapshot.adaptiveReviewTasks[0].id, decisionBlockContent: "source", provider: "test", model: "test", promptVersion: "quiz-turn-v2", qualityPromptVersion: "question-quality-v1", policyVersion: "review-coach-policy-v1", operationId: "next-operation" });
+    expect(generateTurn.mock.calls[0][0]).toMatchObject({ previousTurns: [{ answerText: "具体的错误回答", assessmentRationale: "遗漏了关键顺序" }] });
+  });
+
   it("keeps all pending feedback for one block together and batches at most three blocks", async () => {
     const createAnalysisBatch = vi.fn(async (batch: AnalysisBatch) => batch);
     let nextId = 0;

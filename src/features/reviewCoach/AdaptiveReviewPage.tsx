@@ -170,9 +170,8 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
       </header>
 
       <section className="adaptive-review-objective">
-        <small>{delayedVerification ? "延迟验证目标" : "本次目标"}</small><strong>{blueprint.objective}</strong>
-        <p>{blueprint.completionCriteria.join("；")}</p>
-        {delayedVerification && <p className="adaptive-review-verification-note">使用新题检查间隔后的独立提取；结果不会改写整条日志的 FSRS 日期。</p>}
+        {!delayedVerification && <><small>本次目标</small><strong>{blueprint.objective}</strong><p>{blueprint.completionCriteria.join("；")}</p></>}
+        {delayedVerification && <p className="adaptive-review-verification-note">使用新题检查间隔后的回忆；结果不会改写整条日志的 FSRS 日期。</p>}
       </section>
 
       {!currentTurn && (
@@ -240,7 +239,7 @@ export const AdaptiveReviewPage = ({ taskId, snapshot, records, onBack, onGenera
       {finishing && answered && (
         <section className="adaptive-review-finish">
           <h2>{delayedVerification ? "间隔后还能独立完成吗" : "你现在的真实状态"}</h2>
-          <p>{delayedVerification ? "验证结果与即时训练结果分开保存。" : "即时回答和主观判断会分别保存。"}</p>
+          <p>{delayedVerification ? "验证结果与即时训练结果分开保存；这里记录的是你的自评，不等同于无提示独立作答结果。" : "即时回答和主观判断会分别保存。"}</p>
           {delayedVerification ? (
             <div className="adaptive-review-outcomes">
               <button type="button" disabled={Boolean(busy)} onClick={() => finishVerification("retained")}><Check size={17} />{lastIncorrect && confirmMastered ? "确认仍然掌握" : "仍然掌握"}</button>

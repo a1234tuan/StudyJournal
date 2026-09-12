@@ -9,7 +9,7 @@ import type {
 export const REVIEW_COACH_AI_SCHEMA_VERSION = 1;
 export const FEEDBACK_INTERPRETATION_PROMPT_VERSION = "feedback-interpretation-v1";
 export const SESSION_BLUEPRINT_PROMPT_VERSION = "session-blueprint-v1";
-export const QUIZ_TURN_PROMPT_VERSION = "quiz-turn-v1";
+export const QUIZ_TURN_PROMPT_VERSION = "quiz-turn-v2";
 export const QUESTION_QUALITY_PROMPT_VERSION = "question-quality-v1";
 export const ANSWER_EVALUATION_PROMPT_VERSION = "answer-evaluation-v1";
 export const REVIEW_COACH_POLICY_VERSION = "review-coach-policy-v1";

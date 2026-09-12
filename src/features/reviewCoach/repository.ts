@@ -25,7 +25,7 @@ import type {
   SessionBlueprint,
   TaskOutcomeEvent,
 } from "./domain";
-import { replayAllDecisionBlockStates, replayInterventionEffectSummaries } from "./replay";
+import { REVIEW_COACH_REPLAY_VERSION, replayAllDecisionBlockStates, replayInterventionEffectSummaries } from "./replay";
 import {
   transitionAdaptiveQuizTurn,
   transitionAdaptiveReviewTask,
@@ -87,6 +87,7 @@ export interface ReviewCoachRepository {
   completeVerification(taskId: string, events: TaskOutcomeEvent[], outcome: "retained" | "decayed", updatedAt: string): Promise<AdaptiveReviewTask>;
   saveAiRoleConfig(config: AiRoleConfig): Promise<AiRoleConfig>;
   rebuildProjections(): Promise<{ states: DecisionBlockState[]; effects: InterventionEffectSummary[] }>;
+  areProjectionsCurrent?(): Promise<boolean>;
 }
 
 const ACTIVE_QUEUE_STATUSES = new Set<AnalysisQueueStatus>(["eligible", "excluded", "batched"]);
@@ -1301,6 +1302,30 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
 
   async rebuildProjections(): Promise<{ states: DecisionBlockState[]; effects: InterventionEffectSummary[] }> {
     return this.database.transaction("rw", formalTables(this.database), () => this.rebuildProjectionsInTransaction());
+  }
+
+  async areProjectionsCurrent(): Promise<boolean> {
+    const [snapshot, blocks, states, effects] = await Promise.all([
+      getReviewCoachFormalSnapshot(this.database),
+      this.database.decisionBlocks.toArray(),
+      this.database.decisionBlockStates.toArray(),
+      this.database.interventionEffectSummaries.toArray(),
+    ]);
+    const blockIds = new Set(blocks.map((block) => block.id));
+    if (states.length !== blockIds.size || !states.every((state) => blockIds.has(state.decisionBlockId) && state.replayVersion === REVIEW_COACH_REPLAY_VERSION)) return false;
+    const replayedAt = latestFactTime(snapshot);
+    const expectedEffects = replayInterventionEffectSummaries({
+      interpretations: snapshot.feedbackInterpretations,
+      blueprints: snapshot.sessionBlueprints,
+      tasks: snapshot.adaptiveReviewTasks,
+      turns: snapshot.adaptiveQuizTurns,
+      outcomes: snapshot.taskOutcomeEvents,
+      verifications: snapshot.delayedVerifications,
+      replayedAt,
+    });
+    const effectById = new Map(effects.map((effect) => [effect.id, effect]));
+    return effects.length === expectedEffects.length
+      && expectedEffects.every((expected) => effectById.get(expected.id)?.replayFingerprint === expected.replayFingerprint);
   }
 }
 

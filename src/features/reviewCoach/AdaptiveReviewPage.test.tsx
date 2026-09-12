@@ -54,13 +54,24 @@ describe("AdaptiveReviewPage", () => {
     expect(props.onFinish).not.toHaveBeenCalled();
   });
 
+  it("hides completion criteria before a delayed verification answer", () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };
+    snapshot.delayedVerifications[0] = { ...snapshot.delayedVerifications[0], taskId: coachTestTask.id, status: "in-progress", lastVerifiedAt: undefined, verificationOutcome: undefined };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    expect(screen.queryByText(coachTestBlueprint.objective)).not.toBeInTheDocument();
+    expect(screen.queryByText(coachTestBlueprint.completionCriteria[0])).not.toBeInTheDocument();
+    expect(screen.queryByText(/不等同于无提示独立作答结果/)).not.toBeInTheDocument();
+  });
+
   it("uses retained and decayed outcomes for a delayed-verification task", async () => {
     const snapshot = completeCoachTestSnapshot();
     snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
     snapshot.delayedVerifications[0] = { ...snapshot.delayedVerifications[0], taskId: coachTestTask.id, status: "in-progress", lastVerifiedAt: undefined, verificationOutcome: undefined };
     render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
 
-    expect(screen.getByText("延迟验证目标")).toBeInTheDocument();
+    expect(screen.queryByText("延迟验证目标")).not.toBeInTheDocument();
     expect(screen.getByText(/不会改写整条日志的 FSRS 日期/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "结束本次训练" }));
     fireEvent.click(screen.getByRole("button", { name: "已经衰退" }));

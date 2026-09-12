@@ -12,7 +12,7 @@ import {
 describe("review coach AI contracts", () => {
   it("pins prompt, policy, and JSON schema versions for every AI role", () => {
     for (const contract of Object.values(REVIEW_COACH_AI_CONTRACTS)) {
-      expect(contract.promptVersion).toMatch(/-v1$/);
+      expect(contract.promptVersion).toMatch(contract.promptVersion === "quiz-turn-v2" ? /-v2$/ : /-v1$/);
       expect(contract.policyVersion).toBe("review-coach-policy-v1");
       expect(contract.schemaVersion).toBe(1);
       expect(contract.schema).toHaveProperty("oneOf");

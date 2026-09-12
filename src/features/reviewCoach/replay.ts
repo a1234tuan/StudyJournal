@@ -13,7 +13,7 @@ import type {
   TaskOutcomeEvent,
 } from "./domain";
 
-export const REVIEW_COACH_REPLAY_VERSION = "review-coach-replay-v1";
+export const REVIEW_COACH_REPLAY_VERSION = "review-coach-replay-v2";
 
 const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -42,6 +42,11 @@ export const coachReplayFingerprint = (value: unknown): string => {
 const compareEvents = <T extends { id: string }>(left: T, right: T, getTime: (value: T) => string) =>
   getTime(left).localeCompare(getTime(right)) || left.id.localeCompare(right.id);
 
+const verificationTime = (verification: DelayedVerification) => verification.lastVerifiedAt ?? verification.updatedAt;
+
+const compareVerifications = (left: DelayedVerification, right: DelayedVerification) =>
+  verificationTime(left).localeCompare(verificationTime(right)) || left.id.localeCompare(right.id);
+
 export interface DecisionBlockReplayInput {
   block: DecisionBlock;
   feedback: DecisionBlockFeedback[];
@@ -68,7 +73,7 @@ export const replayDecisionBlockState = (input: DecisionBlockReplayInput): Decis
     .sort((a, b) => compareEvents(a, b, (value) => value.occurredAt));
   const verifications = input.verifications
     .filter((item) => item.decisionBlockId === input.block.id && item.contentVersion === version && !item.deletedAt)
-    .sort((a, b) => compareEvents(a, b, (value) => value.lastVerifiedAt ?? value.verificationDueAt));
+    .sort(compareVerifications);
 
   let status: DecisionBlockState["status"] = "unassessed";
   if (input.block.deletedAt) status = "stale";
@@ -78,22 +83,27 @@ export const replayDecisionBlockState = (input: DecisionBlockReplayInput): Decis
   const currentTask = tasks.find((task) => task.status === "current" || task.status === "in-progress");
   if (currentTask) status = "learning";
 
-  for (const outcome of outcomes) {
-    if (outcome.kind !== "self-assessment") continue;
-    if (outcome.subjectiveOutcome === "mastered") status = "improved-pending-verification";
-    if (outcome.subjectiveOutcome === "needs-consolidation") status = "needs-consolidation";
-    if (outcome.subjectiveOutcome === "not-mastered") status = "not-mastered";
-  }
+  const statusEvents = [
+    ...outcomes
+      .filter((outcome) => outcome.kind === "self-assessment")
+      .map((outcome) => ({ time: outcome.occurredAt, kind: 0, id: outcome.id, apply: () => {
+        if (outcome.subjectiveOutcome === "mastered") status = "improved-pending-verification";
+        if (outcome.subjectiveOutcome === "needs-consolidation") status = "needs-consolidation";
+        if (outcome.subjectiveOutcome === "not-mastered") status = "not-mastered";
+      } })),
+    ...verifications
+      .filter((verification) => verification.status === "completed" && verification.verificationOutcome)
+      .map((verification) => ({ time: verification.lastVerifiedAt ?? verification.updatedAt, kind: 1, id: verification.id, apply: () => {
+        if (verification.verificationOutcome === "retained") status = "retained";
+        if (verification.verificationOutcome === "decayed") status = "needs-consolidation";
+      } })),
+  ].sort((left, right) => left.time.localeCompare(right.time) || left.kind - right.kind || left.id.localeCompare(right.id));
+  for (const event of statusEvents) event.apply();
 
-  for (const verification of verifications) {
-    if (verification.status !== "completed") continue;
-    if (verification.verificationOutcome === "retained") status = "retained";
-    if (verification.verificationOutcome === "decayed") status = "needs-consolidation";
-  }
-
-  const pendingVerification = [...verifications]
-    .reverse()
-    .find((item) => ["scheduled", "eligible", "queued", "in-progress", "missed"].includes(item.status));
+  const pendingVerification = verifications
+    .filter((item) => ["scheduled", "eligible", "queued", "in-progress", "missed"].includes(item.status))
+    .at(-1);
+  const completedVerifications = verifications.filter((item) => item.status === "completed" && item.verificationOutcome);
   const replayedAt = input.replayedAt ?? input.block.updatedAt;
   const replayFacts = {
     block: input.block,
@@ -115,7 +125,7 @@ export const replayDecisionBlockState = (input: DecisionBlockReplayInput): Decis
     status,
     lastFeedbackAt: activeFeedback.at(-1)?.occurredAt,
     lastOutcomeAt: outcomes.at(-1)?.occurredAt,
-    lastVerifiedAt: verifications.filter((item) => item.lastVerifiedAt).at(-1)?.lastVerifiedAt,
+    lastVerifiedAt: completedVerifications.at(-1)?.lastVerifiedAt ?? completedVerifications.at(-1)?.updatedAt,
     currentTaskId: currentTask?.id,
     pendingVerificationId: pendingVerification?.id,
     replayFingerprint: coachReplayFingerprint(replayFacts),

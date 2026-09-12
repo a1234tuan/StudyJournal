@@ -186,6 +186,7 @@ export const useAppData = () => {
         return;
       }
       await recoverKnowledgePodcastJobs();
+      if (reviewCoachRepository.areProjectionsCurrent && !(await reviewCoachRepository.areProjectionsCurrent())) await reviewCoachRepository.rebuildProjections();
       const refreshedVerifications = await reviewCoachOrchestrator.refreshDueVerifications();
       if (refreshedVerifications > 0) await markAutoBackupDirty("review-coach-delayed-verification-refresh");
       await refresh();
