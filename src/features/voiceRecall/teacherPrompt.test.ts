@@ -39,12 +39,22 @@ describe("buildVoiceTeacherMessages", () => {
     const messages = buildVoiceTeacherMessages({ learningGoal: "复述", knowledgeBoundary: "strict" });
     expect(messages[0].content).toContain("只依据学习资料提问");
   });
+
+  it("includes free-topic and app-maintained teaching memory in the trusted instruction", () => {
+    const messages = buildVoiceTeacherMessages({
+      topic: "事件循环",
+      learningGoal: "讲清执行顺序",
+      memory: { learningGoal: "讲清执行顺序", coveredPoints: ["调用栈"], misconceptions: [], pendingTopics: ["微任务"] },
+    });
+    expect(messages[0].content).toContain("本次主题：事件循环");
+    expect(messages[0].content).toContain('"pendingTopics":["微任务"]');
+  });
 });
 
-it("appends exactly one current answer after history and keeps it untrusted", () => {
+it("appends exactly one current answer after history and marks it as a user utterance", () => {
   for (const turns of [[], [{ confirmedText: "旧回答", teacherText: "旧回复" }]]) {
     const messages = buildVoiceTeacherMessages({ learningGoal: "目标", confirmedText: "当前回答", turns });
-    expect(messages.at(-1)).toEqual({ role: "user", content: "当前回答", contentBoundary: "untrusted-learning-content" });
+    expect(messages.at(-1)).toEqual({ role: "user", content: "当前回答", contentBoundary: "user-utterance" });
     expect(messages.filter((message) => message.content === "当前回答")).toHaveLength(1);
   }
 });

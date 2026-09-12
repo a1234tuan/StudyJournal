@@ -14,6 +14,7 @@ import type { ProductionVoiceSession } from "./productionPipeline";
 import { VoiceRecallRepository } from "./repository";
 import { VoiceRecallRuntimeController } from "./runtimeController";
 import { VoiceRecallWorkspace } from "./VoiceRecallWorkspace";
+import { WebVoiceCaptureAdapter } from "./webVoiceCapture";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -31,7 +32,7 @@ const fakeSession = (): ProductionVoiceSession => ({
   summary: { asr: "Mock ASR", llm: "Mock LLM", tts: "Mock TTS" },
 });
 
-const openWorkspace = async (options: { initialRoute?: VoiceRecallNavigationRoute; blocks?: RecordBlock[]; useRealSessionFactory?: boolean } = {}) => {
+const openWorkspace = async (options: { initialRoute?: VoiceRecallNavigationRoute; blocks?: RecordBlock[]; useRealSessionFactory?: boolean; playbackSinkFactory?: () => { play: () => Promise<void>; stop: () => void } } = {}) => {
   const name = `voice-workspace-${crypto.randomUUID()}`;
   databases.add(name);
   const database = new StudyJournalDatabase(name);
@@ -39,6 +40,7 @@ const openWorkspace = async (options: { initialRoute?: VoiceRecallNavigationRout
   const repository = new VoiceRecallRepository(database);
   const runtime = new VoiceRecallRuntimeController(repository);
   const onCreateJournal = vi.fn(async () => undefined);
+  const onBack = vi.fn();
   const initialRoute: VoiceRecallNavigationRoute = options.initialRoute ?? {
     screen: "start",
     returnTab: "review",
@@ -56,27 +58,54 @@ const openWorkspace = async (options: { initialRoute?: VoiceRecallNavigationRout
       templates={[]}
       settings={{ ...DEFAULT_SETTINGS, ai: undefined }}
       onRouteChange={setRoute}
-      onBack={vi.fn()}
+      onBack={onBack}
       onCreateJournal={onCreateJournal}
       repository={repository}
       runtime={runtime}
       {...(options.useRealSessionFactory ? {} : {
         sessionFactory: async () => fakeSession(),
-        playbackSinkFactory: () => ({ play: async () => undefined, stop: () => undefined }),
+        playbackSinkFactory: options.playbackSinkFactory ?? (() => ({ play: async () => undefined, stop: () => undefined })),
       })}
     />;
   };
 
-  return { database, repository, runtime, onCreateJournal, Harness };
+  return { database, repository, runtime, onBack, onCreateJournal, Harness };
 };
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   window.localStorage.clear();
   await Promise.all([...databases].map((name) => Dexie.delete(name)));
   databases.clear();
 });
 
 describe("VoiceRecallWorkspace", () => {
+  it("does not start automatic capture until the generated opening question finishes playback", async () => {
+    let finishPlayback: () => void = () => undefined;
+    const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () { return; });
+    const { database, runtime, Harness } = await openWorkspace({
+      playbackSinkFactory: () => ({
+        play: () => new Promise<void>((resolve) => { finishPlayback = resolve; }),
+        stop: () => undefined,
+      }),
+    });
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+
+    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    expect(capture).not.toHaveBeenCalled();
+    finishPlayback();
+    await waitFor(() => expect(capture).toHaveBeenCalledOnce());
+
+    await runtime.end();
+    view.unmount();
+    database.close();
+  });
+
   it("returns selected records to the production start screen instead of silently blocking on disclosure", async () => {
     const record: RecordBlock = {
       id: "scope-record-1",
@@ -146,7 +175,8 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
+    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     expect(screen.getByText("1 条学习资料")).toBeInTheDocument();
     await runtime.disposeView();
     view.unmount();
@@ -154,9 +184,10 @@ describe("VoiceRecallWorkspace", () => {
   });
 
   it("requires disclosure, commits only confirmed text, and explicitly hands a summary to journal creation", async () => {
-    const { database, repository, onCreateJournal, Harness } = await openWorkspace();
+    const { database, repository, runtime, onCreateJournal, Harness } = await openWorkspace();
     const view = render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
     const start = screen.getByRole("button", { name: "开始语音复述" });
 
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
@@ -165,7 +196,8 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
+    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
     fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "这是人工确认后的正式回答" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
@@ -173,9 +205,8 @@ describe("VoiceRecallWorkspace", () => {
     await waitFor(async () => expect(await repository.listTurns((await repository.listResumableSessions())[0].id)).toEqual([
       expect.objectContaining({ confirmedText: "这是人工确认后的正式回答", sequence: 0 }),
     ]));
-    fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
-    expect(screen.getByRole("dialog", { name: "要暂停还是结束本次通话？" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /结束通话/ }));
+    await screen.findByRole("button", { name: "查看总结" });
+    fireEvent.click(screen.getByRole("button", { name: "查看总结" }));
 
     await screen.findByRole("heading", { name: "本次复述摘要" });
     expect(screen.getByText(/这是人工确认后的正式回答/)).toBeInTheDocument();
@@ -208,6 +239,41 @@ describe("VoiceRecallWorkspace", () => {
     expect(screen.queryByText("正在听")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "把刚学过的内容讲出来" })).toBeInTheDocument();
 
+    view.unmount();
+    database.close();
+  });
+
+  it("honors an explicit stop without another LLM turn and pauses at the completion choices", async () => {
+    const { database, repository, runtime, Harness } = await openWorkspace();
+    const respond = vi.spyOn(runtime, "respondTurn");
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+
+    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    expect(respond).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
+    fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "结束" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
+
+    await screen.findByRole("heading", { name: "要继续补充，还是查看总结？" });
+    expect(respond).toHaveBeenCalledOnce();
+    expect(runtime.snapshot?.status).toBe("paused");
+    const stored = (await repository.listResumableSessions())[0];
+    expect(stored.memory.completionReason).toBe("user-requested");
+    expect(await repository.listTurns(stored.id)).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "继续补充" }));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    expect(screen.queryByRole("heading", { name: "要继续补充，还是查看总结？" })).not.toBeInTheDocument();
+    expect((await repository.getSession(stored.id))?.memory.completionReason).toBeUndefined();
+
+    await runtime.end();
     view.unmount();
     database.close();
   });

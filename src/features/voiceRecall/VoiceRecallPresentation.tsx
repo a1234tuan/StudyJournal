@@ -202,6 +202,7 @@ export interface VoiceRecallCallViewProps {
   mainControl: { label: string; icon: LucideIcon };
   message?: string;
   transcript: string;
+  teachingComplete?: boolean;
   onBack: () => void;
   onMainClick: () => void;
   onPressStart: () => void;
@@ -215,6 +216,9 @@ export interface VoiceRecallCallViewProps {
   onResume: () => void;
   onTranscriptChange: (value: string) => void;
   onSubmitTranscript: () => void;
+  onContinueSupplement?: () => void;
+  onViewSummary?: () => void;
+  onFinishReturn?: () => void;
 }
 
 export interface VoiceRecallHistoryViewProps {
@@ -286,6 +290,7 @@ export const VoiceRecallCallView = ({
   mainControl,
   message,
   transcript,
+  teachingComplete = false,
   onBack,
   onMainClick,
   onPressStart,
@@ -299,6 +304,9 @@ export const VoiceRecallCallView = ({
   onResume,
   onTranscriptChange,
   onSubmitTranscript,
+  onContinueSupplement,
+  onViewSummary,
+  onFinishReturn,
 }: VoiceRecallCallViewProps) => {
   const MainControlIcon = mainControl.icon;
   return (
@@ -323,10 +331,15 @@ export const VoiceRecallCallView = ({
         {message && <p className="vr-error-message">{message}</p>}
       </section>
 
-      {(transcriptEditorOpen || (transcript && state.inputMode !== "auto-half-duplex")) && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim()} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
-      <section className="vr-turn-cue" aria-label="当前通话状态"><div className={`vr-voice-field is-${state.status} ${active ? "is-active" : ""}`} aria-hidden="true"><Waveform active={active || state.status === "speaking"} reduced={reduceMotion} /></div><strong>{state.status === "speaking" && playbackActive === false ? "正在准备语音" : voiceRecallStatusCopy[state.status]}</strong><span>{interactionHint}</span></section>
+      {(transcriptEditorOpen || (transcript && state.inputMode !== "auto-half-duplex")) && <section className="vr-transcript-confirm"><label htmlFor="voice-transcript">本轮转写校对</label><textarea id="voice-transcript" rows={2} value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} placeholder="输入或校对本轮回答" /><button type="button" disabled={!transcript.trim() || !["listening", "finalizing-asr"].includes(state.status)} onClick={onSubmitTranscript}><Check />确认并发送</button></section>}
+      {teachingComplete ? <section className="vr-completion-panel" aria-label="本次复述已完成"><span className="vr-section-label">本轮已覆盖</span><h2>要继续补充，还是查看总结？</h2><p>助教已停止追问，麦克风保持暂停。</p></section> : <section className="vr-turn-cue" aria-label="当前通话状态"><div className={`vr-voice-field is-${state.status} ${active ? "is-active" : ""}`} aria-hidden="true"><Waveform active={active || state.status === "speaking"} reduced={reduceMotion} /></div><strong>{state.status === "speaking" && playbackActive === false ? "正在准备语音" : voiceRecallStatusCopy[state.status]}</strong><span>{interactionHint}</span></section>}
 
-      <footer className="vr-controls">
+      <footer className={`vr-controls ${teachingComplete ? "vr-completion-controls" : ""}`}>
+        {teachingComplete ? <>
+          <button type="button" onClick={onContinueSupplement}><Play /><span>继续补充</span></button>
+          <button type="button" className="is-primary" onClick={onViewSummary}><BookOpen /><span>查看总结</span></button>
+          <button type="button" onClick={onFinishReturn}><CircleStop /><span>结束会话</span></button>
+        </> : <>
         {onSpeechRateChange && <label className="vr-speech-rate">语速（下轮生效）<select aria-label="语音回复速度" value={speechRate} onChange={(event) => onSpeechRateChange(Number(event.target.value))}><option value={1}>1.0×</option><option value={1.2}>1.2×</option><option value={1.5}>1.5×</option></select></label>}
         {state.status === "failed" ? <button className="vr-retry" type="button" onClick={onRetry}><RotateCcw />重新连接</button>
           : state.status === "paused" ? <button className="vr-retry" type="button" onClick={onResume}><Play />继续通话</button>
@@ -337,6 +350,7 @@ export const VoiceRecallCallView = ({
                 <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={onPressStart} onPointerUp={onPressEnd} onPointerCancel={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
                 <button className="vr-control-secondary vr-control-end" type="button" aria-label="结束并查看摘要" onClick={onEnd}><X /><span>结束</span></button>
               </>}
+        </>}
       </footer>
     </main>
   );

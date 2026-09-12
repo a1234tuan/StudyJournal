@@ -42,6 +42,7 @@ export type VoiceRecallAction =
   | { type: "SET_SYSTEM_CAPTURE_GATE"; gated: boolean }
   | { type: "SUBMIT_CAPTURE" }
   | { type: "ASR_FINALIZED"; transcript: string }
+  | { type: "BEGIN_TEACHER_TURN" }
   | { type: "LLM_REPLIED"; teacherText: string }
   | { type: "PLAYBACK_FINISHED" }
   | { type: "INTERRUPT_AND_LISTEN" }
@@ -71,7 +72,7 @@ export const createVoiceRecallState = (
   captureRequested: false,
   preflightConfirmed: false,
   transcript: "",
-  teacherText: "先不看笔记，说说为什么间隔复习比连续重复更有效？",
+  teacherText: "正在准备第一问…",
   generation: 0,
 });
 
@@ -134,6 +135,9 @@ export const transitionVoiceRecallState = (
     case "ASR_FINALIZED":
       if (state.status !== "finalizing-asr") break;
       return { ...state, status: "thinking", transcript: action.transcript };
+    case "BEGIN_TEACHER_TURN":
+      if (state.status !== "listening") break;
+      return { ...state, status: "thinking", captureRequested: false };
     case "LLM_REPLIED":
       if (state.status !== "thinking") break;
       return {

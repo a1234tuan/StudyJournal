@@ -1,6 +1,6 @@
 import type { StudyJournalDatabase } from "../../db/database";
 import { db } from "../../db/database";
-import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "./localTypes";
+import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
 
 export const VOICE_RECALL_LIMITS = {
   maxTurnTextCharacters: 24_000,
@@ -84,7 +84,12 @@ export class VoiceRecallRepository {
     return turn;
   }
 
-  async commitTurn(turn: VoiceRecallTurnLocal, lastConfirmedText: string, isCurrent = () => true) {
+  async commitTurn(
+    turn: VoiceRecallTurnLocal,
+    lastConfirmedText: string,
+    isCurrent = () => true,
+    memory?: VoiceRecallStructuredMemory,
+  ) {
     validateTurn(turn);
     return this.database.transaction("rw", [this.database.voiceRecallSessions, this.database.voiceRecallTurns], async () => {
       const session = await this.database.voiceRecallSessions.get(turn.sessionId);
@@ -101,6 +106,7 @@ export class VoiceRecallRepository {
       if (!isCurrent()) throw new DOMException("轮次已取消", "AbortError");
       const updatedSession: VoiceRecallSessionLocal = {
         ...session,
+        ...(memory ? { memory: structuredClone(memory) } : {}),
         checkpoint: {
           ...session.checkpoint,
           activeTurnId: undefined,

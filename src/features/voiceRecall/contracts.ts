@@ -61,7 +61,7 @@ export type LlmStreamEvent =
 export interface VoiceTeacherMessage {
   role: "system" | "user" | "assistant";
   content: string;
-  contentBoundary?: "trusted-instruction" | "untrusted-learning-content";
+  contentBoundary?: "trusted-instruction" | "untrusted-learning-content" | "user-utterance";
 }
 
 export interface LlmStreamRequest extends VoiceOperationContext {

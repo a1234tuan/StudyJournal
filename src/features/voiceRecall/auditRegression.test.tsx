@@ -57,6 +57,10 @@ describe("Second audit: credential and accounting integration", () => {
 
   it("R11 saves nonzero measured usage in local history", async () => {
     const { pipeline, repository, runtime } = await openCall();
+    const usageBeforeAnswer = Object.values((await repository.getSession(runtime.activeSessionId!))?.usageOperations ?? {}).reduce<{ llmOutputTokens: number; ttsCharacters: number }>((totals, operation) => ({
+      llmOutputTokens: totals.llmOutputTokens + (operation.llmOutputTokens ?? 0),
+      ttsCharacters: totals.ttsCharacters + (operation.ttsCharacters ?? 0),
+    }), { llmOutputTokens: 0, ttsCharacters: 0 });
     vi.spyOn(pipeline, "respond").mockResolvedValue({ teacherText: "短回复。", usage: { asrSeconds: 0, llmInputTokens: 10, llmOutputTokens: 8, ttsCharacters: 4 } });
     submitText("本轮回答");
     await waitFor(async () => expect(await repository.listTurns(runtime.activeSessionId!)).toHaveLength(1));
@@ -66,8 +70,8 @@ describe("Second audit: credential and accounting integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
     await waitFor(async () => expect(await repository.listHistory()).toHaveLength(1));
     const history = (await repository.listHistory())[0];
-    expect(history.usage.llmOutputTokens).toBe(8);
-    expect(history.usage.ttsCharacters).toBe(4);
+    expect(history.usage.llmOutputTokens - usageBeforeAnswer.llmOutputTokens).toBe(8);
+    expect(history.usage.ttsCharacters - usageBeforeAnswer.ttsCharacters).toBe(4);
   });
 });
 
@@ -107,7 +111,11 @@ const openCall = async (automatic = false) => {
   const repository = new VoiceRecallRepository(database);
   const runtime = new VoiceRecallRuntimeController(repository);
   resources.push({ database, runtime });
-  const pipeline = new VoiceRecallPipeline(new MockAsrStreamAdapter(), new MockLlmStreamAdapter(), new MockTtsStreamAdapter());
+  const pipeline = new VoiceRecallPipeline(
+    new MockAsrStreamAdapter(),
+    new MockLlmStreamAdapter(undefined, ["核心概念", "运行机制", "实际应用"]),
+    new MockTtsStreamAdapter(),
+  );
   let currentRoute: VoiceRecallNavigationRoute = { screen: "start", returnTab: "review", sourceKind: "review-home", recordIds: [] };
   const sessionFactory = vi.fn(async () => ({ pipeline, provider: { templateId: "test-template", configurationIdentity: "test-identity" }, asrFormat: { encoding: "pcm-s16le" as const, sampleRate: 16_000, channelCount: 1 as const }, ttsVoice: "mock", ttsEncoding: "pcm-s16le" as const, ttsSampleRate: 16_000, summary: { asr: "mock", llm: "mock", tts: "mock" } }));
   const Harness = ({ identity = 0, controller = runtime }: { identity?: number; controller?: VoiceRecallRuntimeController }) => {
@@ -118,11 +126,12 @@ const openCall = async (automatic = false) => {
   const view = render(<Harness />);
   fireEvent.click(screen.getByRole("button", { name: automatic ? /自动讲话/ : /点击录音/ }));
   fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
-  fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "二次审计" } });
+  fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "核心概念" } });
   fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
   fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
   fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
-  await screen.findByRole("heading", { name: "先闭卷复述你记得的核心内容。" });
+  await screen.findByRole("heading", { name: "先说说你对“核心概念”的整体理解。" });
+  await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
   return { database, repository, runtime, pipeline, sessionFactory, view, Harness };
 };
 

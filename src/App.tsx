@@ -24,6 +24,9 @@ import { SearchPage } from "./pages/SearchPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { VoiceRecallWorkspace } from "./features/voiceRecall/VoiceRecallWorkspace";
+import { MockAsrStreamAdapter, MockLlmStreamAdapter, MockTtsStreamAdapter } from "./features/voiceRecall/mockProviders";
+import { VoiceRecallPipeline } from "./features/voiceRecall/pipeline";
+import type { ProductionVoiceSession } from "./features/voiceRecall/productionPipeline";
 import { StatsPage } from "./pages/StatsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { RecordEditorPage } from "./pages/RecordEditorPage";
@@ -104,11 +107,29 @@ const MORE_SUB_ROUTES_WITH_OWN_BACK: readonly Exclude<MoreSubRoute, null>[] = [
   "templates",
 ];
 
+const voiceRecallPreviewName = () => typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("preview");
+
 const isVoiceRecallProductionPreview = () => typeof window !== "undefined"
   && !Capacitor.isNativePlatform()
   && !isDesktopPlatform()
   && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost")
-  && new URLSearchParams(window.location.search).get("preview") === "voice-recall-production";
+  && ["voice-recall-production", "voice-recall-policy"].includes(voiceRecallPreviewName() ?? "");
+
+const isVoiceRecallPolicyPreview = () => isVoiceRecallProductionPreview() && voiceRecallPreviewName() === "voice-recall-policy";
+
+const createVoiceRecallPolicyPreviewSession = async (): Promise<ProductionVoiceSession> => ({
+  pipeline: new VoiceRecallPipeline(
+    new MockAsrStreamAdapter(),
+    new MockLlmStreamAdapter(undefined, ["核心概念", "运行机制", "实际应用"]),
+    new MockTtsStreamAdapter(),
+  ),
+  provider: { templateId: "voice-policy-preview", configurationIdentity: "voice-policy-preview@1" },
+  asrFormat: { encoding: "pcm-s16le", sampleRate: 16_000, channelCount: 1 },
+  ttsVoice: "mock-teacher",
+  ttsEncoding: "pcm-s16le",
+  ttsSampleRate: 16_000,
+  summary: { asr: "Mock ASR", llm: "Mock LLM", tts: "Mock TTS" },
+});
 
 const isEditableElement = (target: EventTarget | Element | null) => {
   if (!(target instanceof Element)) {
@@ -1514,6 +1535,8 @@ export const App = () => {
             onBack={closeVoiceRecall}
             onCreateJournal={createJournalFromVoiceRecall}
             visualTheme={visualTheme}
+            sessionFactory={isVoiceRecallPolicyPreview() ? createVoiceRecallPolicyPreviewSession : undefined}
+            playbackSinkFactory={isVoiceRecallPolicyPreview() ? () => ({ play: async () => undefined, stop: () => undefined }) : undefined}
           />
         ) : currentRecord ? (
           renderRecordPage(currentRecord, tabMemory.review.highlightAssetId)

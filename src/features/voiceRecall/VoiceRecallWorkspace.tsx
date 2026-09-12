@@ -29,8 +29,16 @@ import { formatUiError } from "../../lib/uiError";
 import { createAsyncQueue, type AsyncQueue } from "./asyncQueue";
 import { createVoicePlaybackSink } from "./audioPlaybackSink";
 import type { VoiceAudioFrame, VoiceTeacherMessage } from "./contracts";
+import {
+  applyVoiceTeacherDecision,
+  createVoiceTeacherFallback,
+  deriveVoiceRecallTopicSeeds,
+  detectVoiceUserControl,
+  validateVoiceTeacherDecision,
+  type VoiceTeacherPolicyContext,
+} from "./dialoguePolicy";
 import { createVoiceRecallState, type VoiceRecallInputMode } from "./domain";
-import type { VoiceRecallLocalHistory, VoiceRecallTurnLocal } from "./localTypes";
+import type { VoiceRecallLocalHistory, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
 import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "./nativeVoiceCapture";
 import type { VoicePlaybackSink } from "./playbackQueue";
 import {
@@ -80,6 +88,13 @@ const emptyUsage = {
   llmOutputTokens: 0,
   ttsCharacters: 0,
 };
+
+const emptyTeacherMemory = (learningGoal = ""): VoiceRecallStructuredMemory => ({
+  learningGoal,
+  coveredPoints: [],
+  misconceptions: [],
+  pendingTopics: [],
+});
 
 const escapeHtml = (value: string) => value
   .replace(/&/g, "&amp;")
@@ -149,6 +164,9 @@ export const VoiceRecallWorkspace = ({
   const [history, setHistory] = useState<VoiceRecallLocalHistory[]>([]);
   const [transcript, setTranscript] = useState("");
   const [teacherDraft, setTeacherDraft] = useState("");
+  const [teacherMemory, setTeacherMemory] = useState<VoiceRecallStructuredMemory>(() => emptyTeacherMemory(route.learningGoal));
+  const [teacherMemoryLoaded, setTeacherMemoryLoaded] = useState(false);
+  const [openingBusy, setOpeningBusy] = useState(false);
   const [speechPlaying, setSpeechPlaying] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -255,6 +273,8 @@ export const VoiceRecallWorkspace = ({
       const available = await repository.getSession(route.sessionId!);
       if (!available || available.sourceUnavailable) throw new VoiceConfigurationError("会话来源已不可用，无法恢复。");
       if (!active) return;
+      setTeacherMemory(available.memory);
+      setTeacherMemoryLoaded(true);
       if (runtime.activeSessionId === route.sessionId && runtime.productionSession) {
         sessionRef.current = runtime.productionSession;
         setProviderSummary(runtime.productionSession.summary);
@@ -274,6 +294,8 @@ export const VoiceRecallWorkspace = ({
       installPlayback(production);
       setTranscript(stored.checkpoint.lastConfirmedText ?? "");
       setLearningGoal(stored.memory.learningGoal);
+      setTeacherMemory(stored.memory);
+      setTeacherMemoryLoaded(true);
       setInputMode(runtime.snapshot?.inputMode ?? "tap-to-record");
       setProviderSummary(production.summary);
     };
@@ -291,6 +313,7 @@ export const VoiceRecallWorkspace = ({
       // and "history saved" flag must not leak into this one.
       setTranscript("");
       setTeacherDraft("");
+      setTeacherMemoryLoaded(false);
       setAutoBlocked(false);
       setHistorySaved(false);
       setMessage("");
@@ -316,7 +339,17 @@ export const VoiceRecallWorkspace = ({
         },
       });
       await runtime.attachProductionSession(session);
-      await runtime.updateMemory({ learningGoal: nextRoute.learningGoal ?? learningGoal });
+      const memory: VoiceRecallStructuredMemory = {
+        ...emptyTeacherMemory(nextRoute.learningGoal ?? learningGoal),
+        pendingTopics: deriveVoiceRecallTopicSeeds({
+          topic: nextRoute.topic,
+          learningGoal: nextRoute.learningGoal ?? learningGoal,
+          records: selectedRecords,
+        }),
+      };
+      await runtime.updateMemory(memory);
+      setTeacherMemory(memory);
+      setTeacherMemoryLoaded(true);
       runtime.dispatch({ type: "OPEN_PREFLIGHT" });
       runtime.dispatch({ type: "CONFIRM_DISCLOSURE", confirmed: true });
       runtime.dispatch({ type: "CONNECT" });
@@ -524,9 +557,82 @@ export const VoiceRecallWorkspace = ({
     }
   };
 
+  const askOpeningQuestion = async () => {
+    if (!route.sessionId || openingBusy || !teacherMemoryLoaded || teacherMemory.currentQuestion || teacherMemory.completionReason) return;
+    const session = sessionRef.current;
+    if (!session || runtime.snapshot?.status !== "listening") return;
+    const generation = runtime.operationGeneration;
+    const policyContext: VoiceTeacherPolicyContext = {
+      stage: "opening",
+      memory: teacherMemory,
+      userControl: { kind: "none" },
+      allowExternalTopic: knowledgeBoundary !== "strict",
+      // A free topic is itself a trusted scope for a bounded topic plan; for
+      // record review, only the selected material can seed additional topics.
+      allowGeneratedTopicPlan: selectedRecords.length > 0 || Boolean(route.topic?.trim()),
+    };
+    setOpeningBusy(true);
+    setAutoBlocked(true);
+    setMessage("");
+    setTeacherDraft("");
+    try {
+      runtime.dispatch({ type: "BEGIN_TEACHER_TURN" });
+      let replyStarted = false;
+      const result = await runtime.respondTurn({
+        rate: speechRate,
+        pipeline: session.pipeline,
+        messages: buildVoiceTeacherMessages({
+          stage: "opening",
+          topic: route.topic,
+          learningGoal: route.learningGoal ?? learningGoal,
+          knowledgeBoundary,
+          memory: teacherMemory,
+          userControl: { kind: "none" },
+          materials: selectedRecords.map((record) => ({ title: record.title, text: recordToPlainText(record, assets) })),
+        }),
+        policy: {
+          validateDecision: (decision) => validateVoiceTeacherDecision(decision, policyContext),
+          fallback: createVoiceTeacherFallback(policyContext),
+        },
+        voice: session.ttsVoice,
+        events: {
+          onTeacherToken: (token) => {
+            if (!replyStarted) {
+              replyStarted = true;
+              runtime.dispatch({ type: "LLM_REPLIED", teacherText: token });
+            }
+            setTeacherDraft((draft) => draft + token);
+          },
+          onAudio: (chunk, _generation, segmentId) => { runtime.enqueueAudio(chunk, segmentId); },
+        },
+      });
+      if (!replyStarted) runtime.dispatch({ type: "LLM_REPLIED", teacherText: result.teacherText });
+      await runtime.waitForPlayback();
+      if (!runtime.isCurrentOperation(generation)) throw new DOMException("开场提问已取消", "AbortError");
+      runtime.dispatch({ type: "PLAYBACK_FINISHED" });
+      const nextMemory = applyVoiceTeacherDecision(teacherMemory, {
+        decision: result.decision ?? createVoiceTeacherFallback(policyContext).decision,
+        spokenReply: result.teacherText,
+      }, { kind: "none" }, policyContext.allowExternalTopic, policyContext.allowGeneratedTopicPlan);
+      await runtime.updateMemory(nextMemory);
+      setTeacherMemory(nextMemory);
+      setTeacherDraft("");
+      setAutoBlocked(false);
+    } catch (error) {
+      if (!runtime.isCurrentOperation(generation)) return;
+      setAutoBlocked(true);
+      setTeacherDraft("");
+      setMessage(`${describeVoiceError(error)} 请点击“继续通话”重试第一问。`);
+      await runtime.pause();
+    } finally {
+      if (runtime.isCurrentOperation(generation)) setOpeningBusy(false);
+    }
+  };
+
   const submitTurn = async (automaticText?: string) => {
     const confirmedText = (automaticText ?? transcript).trim();
     if (!route.sessionId || !confirmedText || submittingRef.current || (automaticText === undefined && busy)) return;
+    if (automaticText === undefined && !["listening", "finalizing-asr"].includes(runtime.snapshot?.status ?? "")) return;
     const session = sessionRef.current;
     if (!session) {
       setMessage("语音服务未就绪，请返回开始页重新连接。");
@@ -550,6 +656,24 @@ export const VoiceRecallWorkspace = ({
       const stored = await repository.getSession(route.sessionId);
       if (!stored || stored.sourceUnavailable) throw new VoiceConfigurationError("语音复述会话或学习来源已不可用。");
       assertCurrent();
+      const userControl = detectVoiceUserControl(confirmedText);
+      const policyContext: VoiceTeacherPolicyContext = {
+        stage: "turn",
+        memory: stored.memory,
+        userControl,
+        allowExternalTopic: knowledgeBoundary !== "strict",
+      };
+      if (userControl.kind === "stop") {
+        const stopped = createVoiceTeacherFallback(policyContext);
+        const nextMemory = applyVoiceTeacherDecision(stored.memory, stopped, userControl, policyContext.allowExternalTopic);
+        setAutoBlocked(true);
+        setTranscript("");
+        setTranscriptEditorOpen(false);
+        await runtime.updateMemory(nextMemory);
+        setTeacherMemory(nextMemory);
+        await runtime.pause();
+        return;
+      }
       const current = runtime.snapshot;
       if (current?.status === "listening") {
         if (!current.captureRequested) runtime.dispatch({ type: "SET_CAPTURE_REQUESTED", requested: true });
@@ -560,9 +684,13 @@ export const VoiceRecallWorkspace = ({
       setTranscriptEditorOpen(false);
 
       const messages: VoiceTeacherMessage[] = buildVoiceTeacherMessages({
+        stage: "turn",
+        topic: route.topic,
         confirmedText,
         learningGoal: route.learningGoal ?? learningGoal,
         knowledgeBoundary,
+        memory: stored.memory,
+        userControl,
         materials: selectedRecords.map((record) => ({ title: record.title, text: recordToPlainText(record, assets) })),
         turns: turns.map((turn) => ({ confirmedText: turn.confirmedText, teacherText: turn.teacherText })),
       });
@@ -574,6 +702,10 @@ export const VoiceRecallWorkspace = ({
         rate: speechRate,
         pipeline: session.pipeline,
         messages,
+        policy: {
+          validateDecision: (decision) => validateVoiceTeacherDecision(decision, policyContext),
+          fallback: createVoiceTeacherFallback(policyContext),
+        },
         voice: session.ttsVoice,
         events: {
           onTeacherToken: (token) => {
@@ -587,9 +719,19 @@ export const VoiceRecallWorkspace = ({
         },
       });
       if (!replyStarted) runtime.dispatch({ type: "LLM_REPLIED", teacherText: result.teacherText });
+      const controlledReply = {
+        decision: result.decision ?? createVoiceTeacherFallback(policyContext).decision,
+        spokenReply: result.teacherText,
+      };
+      const nextMemory = applyVoiceTeacherDecision(stored.memory, controlledReply, userControl, policyContext.allowExternalTopic);
+      const willComplete = controlledReply.decision.nextAction === "finish";
+      if (willComplete) setAutoBlocked(true);
       await runtime.waitForPlayback();
       assertCurrent();
       runtime.dispatch({ type: "PLAYBACK_FINISHED" });
+      if (willComplete && runtime.snapshot?.status === "listening" && runtime.snapshot.captureRequested) {
+        runtime.dispatch({ type: "SET_CAPTURE_REQUESTED", requested: false });
+      }
 
       const now = new Date().toISOString();
       const asrFinal = asrFinalRef.current;
@@ -610,13 +752,15 @@ export const VoiceRecallWorkspace = ({
         createdAt: now,
         updatedAt: now,
       };
-      await runtime.commitTurn(turn, generation);
+      await runtime.commitTurn(turn, generation, nextMemory);
       assertCurrent();
+      setTeacherMemory(nextMemory);
       setTranscript("");
       setTeacherDraft("");
       asrFinalRef.current = undefined;
       assertCurrent();
       await reloadTurns();
+      if (willComplete) await runtime.pause();
     } catch (error) {
       if (!runtime.isCurrentOperation(generation)) {
         if (runtime.activeSessionId === route.sessionId && !["paused", "ended", "ending"].includes(runtime.snapshot?.status ?? "")) { setTranscript(confirmedText); setTranscriptEditorOpen(true); }
@@ -658,6 +802,26 @@ export const VoiceRecallWorkspace = ({
     }
   };
 
+  const continueAfterTeachingComplete = async () => {
+    const nextMemory: VoiceRecallStructuredMemory = {
+      ...teacherMemory,
+      completionReason: undefined,
+      currentQuestion: "请补充你还想说明的内容。",
+      nextQuestionPurpose: "用户主动补充",
+    };
+    await runtime.updateMemory(nextMemory);
+    setTeacherMemory(nextMemory);
+    resume();
+  };
+
+  const finishAndReturn = async () => {
+    frameQueueRef.current?.close();
+    frameQueueRef.current = undefined;
+    setCapturing(false);
+    await runtime.end();
+    onBack();
+  };
+
   const saveHistory = async () => {
     if (!route.sessionId || !summary.trim()) return;
     const now = new Date().toISOString();
@@ -687,10 +851,14 @@ export const VoiceRecallWorkspace = ({
   const selectedMode = INPUT_MODES.find((mode) => mode.id === inputMode) ?? INPUT_MODES[0];
   const state = runtimeState ?? createVoiceRecallState();
   useEffect(() => {
-    if (route.screen !== "call" || runtime.activeSessionId !== route.sessionId || state.inputMode !== "auto-half-duplex" || state.status !== "listening" || state.userMuted || state.systemCaptureGate || autoBlocked || backOpen || busy || transcribing || capturing || transcript.trim() || !sessionRef.current) return;
+    if (route.screen !== "call" || !route.sessionId || !teacherMemoryLoaded || teacherMemory.currentQuestion || teacherMemory.completionReason || openingBusy || state.status !== "listening" || !sessionRef.current) return;
+    void askOpeningQuestion();
+  }, [route.screen, route.sessionId, teacherMemoryLoaded, teacherMemory.currentQuestion, teacherMemory.completionReason, openingBusy, state.status]);
+  useEffect(() => {
+    if (route.screen !== "call" || runtime.activeSessionId !== route.sessionId || state.inputMode !== "auto-half-duplex" || state.status !== "listening" || state.userMuted || state.systemCaptureGate || autoBlocked || backOpen || busy || openingBusy || !teacherMemory.currentQuestion || teacherMemory.completionReason || transcribing || capturing || transcript.trim() || !sessionRef.current) return;
     const timer = setTimeout(() => { void startCapture(); }, 200);
     return () => clearTimeout(timer);
-  }, [route.screen, route.sessionId, state, autoBlocked, backOpen, busy, transcribing, capturing, transcript]);
+  }, [route.screen, route.sessionId, state, autoBlocked, backOpen, busy, openingBusy, teacherMemory.currentQuestion, teacherMemory.completionReason, transcribing, capturing, transcript]);
   const asrProfiles = useMemo(() => BUILT_IN_ASR_PROFILES.filter((profile) => profile.providerId !== "mock"), []);
   const llmProfiles = useMemo(() => settings.ai?.providers ?? [], [settings.ai]);
   const ttsProfiles = useMemo(() => createVoiceTtsProfiles(settings.tts?.providers), [settings.tts]);
@@ -882,13 +1050,14 @@ export const VoiceRecallWorkspace = ({
         active={active}
         elapsed={state.status === "paused" ? "已暂停" : "进行中"}
         selectedModeLabel={selectedMode.label}
-        title={teacherDraft || turns.at(-1)?.teacherText || "先闭卷复述你记得的核心内容。"}
+        title={teacherMemory.completionReason ? "本次复述先到这里。" : teacherDraft || teacherMemory.currentQuestion || turns.at(-1)?.teacherText || "正在准备第一问…"}
         contextLabel={selectedRecords.length ? `${selectedRecords.length} 条学习资料` : "自由主题"}
         questionLabel={`第 ${turns.length + 1} 个问题`}
         interactionHint={interactionHint}
         mainControl={mainControl}
         message={message}
         transcript={transcript}
+        teachingComplete={Boolean(teacherMemory.completionReason)}
         onBack={requestBack}
         onMainClick={handleMainClick}
         onPressStart={handlePressStart}
@@ -907,6 +1076,9 @@ export const VoiceRecallWorkspace = ({
         onResume={resume}
         onTranscriptChange={setTranscript}
         onSubmitTranscript={() => void submitTurn()}
+        onContinueSupplement={() => { void continueAfterTeachingComplete(); }}
+        onViewSummary={() => { void finish(); }}
+        onFinishReturn={() => { void finishAndReturn(); }}
       />
       <MotionPresence present={detailsOpen} variant="drawer" className="vr-details-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsOpen(false); }}><aside className="vr-details" aria-label="通话详情" role="dialog" aria-modal="true"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div><div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30) }, null, 2)}</pre></details></aside></MotionPresence>
       <MotionPresence present={backOpen} variant="sheet" className="vr-sheet-backdrop" role="presentation"><VoiceRecallExitSheet onPause={() => { void runtime.pause().then(() => onRouteChange({ ...route, screen: "start", sessionId: undefined })); setBackOpen(false); }} onEnd={() => { void finish(); setBackOpen(false); }} onContinue={() => setBackOpen(false)} /></MotionPresence>

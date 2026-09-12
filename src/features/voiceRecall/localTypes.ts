@@ -20,6 +20,12 @@ export interface VoiceRecallStructuredMemory {
   misconceptions: string[];
   pendingTopics: string[];
   nextQuestionPurpose?: string;
+  currentTopic?: string;
+  currentTopicFollowUpCount?: number;
+  currentQuestion?: string;
+  skippedPoints?: string[];
+  unresolvedPoints?: string[];
+  completionReason?: "covered" | "user-requested";
 }
 
 export interface VoiceRecallSessionCheckpoint {

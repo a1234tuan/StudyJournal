@@ -85,12 +85,15 @@ describe("VoiceRecallRepository", () => {
     const { database, repository } = await openRepository();
     await repository.putSession({ ...session(), checkpoint: { ...session().checkpoint, nextSequence: 0 } });
 
-    const updated = await repository.commitTurn(turn(), "人工确认后的回答");
+    const nextMemory = { ...session().memory, currentTopic: "宏任务", currentTopicFollowUpCount: 1 };
+    const updated = await repository.commitTurn(turn(), "人工确认后的回答", () => true, nextMemory);
 
     expect(updated.checkpoint).toMatchObject({ nextSequence: 1, lastConfirmedText: "人工确认后的回答" });
+    expect(updated.memory).toMatchObject({ currentTopic: "宏任务", currentTopicFollowUpCount: 1 });
     expect(await repository.listTurns("session-1")).toEqual([turn()]);
     expect(await repository.getSession("session-1")).toMatchObject({
       checkpoint: { nextSequence: 1, lastConfirmedText: "人工确认后的回答" },
+      memory: { currentTopic: "宏任务", currentTopicFollowUpCount: 1 },
     });
     database.close();
   });

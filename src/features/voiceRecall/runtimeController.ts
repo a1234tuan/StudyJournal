@@ -13,7 +13,7 @@ import { VoiceAudioFocusManager } from "./audioFocus";
 import { recordVoiceStage, stageFailure } from "./diagnostics";
 import { createVoiceRecallState, transitionVoiceRecallState, type VoiceRecallAction, type VoiceRecallState } from "./domain";
 import type { VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
-import type { VoiceRecallPipeline, VoiceRecallPipelineEvents } from "./pipeline";
+import type { VoiceRecallPipeline, VoiceRecallPipelineEvents, VoiceTeacherResponsePolicy } from "./pipeline";
 import { VoiceRecallRepository, voiceRecallRepository } from "./repository";
 
 type RuntimeListener = (state: VoiceRecallState | undefined) => void;
@@ -131,10 +131,10 @@ export class VoiceRecallRuntimeController {
     await this.persistNow();
   }
 
-  async commitTurn(turn: VoiceRecallTurnLocal, generation = this.operationEpoch) {
+  async commitTurn(turn: VoiceRecallTurnLocal, generation = this.operationEpoch, memory?: VoiceRecallStructuredMemory) {
     if (!this.session || turn.sessionId !== this.session.id) throw new Error("语音复述轮次与当前会话不匹配");
     recordVoiceStage(turn.operationId, "storage", "start");
-    try { this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "", () => this.isCurrentOperation(generation)); }
+    try { this.session = await this.repository.commitTurn(turn, turn.confirmedText ?? "", () => this.isCurrentOperation(generation), memory); }
     catch (error) { recordVoiceStage(turn.operationId, "storage", "failed"); throw stageFailure("storage", error); }
     recordVoiceStage(turn.operationId, "storage", "completed");
     return turn;
@@ -266,6 +266,7 @@ export class VoiceRecallRuntimeController {
     pipeline: VoiceRecallPipeline;
     messages: readonly VoiceTeacherMessage[];
     voice: string;
+    policy?: VoiceTeacherResponsePolicy;
     events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
   }) {
     if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
@@ -280,6 +281,7 @@ export class VoiceRecallRuntimeController {
       turnId: crypto.randomUUID(),
       operationId,
       messages: input.messages,
+      policy: input.policy,
       rate: input.rate,
       voice: input.voice,
       generation,
