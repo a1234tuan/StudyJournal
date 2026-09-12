@@ -83,6 +83,44 @@ for (const theme of ["reading", "modern"] as const) {
     });
     expect(toolbarAlignment.heights.every((height) => height >= 35.5 && height <= 40.5)).toBe(true);
     expect(toolbarAlignment.maximumIconOffset).toBeLessThanOrEqual(1.5);
+    const toolbarGeometry = await page.locator(".editor-toolbar").evaluate((toolbar) => {
+      const controls = Array.from(toolbar.querySelectorAll<HTMLElement>("button, label.editor-file-button, select, .structure-insert-menu"))
+        .filter((control) => {
+          const style = window.getComputedStyle(control);
+          const rect = control.getBoundingClientRect();
+          const nestedStructureTrigger = control.closest(".structure-insert-menu") && !control.classList.contains("structure-insert-menu");
+          return !nestedStructureTrigger && style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        })
+        .map((control) => {
+          const rect = control.getBoundingClientRect();
+          return {
+            label: control.getAttribute("aria-label") || control.getAttribute("title") || control.textContent?.trim() || "",
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+            width: rect.width,
+            scrollWidth: control.scrollWidth,
+          };
+        });
+      const overlaps: Array<[string, string]> = [];
+      for (let left = 0; left < controls.length; left += 1) {
+        for (let right = left + 1; right < controls.length; right += 1) {
+          const a = controls[left];
+          const b = controls[right];
+          if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+            overlaps.push([a.label, b.label]);
+          }
+        }
+      }
+      return {
+        controls,
+        overlaps,
+        contentOverflow: controls.map((control) => Math.max(0, control.scrollWidth - control.width)),
+      };
+    });
+    expect(toolbarGeometry.overlaps).toEqual([]);
+    expect(Math.max(0, ...toolbarGeometry.contentOverflow)).toBeLessThanOrEqual(1);
     await assertNoHorizontalOverflow(page);
     await editor.fill("在 BFS 中，一个节点可能同时与多个已经访问到的父节点相邻。\n\n首次发现时必须先标记 visited，再加入队列，并同时记录 predecessor。\n\n这条不变量保证每个节点最多入队一次，也保证首次发现路径不会被后续父节点覆盖。");
     await expect(page.getByRole("status")).toContainText(/正在保存本机草稿|草稿已存于本机/, { timeout: 10_000 });

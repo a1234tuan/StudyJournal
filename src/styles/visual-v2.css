@@ -1043,6 +1043,13 @@ body {
     line-height: 1.2;
   }
 
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-code-language-select {
+    grid-column: span 2;
+    min-width: 0;
+    width: 100%;
+    text-overflow: ellipsis;
+  }
+
   .record-editor-page .editor-toolbar.mobile-tools-expanded button,
   .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-file-button,
   .record-editor-page .editor-toolbar.mobile-tools-expanded select,
@@ -1059,5 +1066,26 @@ body {
   .record-editor-page .editor-toolbar.mobile-tools-expanded .structure-insert-menu {
     display: inline-flex;
     justify-content: center;
+  }
+
+  /* The compact recorder is a single icon cell. Its transient status is a
+     full-width grid row so permission and save messages never cover tools. */
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control.compact {
+    display: contents;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control.compact .secondary-button {
+    min-width: 0;
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control.compact .status-message,
+  .record-editor-page .editor-toolbar.mobile-tools-expanded .audio-recorder-control.compact .helper-text {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }

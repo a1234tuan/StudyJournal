@@ -14,9 +14,10 @@ export interface AudioRecorderHandle {
 
 interface AudioRecorderProps {
   onRecorded: (file: File) => void;
+  compact?: boolean;
 }
 
-export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(({ onRecorded }, ref) => {
+export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(({ onRecorded, compact = false }, ref) => {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -195,14 +196,26 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
   }, [stopWebRecording]);
 
   if (!supported && !canUseNativeAudioRecorder()) {
-    return <span className="helper-text">当前环境不支持直接录音，可上传音频文件。</span>;
+    return (
+      <span className={`audio-recorder-control${compact ? " compact" : ""}`}>
+        <span className="helper-text">当前环境不支持直接录音，可上传音频文件。</span>
+      </span>
+    );
   }
 
+  const buttonLabel = recording ? "停止录音" : "开始录音";
   return (
-    <span className="audio-recorder-control">
-      <button type="button" className="secondary-button" onClick={recording ? () => void stop() : () => void start()}>
+    <span className={`audio-recorder-control${compact ? " compact" : ""}`}>
+      <button
+        type="button"
+        className={`secondary-button${recording ? " recording" : ""}`}
+        title={buttonLabel}
+        aria-label={buttonLabel}
+        aria-pressed={recording}
+        onClick={recording ? () => void stop() : () => void start()}
+      >
         {recording ? <Square size={17} /> : <Mic size={17} />}
-        {recording ? "停止录音" : "开始录音"}
+        {!compact && buttonLabel}
       </button>
       {status && <small className="status-message">{status}</small>}
       {error && <small className="status-message">{error}</small>}

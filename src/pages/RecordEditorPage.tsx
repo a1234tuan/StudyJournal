@@ -1136,7 +1136,7 @@ export const RecordEditorPage = ({
                     }}
                   />
                 </label>
-                <AudioRecorder ref={audioRecorderRef} onRecorded={(file) => void addAsset(editor, file, "audio", "录音")} />
+                <AudioRecorder compact ref={audioRecorderRef} onRecorded={(file) => void addAsset(editor, file, "audio", "录音")} />
                 <label className="editor-file-button" title="附件">
                   <FilePlus size={16} />
                   <input
