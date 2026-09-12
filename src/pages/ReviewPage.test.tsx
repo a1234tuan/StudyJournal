@@ -243,6 +243,25 @@ describe("ReviewPage", () => {
     expect(onRate).not.toHaveBeenCalled();
   });
 
+  it("opens AI Q&A for the current card from the review session menu", () => {
+    const onAskAiRecord = vi.fn();
+    renderReviewPage({
+      mode: "queue",
+      dueReviews: [review("active")],
+      reviewStates: [review("active")],
+      queueIds: ["active", "second"],
+      currentRecordId: "active",
+      onAskAiRecord,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "AI 问答" }));
+
+    expect(onAskAiRecord).toHaveBeenCalledTimes(1);
+    expect(onAskAiRecord).toHaveBeenCalledWith(records[0]);
+    expect(screen.queryByRole("menu", { name: "复习操作" })).not.toBeInTheDocument();
+  });
+
   it("shows a strictly later easy interval for overview cards", () => {
     const currentReview = review("active", { intervalDays: 10 });
     renderReviewPage({
@@ -774,6 +793,16 @@ describe("ReviewPage", () => {
     expect(handlers.onModeChange).toHaveBeenCalledWith("manage");
     expect(handlers.onQueueChange).not.toHaveBeenCalledWith([]);
     expect(handlers.onCurrentRecordChange).not.toHaveBeenCalledWith(undefined);
+  });
+
+  it("allows the host back action to share the same session exit behavior", () => {
+    const onExitReviewSession = vi.fn();
+    renderReviewPage({ mode: "queue", onExitReviewSession });
+
+    fireEvent.click(screen.getByRole("button", { name: "返回复习" }));
+
+    expect(onExitReviewSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "返回复习" })).toBeInTheDocument();
   });
 
   it("keeps decision-block feedback when rating fails", async () => {

@@ -76,6 +76,7 @@ interface ReviewPageProps {
   libraryState: ReviewLibraryState;
   viewportOverlayHost?: HTMLElement | null;
   onModeChange: (mode: ReviewMode) => void;
+  onExitReviewSession?: () => void;
   onQueueChange: (ids: string[]) => void;
   onCurrentRecordChange: (id?: string) => void;
   onReviewProgressChange?: (progress?: ReviewSessionProgress) => void;
@@ -280,6 +281,7 @@ export const ReviewPage = ({
   libraryState,
   viewportOverlayHost,
   onModeChange,
+  onExitReviewSession,
   onQueueChange,
   onCurrentRecordChange,
   onReviewProgressChange,
@@ -354,6 +356,7 @@ export const ReviewPage = ({
     () => normalizeReviewSessionProgress(reviewProgress),
   );
   const sessionDayRef = useRef(today);
+  const exitReviewSession = onExitReviewSession ?? (() => onModeChange("manage"));
 
   const updateSessionProgress = useCallback((next: ReviewSessionProgress | undefined) => {
     const normalized = normalizeReviewSessionProgress(next);
@@ -970,7 +973,7 @@ export const ReviewPage = ({
               <button
                 type="button"
                 className="review-session-exit"
-                onClick={() => onModeChange("manage")}
+                onClick={exitReviewSession}
               >
                 <ArrowLeft size={18} />
                 返回复习
@@ -1008,6 +1011,7 @@ export const ReviewPage = ({
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}><RefreshCw size={16} /><span>刷新复习列表</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }} disabled={!onOpenStats}><BarChart3 size={16} /><span>学习统计</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span></button>
+                  {onAskAiRecord && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onAskAiRecord(currentRecord); }}><Bot size={16} /><span>AI 问答</span></button>}
                   {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
                 </MotionPresence>
               </div>

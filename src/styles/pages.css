@@ -3419,13 +3419,13 @@
   width: min(760px, calc(100vw - 32px));
   justify-self: center;
   position: fixed;
-  bottom: 16px;
+  bottom: 0;
   z-index: 6;
   margin: 0;
-  padding: 6px 0;
-  border-top: 1px solid var(--color-border);
+  padding: 0 0 env(safe-area-inset-bottom);
+  border: 0;
   border-radius: 0;
-  background: var(--color-bg);
+  background: transparent;
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -3437,6 +3437,8 @@
 
 .review-rating-bar {
   gap: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .review-rating-bar button {
@@ -3520,7 +3522,7 @@
   }
 
   .review-bottom-controls {
-    bottom: calc(12px + env(safe-area-inset-bottom));
+    bottom: 0;
   }
 
   .app-shell.immersive-task-active .review-session {
@@ -3528,7 +3530,7 @@
   }
 
   .app-shell.immersive-task-active .review-bottom-controls {
-    bottom: calc(12px + env(safe-area-inset-bottom));
+    bottom: 0;
   }
 }
 
@@ -3775,7 +3777,7 @@
   position: fixed;
   z-index: 26;
   right: auto;
-  bottom: 16px;
+  bottom: 0;
   left: 50%;
   top: auto;
   width: min(760px, calc(100vw - 32px));
@@ -3786,7 +3788,7 @@
   align-items: center;
   gap: 4px;
   overflow-x: auto;
-  padding: 4px;
+  padding: 4px 4px env(safe-area-inset-bottom);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--surface);
@@ -3939,7 +3941,7 @@
 
   .review-annotation-toolbar {
     right: 8px;
-    bottom: calc(12px + env(safe-area-inset-bottom));
+    bottom: 0;
     left: 8px;
     width: auto;
     transform: none;

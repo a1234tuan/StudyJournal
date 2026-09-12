@@ -47,7 +47,7 @@ import { CloudSyncStatusToast } from "./components/CloudSyncStatusToast";
 import { MotionPresence, ViewportOverlayProvider } from "./components/MotionPresence";
 import { PlaybackProvider } from "./components/PlaybackProvider";
 import type { AiKnowledgeScope, RecordBlock, Subject } from "./types";
-import { buildAiKnowledgeContextPackAsync } from "./services/aiContextService";
+import { buildAiKnowledgeContextPackAsync, type AiRecordReviewContext } from "./services/aiContextService";
 import { createAiSessionForScope } from "./services/aiSessionService";
 import { createEmptyPodcast } from "./services/knowledgePodcastService";
 import { exportRecordTransferPackage } from "./services/recordTransferService";
@@ -468,6 +468,15 @@ export const App = () => {
 
   const closeRecordInCurrentTab = popCurrentTabDepth;
 
+  const leaveReviewSession = useCallback(() => {
+    clearBackHint();
+    updateNavigationState((current) => (
+      current.tabMemory.review.mode === "manage"
+        ? current
+        : { ...current, tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, mode: "manage" } } }
+    ));
+  }, [clearBackHint, updateNavigationState]);
+
   const openAdaptiveTask = useCallback((taskId: string) => {
     const current = navigationStateRef.current;
     setReviewCoachOpen(true);
@@ -717,11 +726,7 @@ export const App = () => {
         return;
       }
       if (activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId) {
-        clearBackHint();
-        updateNavigationState((current) => ({
-          ...current,
-          tabMemory: { ...current.tabMemory, review: { ...current.tabMemory.review, currentRecordId: undefined } },
-        }));
+        leaveReviewSession();
         return;
       }
 
@@ -762,7 +767,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, closeAdaptiveTask, popCurrentTabDepth, switchTab, tabMemory, updateNavigationState]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, popCurrentTabDepth, switchTab, tabMemory, updateNavigationState]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -787,6 +792,35 @@ export const App = () => {
     () => Object.fromEntries(app.blocks.filter((block): block is RecordBlock => block.type === "record").map((record) => [record.id, record.title])),
     [app.blocks],
   );
+  const aiRecordContexts = useMemo(() => Object.fromEntries(
+    referenceRecords.map((record) => {
+      const reviewState = app.recordReviews.find((item) => item.recordId === record.id);
+      const reviewLogs = reviewLogsByRecord[record.id] ?? [];
+      const feedback = app.reviewCoachSnapshot.decisionBlockFeedback
+        .filter((item) => item.recordId === record.id && !item.deletedAt && item.comment.trim())
+        .map((item) => {
+          const interpretation = app.reviewCoachSnapshot.feedbackInterpretations.find(
+            (candidate) => candidate.feedbackId === item.id && !candidate.deletedAt && candidate.status === "succeeded",
+          );
+          return {
+            comment: item.comment,
+            occurredAt: item.occurredAt,
+            actionability: interpretation?.actionability,
+            difficultyType: interpretation?.difficultyType,
+            preferredPractice: interpretation?.preferredPractice ?? undefined,
+          };
+        });
+      const knowledgePoints = app.reviewCoachSnapshot.legacyRecordKnowledgePointLinks
+        .filter((link) => link.recordId === record.id && !link.deletedAt)
+        .flatMap((link) => {
+          const point = app.reviewCoachSnapshot.legacyKnowledgePoints.find(
+            (candidate) => candidate.id === link.knowledgePointId && !candidate.deletedAt,
+          );
+          return point ? [{ name: point.name, role: link.role, status: point.status }] : [];
+        });
+      return [record.id, { reviewState, reviewLogs, feedback, knowledgePoints } satisfies AiRecordReviewContext];
+    }),
+  ), [app.recordReviews, app.reviewCoachSnapshot, referenceRecords, reviewLogsByRecord]);
 
   if (!app.initialized || !app.settings) {
     return (
@@ -907,7 +941,15 @@ export const App = () => {
   const openAiForRecord = async (record: RecordBlock) => {
     const originTab = navigationStateRef.current.activeTab;
     const scope: AiKnowledgeScope = { kind: "records", recordIds: [record.id] };
-    const attachment = await buildAiKnowledgeContextPackAsync(scope, app.blocks, app.assets);
+    const recordContext = aiRecordContexts[record.id];
+    const attachment = await buildAiKnowledgeContextPackAsync(
+      scope,
+      app.blocks,
+      app.assets,
+      "",
+      undefined,
+      { recordContexts: { [record.id]: recordContext } },
+    );
     const sessions = await storage.listAiSessions();
     const existing = sessions
       .filter((s) => !s.deletedAt && s.scope?.kind === "records" && s.scope.recordIds.length === 1 && s.scope.recordIds[0] === record.id)
@@ -1194,6 +1236,7 @@ export const App = () => {
             settings={settings}
             blocks={app.blocks}
             assets={app.assets}
+            recordContexts={aiRecordContexts}
             onBack={aiWorkspaceOnBack}
             onOpenSession={(sessionId) => {
               updateNavigationState((current) => ({
@@ -1293,6 +1336,7 @@ export const App = () => {
             reviewStatesByRecord={recordReviewsByRecord}
             reviewLogsByRecord={reviewLogsByRecord}
             dueReviewStates={app.dueRecordReviews}
+            reviewStats={app.recordReviewStats}
             reviewTitlesByRecord={recordTitlesById}
             onAddToReview={(recordId) => void app.addRecordToReview(recordId)}
             onOpenCloudSyncSettings={() => openMoreSubRoute("backup")}
@@ -1498,6 +1542,7 @@ export const App = () => {
                   },
               )
             }
+            onExitReviewSession={leaveReviewSession}
             onQueueChange={(queueIds) =>
               updateNavigationState((current) =>
                 sameIds(current.tabMemory.review.queueIds, queueIds)

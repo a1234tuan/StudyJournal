@@ -1,7 +1,7 @@
 import { CalendarCheck, CalendarClock, ChevronDown, Plus, Star } from "lucide-react";
 import { useState } from "react";
 
-import type { Block, ContentTemplate, DayEntry, RecordBlock, RecordReviewLog, RecordReviewState, Subject, SubjectConfig } from "../types";
+import type { Block, ContentTemplate, DayEntry, RecordBlock, RecordReviewLog, RecordReviewState, RecordReviewStats, Subject, SubjectConfig } from "../types";
 import { daysUntil, formatChineseDate, todayISO } from "../lib/date";
 import { SubjectPicker } from "../components/SubjectPicker";
 import { RecordCard } from "../components/RecordCard";
@@ -9,6 +9,7 @@ import { CloudSyncButton } from "../components/CloudSyncButton";
 import { fallbackSubjectName } from "../lib/subjects";
 import { PageHeader } from "../components/ui";
 import { getDailyMotto } from "../lib/dailyMotto";
+import { deriveLearningStats } from "../lib/learningStats";
 
 interface TodayPageProps {
   entry: DayEntry | null;
@@ -26,6 +27,7 @@ interface TodayPageProps {
   reviewStatesByRecord?: Record<string, RecordReviewState>;
   reviewLogsByRecord?: Record<string, RecordReviewLog[]>;
   dueReviewStates?: RecordReviewState[];
+  reviewStats?: RecordReviewStats | null;
   reviewTitlesByRecord?: Record<string, string>;
   onAddToReview?: (recordId: string) => void;
   onOpenCloudSyncSettings?: () => void;
@@ -48,6 +50,7 @@ export const TodayPage = ({
   reviewStatesByRecord = {},
   reviewLogsByRecord = {},
   dueReviewStates = [],
+  reviewStats,
   reviewTitlesByRecord = {},
   onAddToReview = () => undefined,
   onOpenCloudSyncSettings = () => undefined,
@@ -65,6 +68,7 @@ export const TodayPage = ({
   const overdue = dueReviewStates.filter((review) => review.nextReviewDate && review.nextReviewDate < today);
   const previewDue = dueReviewStates.slice(0, 3).map((review) => reviewTitlesByRecord[review.recordId]).filter(Boolean);
   const selectedTemplate = templates.find((template) => template.id === templateId);
+  const learningSummary = deriveLearningStats(reviewStats, today);
 
   return (
     <main className="page today-page primary-workspace-page">
@@ -119,6 +123,22 @@ export const TodayPage = ({
           <button type="button" className="primary-button" onClick={onOpenReview}>
             开始复习
           </button>
+        </section>
+      )}
+
+      {(reviewStats || dueReviewStates.length > 0) && (
+        <section className="today-status-line" aria-label="今日状态">
+          <span className="today-status-label">今日状态</span>
+          <span>
+            {learningSummary.progress !== null
+              ? `已复习 ${learningSummary.reviewedToday} / ${learningSummary.dueAtFirstOpen} 条`
+              : learningSummary.overdueCount > 0
+                ? `有 ${learningSummary.overdueCount} 条逾期待处理`
+                : learningSummary.dueTodayCount > 0
+                  ? `还有 ${learningSummary.dueTodayCount} 条待复习`
+                  : "今天没有待复习"}
+          </span>
+          {learningSummary.overdueCount > 0 && <small>逾期 {learningSummary.overdueCount} 条</small>}
         </section>
       )}
 

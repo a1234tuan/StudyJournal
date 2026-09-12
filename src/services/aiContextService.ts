@@ -6,6 +6,9 @@ import type {
   Asset,
   Block,
   ISODate,
+  ISODateTime,
+  RecordReviewLog,
+  RecordReviewState,
   RecordBlock,
 } from "../types";
 import { extractDecisionBlocks } from "../features/reviewCoach/decisionBlockContent";
@@ -33,8 +36,27 @@ export interface AiContextSelectionOptions {
   retrievalMode?: AiRetrievalMode;
 }
 
+/** Optional semantic context attached when AI is opened from a review card. */
+export interface AiRecordReviewContext {
+  reviewState?: Pick<RecordReviewState, "status" | "reviewKind" | "scheduler" | "nextReviewDate" | "lastReviewDate" | "lastReviewedAt" | "consecutiveRemembered" | "totalReviews" | "intervalDays">;
+  reviewLogs?: readonly Pick<RecordReviewLog, "rating" | "reviewedAt" | "evaluationText" | "eventType">[];
+  feedback?: readonly {
+    comment: string;
+    occurredAt?: ISODateTime;
+    actionability?: string;
+    difficultyType?: string;
+    preferredPractice?: string;
+  }[];
+  knowledgePoints?: readonly {
+    name: string;
+    role?: string;
+    status?: string;
+  }[];
+}
+
 export interface AiKnowledgeContextOptions extends AiContextSelectionOptions {
   referenceDate?: ISODate;
+  recordContexts?: Readonly<Record<string, AiRecordReviewContext>>;
 }
 
 type ContextBuildState = {
@@ -218,12 +240,87 @@ export const getAiKnowledgeScopeRecords = (
     left.date.localeCompare(right.date) || left.order - right.order || left.createdAt.localeCompare(right.createdAt));
 };
 
-const buildSummary = (scopeTitle: string, records: RecordBlock[], chunks: AiContextChunk[]): string => {
+const reviewStatusLabel = (status: string): string => {
+  switch (status) {
+    case "active": return "复习中";
+    case "mastered": return "已掌握";
+    case "removed": return "已移出复习";
+    default: return status;
+  }
+};
+
+const reviewRatingLabel = (rating: string): string => {
+  switch (rating) {
+    case "forgot": return "忘记了";
+    case "fuzzy": return "模糊";
+    case "good": return "良好";
+    case "easy": return "轻松";
+    case "remembered": return "记得";
+    default: return rating;
+  }
+};
+
+const recordContextLines = (record: RecordBlock, context: AiRecordReviewContext | undefined): string[] => {
+  if (!context) return [];
+  const lines = [
+    `创建时间：${record.createdAt}`,
+    `更新时间：${record.updatedAt}`,
+  ];
+  const review = context.reviewState;
+  if (review) {
+    lines.push(`复习状态：${reviewStatusLabel(review.status)}`);
+    if (review.reviewKind) lines.push(`复习类型：${review.reviewKind === "memory" ? "记忆复习" : "概览复习"}`);
+    if (review.scheduler) lines.push(`复习调度：${review.scheduler}`);
+    if (review.nextReviewDate) lines.push(`下次复习：${review.nextReviewDate}`);
+    if (review.lastReviewDate || review.lastReviewedAt) lines.push(`最近复习：${review.lastReviewDate ?? review.lastReviewedAt}`);
+    lines.push(`累计复习：${review.totalReviews} 次`);
+    lines.push(`连续记住：${review.consecutiveRemembered} 次`);
+    lines.push(`当前间隔：${review.intervalDays} 天`);
+  }
+  const logs = (context.reviewLogs ?? [])
+    .filter((log) => log.eventType !== "rating-undone" && Boolean(log.reviewedAt))
+    .slice()
+    .sort((left, right) => right.reviewedAt.localeCompare(left.reviewedAt))
+    .slice(0, 5);
+  if (logs.length > 0) {
+    lines.push("近期复习：");
+    logs.forEach((log) => {
+      const evaluation = log.evaluationText?.trim();
+      lines.push(`- ${log.reviewedAt}：${reviewRatingLabel(log.rating)}${evaluation ? `；评价：${evaluation}` : ""}`);
+    });
+  }
+  const feedback = (context.feedback ?? []).filter((item) => item.comment.trim());
+  if (feedback.length > 0) {
+    lines.push("复习重点反馈：");
+    feedback.slice(0, 5).forEach((item) => {
+      const qualifiers = [item.actionability, item.difficultyType, item.preferredPractice].filter(Boolean).join(" / ");
+      lines.push(`- ${item.comment.trim()}${qualifiers ? `（${qualifiers}）` : ""}`);
+    });
+  }
+  const knowledgePoints = (context.knowledgePoints ?? [])
+    .filter((item) => item.name.trim())
+    .slice(0, 12);
+  if (knowledgePoints.length > 0) {
+    lines.push(`关联知识点：${knowledgePoints.map((item) => [item.name.trim(), item.role, item.status].filter(Boolean).join(" / ")).join("、")}`);
+  }
+  return lines;
+};
+
+const buildSummary = (
+  scopeTitle: string,
+  records: RecordBlock[],
+  chunks: AiContextChunk[],
+  recordContexts?: Readonly<Record<string, AiRecordReviewContext>>,
+): string => {
   if (records.length === 0) return `${scopeTitle} 没有可用于 AI 问答的正式日志。`;
   const subjects = Array.from(new Set(records.map((record) => record.subject))).join("、");
   const titles = records.map((record) => `《${record.title}》`).slice(0, 6).join("、");
   const more = records.length > 6 ? `等 ${records.length} 条记录` : `${records.length} 条记录`;
-  return `${scopeTitle} 共 ${more}，涉及 ${subjects || "未分类"}。主要记录：${titles}。可用上下文片段 ${chunks.length} 个。`;
+  const reviewLines = records.flatMap((record) => recordContextLines(record, recordContexts?.[record.id]));
+  return [
+    `${scopeTitle} 共 ${more}，涉及 ${subjects || "未分类"}。主要记录：${titles}。可用上下文片段 ${chunks.length} 个。`,
+    reviewLines.length > 0 ? `当前记录语义信息：\n${reviewLines.join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
 };
 
 export const hashAiContext = (value: string): string => {
@@ -320,9 +417,30 @@ const sourcePrefix = (record: RecordBlock): string => {
   return `${record.date} / ${record.subject} / ${record.title}${tags.length ? ` / 标签：${tags.map((tag) => `#${tag}`).join(" ")}` : ""}`;
 };
 
-const appendRecord = (state: ContextBuildState, record: RecordBlock, assets: Asset[]) => {
+const appendRecord = (
+  state: ContextBuildState,
+  record: RecordBlock,
+  assets: Asset[],
+  reviewContext?: AiRecordReviewContext,
+) => {
   const tags = normalizeRecordTags(record.tags);
   state.markdownLines.push(`## ${record.subject} / ${record.title}`, tags.length ? `标签：${tags.map((tag) => `#${tag}`).join(" ")}` : "", "");
+  const contextLines = recordContextLines(record, reviewContext);
+  if (contextLines.length > 0) {
+    state.markdownLines.push("### 记录与复习信息", ...contextLines, "");
+    pushChunk(state, {
+      chunkId: `${record.id}-review-context`,
+      recordId: record.id,
+      date: record.date,
+      subject: record.subject,
+      tags,
+      title: record.title,
+      kind: "text",
+      content: contextLines.join("\n"),
+      markdown: `### 记录与复习信息\n\n${contextLines.join("\n")}`,
+      sourceLabel: `${sourcePrefix(record)} / 记录与复习信息`,
+    });
+  }
   const nodes = parseLinearRecordContent(record, assets);
   if (nodes.length === 0) {
     state.markdownLines.push("（空记录）", "");
@@ -423,6 +541,7 @@ const finalizeState = (
   state: ContextBuildState,
   query: string,
   options: AiContextSelectionOptions,
+  recordContexts?: Readonly<Record<string, AiRecordReviewContext>>,
 ): AiContextPack => {
   if (records.length === 0) state.warnings.add("当前范围没有可用于 AI 问答的日志记录。");
   if (state.missingOcrAssetIds.length > 0) {
@@ -446,7 +565,7 @@ const finalizeState = (
   if (state.markdownLines.join("\n").length > MAX_STORED_MARKDOWN_CHARS) {
     state.warnings.add("AI Markdown 预览已按安全上限截取；AI 问答仍使用选中的语义分片。");
   }
-  const summary = buildSummary(scopeTitle, records, limitedChunks);
+  const summary = buildSummary(scopeTitle, records, limitedChunks, recordContexts);
   const totalChars = limitedChunks.reduce((sum, chunk) => sum + chunk.content.length, 0);
   const shouldSelect = totalChars > LONG_CONTEXT_CHARS || query.trim() || options.maxTokens;
   const selectedChunks = shouldSelect
@@ -480,13 +599,20 @@ const finalizeState = (
   };
 };
 
-const cacheKeyFor = (scope: AiKnowledgeScope, referenceDate: ISODate, records: RecordBlock[], assets: Asset[]): string => {
+const cacheKeyFor = (
+  scope: AiKnowledgeScope,
+  referenceDate: ISODate,
+  records: RecordBlock[],
+  assets: Asset[],
+  recordContexts?: Readonly<Record<string, AiRecordReviewContext>>,
+): string => {
   const assetIds = new Set(records.flatMap((record) => record.assets.map((asset) => asset.id)));
   const recordFingerprint = records.map((record) => [record.id, record.updatedAt, record.tags.join("\u0000"), record.contentHtml.length].join(":"));
   const assetFingerprint = assets
     .filter((asset) => assetIds.has(asset.id))
     .map((asset) => [asset.id, asset.updatedAt, asset.ocrStatus, asset.ocrText?.length ?? 0].join(":"));
-  return hashAiContext([aiKnowledgeScopeKey(scope), referenceDate, ...recordFingerprint, ...assetFingerprint].join("\n"));
+  const contextFingerprint = records.flatMap((record) => recordContextLines(record, recordContexts?.[record.id]));
+  return hashAiContext([aiKnowledgeScopeKey(scope), referenceDate, ...recordFingerprint, ...assetFingerprint, ...contextFingerprint].join("\n"));
 };
 
 const rememberContext = (key: string, pack: AiContextPack) => {
@@ -515,7 +641,7 @@ const buildContext = (
 ): AiContextPack => {
   const referenceDate = options.referenceDate ?? todayISO();
   const records = getAiKnowledgeScopeRecords(scope, blocks, referenceDate);
-  const cacheKey = cacheKeyFor(scope, referenceDate, records, assets);
+  const cacheKey = cacheKeyFor(scope, referenceDate, records, assets, options.recordContexts);
   const cached = contextCache.get(cacheKey);
   if (cached) {
     contextCache.delete(cacheKey);
@@ -524,8 +650,8 @@ const buildContext = (
   }
   const scopeTitle = aiKnowledgeScopeTitle(scope, referenceDate);
   const state = createState(scopeTitle);
-  records.forEach((record) => appendRecord(state, record, assets));
-  const base = finalizeState(scope, scopeTitle, referenceDate, records, state, "", {});
+  records.forEach((record) => appendRecord(state, record, assets, options.recordContexts?.[record.id]));
+  const base = finalizeState(scope, scopeTitle, referenceDate, records, state, "", {}, options.recordContexts);
   rememberContext(cacheKey, base);
   return selectFromCachedPack(base, query, options);
 };
@@ -594,7 +720,7 @@ export const buildAiKnowledgeContextPackAsync = async (
 ): Promise<AiContextPack> => {
   const referenceDate = options.referenceDate ?? todayISO();
   const records = getAiKnowledgeScopeRecords(scope, blocks, referenceDate);
-  const cacheKey = cacheKeyFor(scope, referenceDate, records, assets);
+  const cacheKey = cacheKeyFor(scope, referenceDate, records, assets, options.recordContexts);
   const cached = contextCache.get(cacheKey);
   if (cached) return selectFromCachedPack(cached, query, options);
 
@@ -602,10 +728,10 @@ export const buildAiKnowledgeContextPackAsync = async (
   const state = createState(scopeTitle);
   for (const record of records) {
     if (signal?.aborted) throw new DOMException("AI context cancelled", "AbortError");
-    appendRecord(state, record, assets);
+    appendRecord(state, record, assets, options.recordContexts?.[record.id]);
     await yieldAiContext();
   }
-  const base = finalizeState(scope, scopeTitle, referenceDate, records, state, "", {});
+  const base = finalizeState(scope, scopeTitle, referenceDate, records, state, "", {}, options.recordContexts);
   rememberContext(cacheKey, base);
   return selectFromCachedPack(base, query, options);
 };

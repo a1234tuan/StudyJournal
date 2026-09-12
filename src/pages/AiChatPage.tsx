@@ -41,6 +41,7 @@ import {
   buildAiKnowledgeContextPackAsync,
   compactAiContextPack,
   sessionKnowledgeScope,
+  type AiRecordReviewContext,
 } from "../services/aiContextService";
 import { createAiImageAttachment, runLocalOcrForAiAttachment } from "../services/aiChatAttachmentService";
 import { createAiSessionForScope, titleFromFirstPrompt } from "../services/aiSessionService";
@@ -53,6 +54,7 @@ interface AiChatPageProps {
   settings: AppSettings;
   blocks: Block[];
   assets: Asset[];
+  recordContexts?: Readonly<Record<string, AiRecordReviewContext>>;
   onBack: () => void;
   onOpenSession: (sessionId: string) => void;
   onDeletedSession: () => void;
@@ -144,6 +146,7 @@ export const AiChatPage = ({
   settings,
   blocks,
   assets,
+  recordContexts,
   onBack,
   onOpenSession,
   onDeletedSession,
@@ -454,6 +457,7 @@ export const AiChatPage = ({
         maxTokens: requestBudget.retrievalTokens,
         retrievalMode: requestBudget.retrievalMode,
         preferDiverse: requestBudget.retrievalMode === "coverage",
+        recordContexts,
       })
       : undefined;
     if (freshAttachment) {
@@ -567,6 +571,9 @@ export const AiChatPage = ({
   const attachment = session?.attachment;
   const selectedChunkCount = attachment?.selectedChunks?.length ?? 0;
   const totalChunkCount = attachment?.totalChunks ?? attachment?.selectedChunks?.length ?? 0;
+  const contextRecordTitles = attachment
+    ? Array.from(new Set((attachment.selectedChunks ?? []).map((chunk) => chunk.title.trim()).filter(Boolean)))
+    : [];
   const skippedAssetCount = attachment?.skippedAssets.length ?? 0;
   const composerBudget = (() => {
     if (!session || !provider) return undefined;
@@ -848,6 +855,7 @@ export const AiChatPage = ({
                 <dl>
                   <div><dt>当前范围</dt><dd>{attachment.scopeTitle ?? `${attachment.date} 日志附件`}</dd></div>
                   <div><dt>命中记录</dt><dd>{attachment.recordIds.length} 条</dd></div>
+                  {contextRecordTitles.length > 0 && <div><dt>当前记录</dt><dd>{contextRecordTitles.join("、")}</dd></div>}
                   <div><dt>检索片段</dt><dd>{selectedChunkCount}/{totalChunkCount}</dd></div>
                 </dl>
               </section>

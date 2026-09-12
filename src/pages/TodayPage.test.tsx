@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TodayPage } from "./TodayPage";
 import type { SubjectConfig } from "../types";
+import type { RecordReviewStats } from "../types";
 import { getDailyMotto } from "../lib/dailyMotto";
 
 const stamp = "2026-06-21T00:00:00.000Z";
@@ -36,6 +37,32 @@ afterEach(() => {
 });
 
 describe("TodayPage", () => {
+  it("shows a compact learning status without adding a dashboard", () => {
+    const reviewStats: RecordReviewStats = {
+      activeCount: 1,
+      masteredCount: 0,
+      dueCount: 2,
+      overdueCount: 1,
+      totalReviews: 1,
+      streakDays: 1,
+      todayStat: {
+        id: "today",
+        createdAt: stamp,
+        updatedAt: stamp,
+        date: "2026-06-21",
+        dueCountAtFirstOpen: 4,
+        reviewedCount: 2,
+        rememberedCount: 1,
+        fuzzyCount: 1,
+        forgotCount: 0,
+      },
+      dayStats: [],
+      masteryTrend: [],
+    };
+    render(<TodayPage entry={null} blocks={[]} examDate="2026-12-27" subjects={subjects} reviewStats={reviewStats} onSaveEntry={vi.fn()} onCreateRecord={vi.fn()} onOpenFavorites={vi.fn()} onOpenRecord={vi.fn()} onToggleFavorite={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "今日状态" })).toHaveTextContent("已复习 2 / 4 条");
+  });
+
   it("keeps subject creation out of the home new-record panel", () => {
     renderPage();
 

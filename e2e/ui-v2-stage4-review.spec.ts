@@ -98,6 +98,26 @@ test("desktop review layout, brand and click feedback use the new visual hierarc
   await page.screenshot({ path: testInfo.outputPath("desktop-review-library.png"), fullPage: false });
 });
 
+test("opens AI Q&A with the current review log and returns to the session", async ({ page }) => {
+  await page.goto("/?preview=stage3");
+  await page.getByRole("button", { name: /^复习/ }).first().click();
+  await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
+
+  await page.getByRole("button", { name: "打开复习更多菜单" }).click();
+  await page.getByRole("menuitem", { name: "AI 问答" }).click();
+  await expect(page.locator(".ai-chat-page")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /AI 问答/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "打开范围详情" }).click();
+  await expect(page.getByText("1 条", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "范围详情" }).getByText("BFS Stage3 Preview", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭范围详情" }).click();
+
+  await page.locator(".ai-chat-page").getByRole("button", { name: "返回", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "返回复习", exact: true })).toBeVisible();
+});
+
 for (const theme of ["reading", "modern"] as const) {
   test(`stage 4 exposes review coach and returns adaptive tasks to it in ${theme}`, async ({ page }, testInfo) => {
     const errors: string[] = [];
@@ -175,8 +195,13 @@ test("keeps rating undo across tabs and exposes annotation tools", async ({ page
   await page.waitForTimeout(180);
   const ratingAtTop = await ratingBar.boundingBox();
   expect(ratingAtTop).not.toBeNull();
-  expect(viewport!.height - ratingAtTop!.y - ratingAtTop!.height).toBeGreaterThanOrEqual(8);
-  expect(viewport!.height - ratingAtTop!.y - ratingAtTop!.height).toBeLessThanOrEqual(32);
+  expect(viewport!.height - ratingAtTop!.y - ratingAtTop!.height).toBeLessThanOrEqual(1);
+  const ratingStyle = await ratingBar.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { borderTop: style.borderTopWidth, background: style.backgroundColor };
+  });
+  expect(ratingStyle.borderTop).toBe("0px");
+  expect(ratingStyle.background).toBe("rgba(0, 0, 0, 0)");
 
   const annotationEntry = page.getByRole("button", { name: "打开批注工具" });
   const entryAtTop = await annotationEntry.boundingBox();
@@ -206,8 +231,7 @@ test("keeps rating undo across tabs and exposes annotation tools", async ({ page
   const toolbarBox = await toolbar.boundingBox();
   expect(toolbarBox).not.toBeNull();
   expect(toolbarBox!.y).toBeGreaterThanOrEqual(0);
-  expect(viewport!.height - toolbarBox!.y - toolbarBox!.height).toBeGreaterThanOrEqual(8);
-  expect(viewport!.height - toolbarBox!.y - toolbarBox!.height).toBeLessThanOrEqual(32);
+  expect(viewport!.height - toolbarBox!.y - toolbarBox!.height).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath(`review-annotation-${testInfo.project.name}.png`), fullPage: false });
 
   const surface = page.locator(".review-annotation-root");

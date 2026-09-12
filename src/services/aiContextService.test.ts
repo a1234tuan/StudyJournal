@@ -197,6 +197,63 @@ describe("aiContextService", () => {
     expect(aiKnowledgeScopeKey({ kind: "records", recordIds: ["first", "later", "missing", "deleted"] })).toBe(aiKnowledgeScopeKey(scope));
   });
 
+  it("includes semantic record and review context without exposing internal identifiers", () => {
+    const scope = { kind: "records" as const, recordIds: ["record-1"] };
+    const context = {
+      reviewState: {
+        status: "active" as const,
+        reviewKind: "memory" as const,
+        scheduler: "fsrs-v6" as const,
+        nextReviewDate: "2026-06-28",
+        lastReviewDate: "2026-06-21",
+        lastReviewedAt: "2026-06-21T12:00:00.000Z",
+        consecutiveRemembered: 2,
+        totalReviews: 4,
+        intervalDays: 7,
+      },
+      reviewLogs: [
+        {
+          rating: "fuzzy" as const,
+          reviewedAt: "2026-06-21T12:00:00.000Z",
+          evaluationText: "能说出定义，但例题还不稳定",
+          eventType: "rating" as const,
+        },
+      ],
+      feedback: [{ comment: "边界条件仍需再练习", actionability: "needs_training", difficultyType: "concept" }],
+      knowledgePoints: [{ name: "B 树索引", role: "核心概念", status: "active" }],
+    };
+    const pack = buildAiKnowledgeContextPack(scope, [record()], [], "", { recordContexts: { "record-1": context } });
+    const contextText = [pack.summary, pack.markdown, ...pack.allChunks.map((chunk) => chunk.content)].join("\n");
+
+    expect(contextText).toContain("创建时间");
+    expect(contextText).toContain("复习状态：复习中");
+    expect(contextText).toContain("累计复习：4 次");
+    expect(contextText).toContain("能说出定义，但例题还不稳定");
+    expect(contextText).toContain("B 树索引 / 核心概念 / active");
+    expect(contextText).not.toContain("record-1-review-context");
+
+    const changed = buildAiKnowledgeContextPack(scope, [record()], [], "", {
+      recordContexts: {
+        "record-1": { ...context, reviewState: { ...context.reviewState, totalReviews: 5 } },
+      },
+    });
+    expect(changed.contextHash).not.toBe(pack.contextHash);
+  });
+
+  it("keeps review context in the summary for long records", () => {
+    const longRecord = record({ contentHtml: `<p>${"无关内容。".repeat(7000)}</p>` });
+    const pack = buildAiKnowledgeContextPack(
+      { kind: "records", recordIds: [longRecord.id] },
+      [longRecord],
+      [],
+      "",
+      { recordContexts: { [longRecord.id]: { reviewState: { status: "active", totalReviews: 1, consecutiveRemembered: 0, intervalDays: 1 } } } },
+    );
+
+    expect(pack.selectedChunks.length).toBeLessThan(pack.allChunks.length);
+    expect(pack.summary).toContain("复习状态：复习中");
+  });
+
   it("matches Chinese bigrams and preserves Markdown in selected structure chunks", () => {
     const pack = buildAiKnowledgeContextPack(
       { kind: "tag", subject: "数学", tag: "训练" },
