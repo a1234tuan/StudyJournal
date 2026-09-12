@@ -794,7 +794,8 @@ body {
 .record-editor-page .editor-toolbar button:hover,
 .record-editor-page .editor-file-button:hover { background: var(--color-surface-muted); }
 
-.record-editor-page .rich-editor {
+.record-editor-page .rich-editor,
+.record-view-page .rich-editor {
   min-width: 0;
   border: 0;
   border-radius: 0;
@@ -802,7 +803,7 @@ body {
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-reading);
-  font-size: 1rem;
+  font-size: calc(16px * var(--editor-font-scale, 1));
   line-height: var(--reading-line-height, 1.8);
   box-shadow: none;
 }
@@ -813,7 +814,7 @@ body {
 .record-editor-page .rich-editor p { margin-bottom: .95em; }
 .record-editor-page .rich-editor pre,
 .record-editor-page .rich-editor code { font-family: var(--font-code); font-variant-ligatures: none; }
-.record-editor-page .rich-editor pre { max-width: 100%; overflow-x: auto; }
+.record-editor-page .rich-editor pre { max-width: 100%; overflow-x: auto; font-size: calc(12.8px * var(--editor-font-scale, 1)); }
 .record-editor-page .rich-editor table,
 .record-editor-page .record-structure-block,
 .record-editor-page .record-mermaid-diagram { max-width: 100%; }
@@ -886,7 +887,8 @@ body {
   .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert > label,
   .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert > .audio-recorder-control,
   .record-editor-page .editor-toolbar.mobile-tools-expanded .editor-toolbar-insert > .structure-insert-menu { min-width: 40px; min-height: 40px; }
-  .record-editor-page .rich-editor { padding-top: 22px; padding-bottom: 96px; font-size: 1rem; }
+  .record-editor-page .rich-editor,
+  .record-view-page .rich-editor { padding-top: 22px; padding-bottom: 96px; font-size: calc(16px * var(--editor-font-scale, 1)); }
   .record-view-header h1 { font-size: 1.75rem; }
 }
 

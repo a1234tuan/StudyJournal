@@ -180,6 +180,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accentColor: "#2f6f5e",
   backupReminderDays: 7,
   fontScale: 1,
+  editorFontScale: 1,
   lineHeight: 1.7,
   subjects: createDefaultSubjects(),
   ai: {

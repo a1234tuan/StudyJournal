@@ -56,6 +56,13 @@ test("stage 2 formal app keeps both visual themes usable across today and librar
     await page.getByRole("button", { name: "设置", exact: true }).click();
   }
   await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+  await expect(page.locator("label").filter({ hasText: "界面字号" })).toHaveCount(1);
+  await expect(page.locator("label").filter({ hasText: "正文字号" })).toHaveCount(1);
+  const typographySliders = page.getByRole("slider");
+  await expect(typographySliders).toHaveCount(3);
+  await typographySliders.nth(1).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => page.locator("html").evaluate((element) => element.style.getPropertyValue("--editor-font-scale"))).toBe("1.05");
   await page.getByRole("button", { name: /清爽现代/ }).click();
   await expect(page.locator("html")).toHaveAttribute("data-visual-theme", "modern");
   await page.getByRole("button", { name: "日志", exact: true }).first().click();

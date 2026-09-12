@@ -579,6 +579,7 @@ export const App = () => {
       return;
     }
     document.documentElement.style.setProperty("--font-scale", String(app.settings.fontScale));
+    document.documentElement.style.setProperty("--editor-font-scale", String(app.settings.editorFontScale ?? 1));
     document.documentElement.style.setProperty("--reading-line-height", String(app.settings.lineHeight));
     document.documentElement.dataset.theme = app.settings.theme;
   }, [app.settings]);

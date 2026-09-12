@@ -31,6 +31,10 @@ for (const theme of ["reading", "modern"] as const) {
     await title.fill("BFS 中 visited 标记时机、重复入队与 predecessor 稳定性的完整推导");
     const editor = page.locator(".rich-editor[contenteditable='true']");
     await expect(editor).toBeVisible();
+    const defaultBodyFontSize = await editor.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+    await page.locator("html").evaluate((element) => element.style.setProperty("--editor-font-scale", "1.2"));
+    const enlargedBodyFontSize = await editor.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+    expect(enlargedBodyFontSize).toBeGreaterThan(defaultBodyFontSize);
     await expect(page.getByLabel("选择学科")).toHaveCount(0);
     await page.getByRole("button", { name: "更多操作" }).click();
     // The dropdown must be hit-testable, not merely present in the DOM: an

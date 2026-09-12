@@ -36,6 +36,7 @@
 - **录音资料库**：集中查看日志中引用过的录音，支持搜索、播放、倍速和循环。
 - **Android 大资源备份**：支持自动备份文件夹仓库，资源独立保存，只同步新增或缺失资源，并保留最近 5 个快照。
 - **本地优先**：无需登录即可记录和复习，核心数据保存在本机；Firebase 云同步使用可选的 Google 登录，AI、OCR 和备份均由用户自行配置。
+- **使用教程**：在“更多 → 使用教程”按学习任务了解记录、整理、间隔复习、学习助教与 AI 学习方式，并查看备份和隐私边界。
 
 ## 当前状态
 
@@ -43,7 +44,7 @@
 
 产品级 UI/UX 重构也已完成自动化收口：默认使用“温润阅读”，可在设置中切换到“清爽现代”，两套视觉主题与浅色/深色模式相互独立且只保存在当前设备。新的首页、日志资料库、连续编辑器、复习与学习助教、搜索、设置、备份、录音、播客和 AI 页面共用同一信息架构。2026-09-08 的后续改进进一步收紧主页面顶部空间，并在只读复习卡片中加入本地批注工具和跨 Tab 评分撤回；正式保存、FSRS 评分与云同步协议保持不变，具体实现边界见 [docs/review-annotation-and-rating-undo-plan.md](docs/review-annotation-and-rating-undo-plan.md)。完整单元测试、Desktop/Android 窄屏 E2E、Firebase Emulator 和生产构建均已通过；Android 真机软键盘、中文 IME、系统返回和真实账号配额仍需发布前人工验收。
 
-> 当前自动化基线：153 个确定性 Vitest 文件、961 项测试（另有 2 个需密钥的 live 文件，普通验收明确排除），Desktop/Android-narrow 共收集 46 个 Playwright 场景（45 个通过、1 个仅适用于 Desktop 的断言在 Android-narrow 跳过），以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真机音频行为与真实 Firebase 配额仍属于人工发布门槛。
+> 当前自动化基线：158 个确定性 Vitest 文件、978 项测试（另有 2 个需密钥的 live 文件，普通验收明确排除），Desktop/Android-narrow 共收集 52 个 Playwright 场景（51 个通过、1 个仅适用于 Desktop 的断言在 Android-narrow 跳过），以及 4 个 Firebase Emulator 场景。真实设备覆盖升级、中文 IME、系统返回、前后台/离线恢复、真机音频行为与真实 Firebase 配额仍属于人工发布门槛。
 
 实时语音主动回忆已接入真实、可独立选择的 `ASR → LLM → TTS` 链路：复习页的生产工作区可从只读日志或当前复习卡进入，并可分别选择 ASR、已配置的 LLM 和 TTS。阿里云 Paraformer、DeepSeek 与 Fish Audio 主链已于 2026-09-09 用受控账号验证；豆包流式 ASR 1.0/2.0、TTS 2.0 和小模型 TTS 已完成协议与 Desktop/Android 宿主预接入，但尚未用已激活真实账号验证。豆包端到端实时语音属于独立会话链路，不能作为模块化阶段混搭。缺少任一环节凭据或平台不支持时会拒绝开始通话。本机摘要、云同步/备份隔离、模板升级与不可信内容边界均有反向证明测试。`?preview=voice-recall` 仍是隔离的 Mock 交互原型。兼容边界见 [docs/doubao-voice-provider-compatibility.md](docs/doubao-voice-provider-compatibility.md)。
 

@@ -1,239 +1,260 @@
-import { PageHeader, SurfaceCard } from "../components/ui";
+import {
+  ArrowRight,
+  BookOpenCheck,
+  BrainCircuit,
+  Check,
+  ChevronDown,
+  Headphones,
+  MessageCircleQuestion,
+  Search,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 
-const usageSteps = [
-  {
-    title: "1. 新建学习记录",
-    body: "在首页的新建学习记录区域选择学科、填写标题，先把当天真正学过、想复盘的内容记下来。默认学科只保留常用项，更多学科可以到“分类 -> 学科管理”里自己创建。",
-  },
-  {
-    title: "2. 编辑内容",
-    body: "编辑器支持正文、图片、附件、录音、公式，以及高亮块、折叠块、结构图、对照表、便签板。建议把“概念、例子、易错点、自己的解释”写在一起，后面复习和 AI 问答都会更好用。",
-  },
-  {
-    title: "3. 加入复习",
-    body: "重要记录可以点“加入复习”，默认会作为“轻回看”进入队列，适合长日志、复盘、总结和材料型笔记。复习页每天默认建议处理前 20 条，到期总数仍会完整显示，完成建议量后可以手动继续处理剩余内容。",
-  },
-  {
-    title: "4. 查看和检索日志",
-    body: "今天页适合看当天，日志页适合按日期回看，分类页适合按学科整理。图片完成 OCR 后，图片里的文字也会进入本地全文检索。",
-  },
-  {
-    title: "5. 录音库泛听",
-    body: "带录音的记录会集中到录音库。你可以按学科播放，适合通勤、散步、睡前泛听，把口头解释和课堂录音重新拉回记忆。",
-  },
-];
+import { PageHeader } from "../components/ui";
 
-const aiExamples = [
-  "请根据今天的日志，用白纸复述的方式考我。",
-  "请不要给答案，先出一道变形应用题，等我回答后再批改。",
-  "请用苏格拉底式追问我这个知识点，直到发现我没讲清楚的地方。",
-  "请从这篇日志里找 3 个容易误以为懂了的盲区。",
-  "我对这个概念的理解是：……请指出哪里不准确。",
-];
+const guideSections = [
+  { id: "understand", label: "理解产品" },
+  { id: "quick-start", label: "快速开始" },
+  { id: "record", label: "记录与整理" },
+  { id: "review", label: "间隔复习" },
+  { id: "coach", label: "学习助教" },
+  { id: "ai-modes", label: "AI 学习方式" },
+  { id: "library", label: "资料管理" },
+  { id: "safety", label: "数据与设置" },
+  { id: "find", label: "按任务查找" },
+] as const;
 
-const reviewStrategyItems = [
-  {
-    title: "轻回看",
-    body: "默认策略，适合非原子化日志。它的间隔更宽松：忘记了会回到明天，模糊会尽早但不过度频繁地回来，良好和轻松会逐步拉长间隔；系统不会再因为连续几次良好就自动标记已掌握。",
-  },
-  {
-    title: "记忆卡",
-    body: "适合定义、公式、易错点、问答型知识。你可以在记录详情的复习进度里切换为“记忆卡”，它使用接近 Anki 的 FSRS 四按钮调度，但仍保持按天复习，不会几分钟后再次弹出。",
-  },
-  {
-    title: "四个评分",
-    body: "复习页统一使用“忘记了、模糊、良好、轻松”四个按钮，并显示预计下次出现时间。同一天重复评分会被视为纠正今天的评分，只保留最后一次结果，不会重复增加复习次数。",
-  },
-];
+const quickStartSteps = [
+  ["记一条", "在“今天”新建日志，写下概念、例子、易错点和自己的理解。"],
+  ["加入复习", "保存后将值得回看的日志加入复习；需要重点训练的内容可以标记为复习重点。"],
+  ["先回忆", "到期后打开“复习”，先在脑中尝试复述，再查看正文。"],
+  ["再评分", "选择最符合本次表现的评分，系统据此安排下一次复习。"],
+] as const;
 
-const voiceRecallSteps = [
-  {
-    title: "从复习或日志开始",
-    body: "在复习页进入语音复述，或从只读日志、当前复习卡直接开始。语音练习不会自动评分，也不会改写复习间隔。",
-  },
-  {
-    title: "确认外发范围",
-    body: "开始前核对资料范围：ASR 接收麦克风音频，LLM 接收所选日志片段和确认后的转写，TTS 接收教师回复文本。日志内容只作为不可信学习资料处理。",
-  },
-  {
-    title: "确认转写再提交",
-    body: "自动、长按和点击录音三种模式互斥。转写可以修改；在学习助教中必须明确确认，才会作为这一题唯一的正式答案提交。",
-  },
-];
-
-const faqItems = [
-  {
-    question: "AI 报“未配置供应商、API Key 或模型”怎么办？",
-    answer: "进入“更多 -> AI 工具 -> AI 设置”，选择当前供应商，补齐 API Key 和模型名称后保存。",
-  },
-  {
-    question: "图片问答失败怎么办？",
-    answer: "如果当前模型不支持直接看图，把图片问答方式切换为“本地 OCR 后转文字”，并先在 OCR 设置中配置 PaddleOCR Token。",
-  },
-  {
-    question: "OCR 提示未配置或识别失败怎么办？",
-    answer: "检查 PaddleOCR Token 是否填写正确，并尽量在 Android App 内识别。失败或超时的图片可以在资源卡片里重新 OCR。",
-  },
-  {
-    question: "换手机、重装或清理数据后 Key 不见了？",
-    answer: "API Key 和 OCR Token 出于安全原因只保存在本机，不进入备份，也不会打包进 APK。换设备或重装后需要重新填写。",
-  },
-  {
-    question: "备份导入失败怎么办？",
-    answer: "确认选择的是“完整备份 zip”，不是 AI 材料导出的 Markdown、JSON 或 TXT。导入会覆盖当前本地数据，导入前请先导出一份备份。",
-  },
-  {
-    question: "想把资料发给外部 AI，应该导出什么？",
-    answer: "使用“更多 -> AI 工具 -> AI 材料导出”，选择按学科 Markdown、知识库 JSON 或纯文本 TXT。完整备份 zip 主要用于恢复，不适合直接喂给 AI。",
-  },
-  {
-    question: "录音找不到怎么办？",
-    answer: "进入“更多 -> 录音库”按学科查看，也可以回到对应日志，在资源卡片里播放或重命名录音。",
-  },
-  {
-    question: "轻回看和记忆卡怎么选？",
-    answer: "长日志、复盘、资料整理默认用轻回看；真正需要背下来的小知识点再手动切成记忆卡。切换类型会把下次复习重置到明天，但不会删除历史复习日志。",
-  },
-];
+const taskLinks = [
+  ["开始第一次学习", "quick-start", "完成一次记录与复习"],
+  ["整理或找到日志", "library", "分类、标签、搜索与收藏"],
+  ["安排复习", "review", "选择策略并理解评分"],
+  ["反复卡在同类问题", "coach", "用学习助教设计针对性训练"],
+  ["围绕资料追问", "ai-modes", "使用 AI 问答"],
+  ["边走边复习", "ai-modes", "选择语音复述或知识播客"],
+  ["换设备或恢复数据", "safety", "查看备份与本机数据边界"],
+] as const;
 
 export const UsageGuidePage = () => (
   <main className="page usage-guide-page">
     <PageHeader
-      eyebrow="Guide"
+      eyebrow="Product guide"
       title="使用教程"
-      subtitle="从记录、复习、AI 问答到备份恢复，一次看懂学习日志的基本用法。"
+      subtitle="先建立自己的学习闭环，再按需要使用 AI、语音和资料工具。"
       density="compact"
     />
 
-    <section className="usage-guide-section">
-      <h2>推荐使用流</h2>
-      <div className="guide-step-list">
-        {usageSteps.map((step) => (
-          <SurfaceCard key={step.title} className="guide-step-card" variant="raised">
-            <h3>{step.title}</h3>
-            <p>{step.body}</p>
-          </SurfaceCard>
-        ))}
-      </div>
-    </section>
+    <nav className="guide-toc" aria-label="教程目录">
+      {guideSections.map((section, index) => (
+        <a key={section.id} href={`#${section.id}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          {section.label}
+        </a>
+      ))}
+    </nav>
 
-    <section className="usage-guide-section">
-      <h2>复习策略</h2>
-      <div className="guide-step-list">
-        {reviewStrategyItems.map((item) => (
-          <SurfaceCard key={item.title} className="guide-step-card" variant="raised">
-            <h3>{item.title}</h3>
-            <p>{item.body}</p>
-          </SurfaceCard>
-        ))}
-      </div>
-    </section>
-
-    <section className="usage-guide-section">
-      <h2>AI 学习用法</h2>
-      <SurfaceCard className="guide-prose-card" variant="raised">
-        <p>
-          入口是“更多 -&gt; AI 工具 -&gt; AI 问答与聊天记录”。AI 可以基于你的日志做主动回忆、出题、追问、批改和迁移训练。
-          你可以直接使用内置预设：白纸复述测试、变形应用题、盲区挖掘、费曼讲解测试、我的理解对不对。
+    <article className="guide-document">
+      <section id="understand" className="usage-guide-section guide-intro-section">
+        <p className="guide-section-index">01 · 先理解这个 App</p>
+        <h2>把学过的内容留下，再在需要的时候重新想起来</h2>
+        <p className="guide-lead">
+          学习日志不是资料仓库，也不以记录数量为目标。它把记录、间隔复习和主动回忆连成一条路径，帮助你发现真正的理解缺口，并在之后再次验证。
         </p>
-        <ul className="guide-example-list">
-          {aiExamples.map((example) => (
-            <li key={example}>
-              <code>{example}</code>
+        <div className="guide-principles" aria-label="产品核心原则">
+          <span><BookOpenCheck size={17} />日志保存学习现场</span>
+          <span><BrainCircuit size={17} />回忆暴露理解缺口</span>
+          <span><Check size={17} />用户保留最终判断</span>
+        </div>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/learning-loop.png"
+            alt="学习闭环：记录学习内容、整理重点、间隔复习、写下卡点、辅助强化、延迟验证并再次复习"
+            loading="eager"
+            decoding="async"
+          />
+          <figcaption>记录是起点；真正的学习发生在回忆、反馈和再次验证中。</figcaption>
+        </figure>
+      </section>
+
+      <section id="quick-start" className="usage-guide-section">
+        <p className="guide-section-index">02 · 快速开始</p>
+        <h2>先完成一次最短闭环</h2>
+        <p className="guide-section-summary">第一次使用不必先配置所有工具。完成一条日志和一次复习，就能理解产品的核心。</p>
+        <ol className="guide-quick-steps">
+          {quickStartSteps.map(([title, body], index) => (
+            <li key={title}>
+              <span>{index + 1}</span>
+              <div><h3>{title}</h3><p>{body}</p></div>
             </li>
           ))}
-        </ul>
-      </SurfaceCard>
-    </section>
-
-    <section className="usage-guide-section">
-      <h2>语音主动回忆</h2>
-      <div className="guide-step-list">
-        {voiceRecallSteps.map((step) => (
-          <SurfaceCard key={step.title} className="guide-step-card" variant="raised">
-            <h3>{step.title}</h3>
-            <p>{step.body}</p>
-          </SurfaceCard>
-        ))}
-      </div>
-      <p className="guide-note">临时会话和主动保存的通话摘要只保存在本机，不进入云同步或完整备份。重装、清除数据或换机前，请把需要长期保留的内容整理为正式日志。</p>
-    </section>
-
-    <section className="usage-guide-section">
-      <h2>AI 配置</h2>
-      <SurfaceCard className="guide-prose-card" variant="raised">
-        <p>
-          首选可以使用
-          <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer">
-            阿里云百炼
-          </a>
-          的新用户免费额度。进入控制台后，在左侧列表找到“API Key”，创建自己的 API Key。
-        </p>
-        <ol>
-          <li>回到软件，进入“更多 -&gt; AI 工具 -&gt; AI 设置”。</li>
-          <li>点击“阿里云百炼”模板，把刚创建的 API Key 填进去。</li>
-          <li>
-            模型填写：<code>qwen3.7-plus-2026-05-26</code>。
-          </li>
-          <li>保存 AI 设置后，再进入 AI 问答页面测试。</li>
         </ol>
-        <p className="guide-note">API Key 只保存在本机，不进入备份。模型名、免费额度和控制台路径若有变化，以阿里云控制台实际显示为准。</p>
-      </SurfaceCard>
-    </section>
+        <p className="guide-callout"><Sparkles size={17} />AI、OCR、语音和播客都是扩展能力，不是开始记录的前置条件。</p>
+      </section>
 
-    <section className="usage-guide-section">
-      <h2>OCR 配置</h2>
-      <SurfaceCard className="guide-prose-card" variant="raised">
-        <p>
-          入口是“更多 -&gt; OCR 设置”。访问
-          <a href="https://aistudio.baidu.com/paddleocr" target="_blank" rel="noreferrer">
-            PaddleOCR 官网
-          </a>
-          ，点击正中央的 API 入口，在下面的异步解析代码中找到 <code>TOKEN=""</code>，引号里的字符串就是要填写的 PaddleOCR Token。
-        </p>
-        <p>
-          配置后，图片资源可以进行文字识别；识别出的文字会进入本地全文检索。AI 图片问答选择“本地 OCR 后转文字”时，也会复用这里的配置。
-        </p>
-        <p className="guide-note">目前额度通常是每日约 20000 张、每日刷新，个人学习基本用不完；如果官网规则调整，以官网实际说明为准。Token 只保存在本机，不进入完整备份，也不会打包进 APK。</p>
-      </SurfaceCard>
-    </section>
+      <section id="record" className="usage-guide-section">
+        <p className="guide-section-index">03 · 记录与整理</p>
+        <h2>让一条日志成为可复习的学习单元</h2>
+        <div className="guide-definition-grid">
+          <div><span>它是什么</span><p>一条日志可以同时保存文字、图片、音频、附件、公式、结构内容和其他日志的引用。</p></div>
+          <div><span>为什么有用</span><p>学科负责大范围归类，标签连接具体主题，复习重点标记真正值得检验的内容。</p></div>
+          <div><span>怎么使用</span><p>从“今天”快速记录；到“日志”浏览、筛选和搜索；重复结构可先建立模板。</p></div>
+        </div>
+        <figure className="guide-figure guide-figure-record">
+          <img
+            src="/guide/record-structure.png"
+            alt="一条日志由标题、学科、标签、正文、图片、音频、公式、复习重点和引用组成，并用于搜索、间隔复习和 AI 问答"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>写入日志的有效内容，会继续服务于搜索、复习和 AI 上下文。</figcaption>
+        </figure>
+      </section>
 
-    <section className="usage-guide-section">
-      <h2>备份与导出</h2>
-      <div className="guide-step-list">
-        <SurfaceCard className="guide-step-card" variant="raised">
-          <h3>完整备份 zip</h3>
-          <p>入口是“更多 -&gt; 备份与恢复”。完整备份包含日志、图片、音频、附件、OCR 和设置，可用于 Web 和 Android 之间恢复。</p>
-        </SurfaceCard>
-        <SurfaceCard className="guide-step-card" variant="raised">
-          <h3>自动备份</h3>
-          <p>绑定备份文件夹后，会写入 <code>study-journal-latest.zip</code>。建议选择网盘同步目录或手机公共文档目录。</p>
-        </SurfaceCard>
-        <SurfaceCard className="guide-step-card" variant="raised">
-          <h3>AI 材料导出</h3>
-          <p>入口是“更多 -&gt; AI 工具 -&gt; AI 材料导出”。支持按学科 Markdown、知识库 JSON、纯文本 TXT，这些用于阅读和问答，不用于恢复。</p>
-        </SurfaceCard>
-      </div>
-      <p className="guide-note">导入完整备份会覆盖当前本地数据。导入前先导出一份完整备份，能给自己留一条退路。</p>
-    </section>
+      <section id="review" className="usage-guide-section">
+        <p className="guide-section-index">04 · 间隔复习</p>
+        <h2>评分决定下一次出现，而不是宣布永久掌握</h2>
+        <p className="guide-section-summary">进入“复习”后，先主动回忆，再根据这一次的真实表现评分。按钮下方会显示预计下次复习时间。</p>
+        <div className="guide-compare">
+          <div><h3>轻回看</h3><p>默认策略，适合长日志、复盘、总结和材料型内容，间隔相对宽松。</p></div>
+          <div><h3>记忆卡</h3><p>适合定义、公式、易错点和短问答，使用 FSRS 安排按天复习。</p></div>
+        </div>
+        <p className="guide-rating-line"><strong>忘记了</strong><ArrowRight size={15} /><strong>模糊</strong><ArrowRight size={15} /><strong>良好</strong><ArrowRight size={15} /><strong>轻松</strong></p>
+        <p className="guide-muted">复习时可使用批注辅助思考；若日志含复习重点，还可以写下真实卡点。整卡评分只调整日志的复习时间，不直接判断某个重点已经掌握。</p>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/review-spacing.png"
+            alt="主动回忆后选择忘记了、模糊、良好或轻松，系统据此安排不同的下次复习时间"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>每次评分描述的是当下表现，系统再据此调整复习间隔。</figcaption>
+        </figure>
+      </section>
 
-    <section className="usage-guide-section">
-      <h2>常见问题</h2>
-      <div className="guide-faq-list">
-        {faqItems.map((item) => (
-          <SurfaceCard key={item.question} className="guide-faq-card" variant="plain">
-            <h3>{item.question}</h3>
-            <p>{item.answer}</p>
-          </SurfaceCard>
-        ))}
-      </div>
-    </section>
+      <section id="coach" className="usage-guide-section">
+        <p className="guide-section-index">05 · 学习助教</p>
+        <h2>把“哪里不会”变成一次具体训练</h2>
+        <div className="guide-definition-grid">
+          <div><span>它是什么</span><p>位于“复习 → 学习助教”的反馈与训练工作区。</p></div>
+          <div><span>为什么有用</span><p>普通评分只表达回忆结果；真实卡点能帮助系统理解你究竟卡在哪里。</p></div>
+          <div><span>怎么使用</span><p>为复习重点写评论，确认 AI 整理的理解，再发起分析并完成生成的训练任务。</p></div>
+        </div>
+        <p className="guide-callout"><BrainCircuit size={17} />AI 负责整理反馈和设计训练，用户仍需亲自作答并确认结果。</p>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/coach-flow.png"
+            alt="从复习重点和真实卡点开始，经过 AI 整理、用户确认、生成任务、完成训练和延迟验证"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>即时答对不等于长期保持；训练之后仍需要延迟验证。</figcaption>
+        </figure>
+      </section>
 
-    <section className="usage-guide-section guide-contact-section">
-      <SurfaceCard className="guide-contact-card" variant="raised">
-        <strong>其他疑问联系作者</strong>
-        <p>微信：A6472589</p>
-      </SurfaceCard>
-    </section>
+      <section id="ai-modes" className="usage-guide-section">
+        <p className="guide-section-index">06 · AI 学习方式</p>
+        <h2>同一份资料，选择不同的学习动作</h2>
+        <div className="guide-mode-list">
+          <div><MessageCircleQuestion size={20} /><span><h3>AI 问答</h3><p>从“更多 → AI 问答”选择日志范围，适合追问、抽测、解释和辨析。</p></span></div>
+          <div><BrainCircuit size={20} /><span><h3>语音复述</h3><p>从复习页或只读日志开始，把内容讲出来，让 AI 一次问一个问题。练习不会自动评分或改写原笔记。</p></span></div>
+          <div><Headphones size={20} /><span><h3>知识播客</h3><p>从“更多 → 知识播客”选择知识范围，先生成并编辑脚本，再按章节生成和播放音频。</p></span></div>
+        </div>
+        <div className="guide-prompt-examples" aria-label="AI 问答示例">
+          <span>可以这样开始</span>
+          <p>“根据这些日志考我，先不要给答案。”</p>
+          <p>“找出我最容易误以为已经理解的三个地方。”</p>
+        </div>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/ai-learning-modes.png"
+            alt="学习资料可以用于 AI 问答、语音复述和知识播客，分别对应提问、表达和聆听"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>提问用于探索，表达用于主动回忆，聆听用于整理和反复回顾。</figcaption>
+        </figure>
+      </section>
+
+      <section id="library" className="usage-guide-section">
+        <p className="guide-section-index">07 · 搜索与资料管理</p>
+        <h2>在需要时快速找回，而不是记住每个入口</h2>
+        <p className="guide-section-summary">常用浏览留在“日志”；低频整理工具集中在“更多”。</p>
+        <div className="guide-reference-list">
+          <div><Search size={18} /><span><strong>搜索与 OCR</strong><p>全局搜索可查找日志内容；在“更多 → OCR 设置”配置后，已识别的图片文字也会参与检索和 AI 上下文。</p></span></div>
+          <div><BookOpenCheck size={18} /><span><strong>学科、标签与收藏</strong><p>学科建立稳定目录，标签连接细分主题，收藏保留最近常用或最重要的日志。</p></span></div>
+          <div><Headphones size={18} /><span><strong>录音库</strong><p>日志录音和知识播客可按来源集中播放；原始内容仍与对应日志保持关联。</p></span></div>
+        </div>
+        <details className="guide-details">
+          <summary><span>模板、批量操作与回收站</span><ChevronDown size={17} /></summary>
+          <div>
+            <p><strong>模板：</strong>保存重复使用的日志结构，新建记录时可直接套用。</p>
+            <p><strong>批量操作：</strong>日志资料库支持选择多条记录加入复习或导出。</p>
+            <p><strong>回收站：</strong>删除的日志先保留 30 天，可恢复；永久删除后无法找回。</p>
+            <p><strong>学习状态：</strong>在“更多 → 统计”查看待复习、逾期、完成进度和带样本量的回忆表现。</p>
+          </div>
+        </details>
+      </section>
+
+      <section id="safety" className="usage-guide-section">
+        <p className="guide-section-index">08 · 数据安全与设置</p>
+        <h2>先知道什么会保存，再配置长期使用方式</h2>
+        <p className="guide-section-summary">完整备份用于恢复；AI 材料导出用于阅读和问答。两者不能互相替代。</p>
+        <div className="guide-details-list">
+          <details className="guide-details">
+            <summary><span><ShieldCheck size={18} />备份、恢复与导出</span><ChevronDown size={17} /></summary>
+            <div>
+              <p><strong>完整备份：</strong>在“更多 → 备份与恢复”导出可恢复的 zip，也可以绑定自动备份文件夹。</p>
+              <p><strong>日志互通：</strong>用于选择性迁移日志，不等同于完整恢复。</p>
+              <p><strong>AI 材料导出：</strong>在 AI 问答的“更多操作”中导出 Markdown、JSON 或 TXT，不用于恢复应用数据。</p>
+              <p className="guide-warning">导入完整备份会覆盖当前本地数据。导入前先导出一份当前备份。</p>
+            </div>
+          </details>
+          <details className="guide-details">
+            <summary><span><Sparkles size={18} />AI、OCR 与语音数据</span><ChevronDown size={17} /></summary>
+            <div>
+              <p>AI 供应商凭据和 OCR Token 只保存在本机，不进入备份或云同步；换设备或清除数据后需要重新填写。</p>
+              <p>语音复述的临时会话和主动保留的本机历史不进入云同步或完整备份。需要长期保留时，请在摘要页整理为正式日志。</p>
+              <p>服务商、模型和语音链路以各设置页面当前显示为准，教程不固定推荐某个供应商。</p>
+            </div>
+          </details>
+          <details className="guide-details">
+            <summary><span>外观与阅读偏好</span><ChevronDown size={17} /></summary>
+            <div>
+              <p>“更多 → 设置”可以调整视觉风格、明暗模式、界面字号、日志正文字号、行距和目标日期。</p>
+              <p>界面字号影响导航和控件；正文字号只调整日志编辑、详情和复习中的阅读内容。</p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section id="find" className="usage-guide-section guide-find-section">
+        <p className="guide-section-index">09 · 按任务查找</p>
+        <h2>你现在想做什么？</h2>
+        <div className="guide-task-index">
+          {taskLinks.map(([title, target, detail]) => (
+            <a key={title} href={`#${target}`}>
+              <span><strong>{title}</strong><small>{detail}</small></span>
+              <ArrowRight size={17} />
+            </a>
+          ))}
+        </div>
+        <details className="guide-details guide-troubleshooting">
+          <summary><span>常见问题</span><ChevronDown size={17} /></summary>
+          <div>
+            <p><strong>AI 无法开始：</strong>在 AI 问答的“更多操作 → AI 设置”中检查当前供应商、API Key 和模型。</p>
+            <p><strong>图片内容无法检索：</strong>在“更多 → OCR 设置”检查 Token，并在图片资源中重新识别。</p>
+            <p><strong>换设备后凭据消失：</strong>这是正常的本机安全边界，需要在新设备重新配置。</p>
+            <p><strong>录音找不到：</strong>打开侧栏“录音”或“更多 → 录音库”，也可回到对应日志查看。</p>
+          </div>
+        </details>
+      </section>
+    </article>
   </main>
 );

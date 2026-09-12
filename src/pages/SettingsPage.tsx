@@ -84,7 +84,7 @@ export const SettingsPage = ({ settings, onSaveSettings, visualTheme, onVisualTh
           </select>
         </label>
         <label>
-          字号
+          界面字号
           <input
             type="range"
             min={0.9}
@@ -92,6 +92,17 @@ export const SettingsPage = ({ settings, onSaveSettings, visualTheme, onVisualTh
             step={0.05}
             value={settings.fontScale}
             onChange={(event) => onSaveSettings({ ...settings, fontScale: Number(event.target.value) })}
+          />
+        </label>
+        <label>
+          正文字号
+          <input
+            type="range"
+            min={0.9}
+            max={1.25}
+            step={0.05}
+            value={settings.editorFontScale ?? 1}
+            onChange={(event) => onSaveSettings({ ...settings, editorFontScale: Number(event.target.value) })}
           />
         </label>
         <label>

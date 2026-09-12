@@ -746,6 +746,8 @@ export interface AppSettings {
   lastBackupAt?: ISODateTime;
   syncFolderName?: string;
   fontScale: number;
+  /** Device-local scale for record body content; omitted by legacy settings. */
+  editorFontScale?: number;
   lineHeight: number;
   subjects?: SubjectConfig[];
   ai?: AiProviderConfig;
