@@ -493,7 +493,51 @@ describe("cloud sync model", () => {
     expect(result.conflicts).toEqual([]);
     expect(result.payload.theme).toBe("dark");
     expect(result.payload.accentColor).toBe("#aa0000");
-    expect(result.payload.lastBackupAt).toBe("new");
+    expect(result.payload.lastBackupAt).toBeUndefined();
+  });
+
+  it("ignores legacy AI and TTS payloads when merging settings", () => {
+    const base = {
+      id: "settings",
+      examDate: "2026-12-27",
+      theme: "system",
+      ai: { currentProviderId: "old-ai", providers: [{ id: "old-ai", model: "old" }] },
+      tts: { currentProviderId: "old-tts", providers: [{ id: "old-tts", voice: "old" }] },
+    };
+    const result = mergeCloudSyncSmallEntity(
+      {
+        entityType: "settings",
+        payload: {
+          ...base,
+          ai: { currentProviderId: "desktop-ai", providers: [{ id: "desktop-ai", model: "desktop" }] },
+          tts: { currentProviderId: "desktop-tts", providers: [{ id: "desktop-tts", voice: "desktop" }] },
+        },
+        deleted: false,
+      },
+      {
+        entityType: "settings",
+        payload: {
+          ...base,
+          ai: { currentProviderId: "android-ai", providers: [{ id: "android-ai", model: "android" }] },
+          tts: { currentProviderId: "android-tts", providers: [{ id: "android-tts", voice: "android" }] },
+        },
+        deleted: false,
+      },
+      base,
+    );
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.payload.ai).toBeUndefined();
+    expect(result.payload.tts).toBeUndefined();
+    expect(mergeCloudSyncSmallEntity(
+      { entityType: "settings", payload: { ...base, tts: { currentProviderId: "desktop" } }, deleted: false },
+      { entityType: "settings", payload: { ...base, tts: { currentProviderId: "android" } }, deleted: false },
+      undefined,
+    )).toEqual({
+      payload: expect.not.objectContaining({ ai: expect.anything(), tts: expect.anything() }),
+      deleted: false,
+      conflicts: [],
+    });
   });
 
   it("reports a field conflict when both sides change the same template field", () => {

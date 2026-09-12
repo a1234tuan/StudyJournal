@@ -23,7 +23,8 @@ describe("export privacy", () => {
 
     expect(exported.lastBackupAt).toBeUndefined();
     expect(exported.syncFolderName).toBeUndefined();
-    expect(exported.ai?.presets).toEqual([]);
+    expect(exported.ai).toBeUndefined();
+    expect(exported.tts).toBeUndefined();
     expect(exported.knowledgePodcastModeTemplates).toEqual([]);
     expect(JSON.stringify(exported)).not.toContain("private podcast prompt");
     expect(JSON.stringify(stripPrivateExportFields({ prompt: "secret", rawResponse: "raw", promptVersion: "v1" }))).toBe('{"promptVersion":"v1"}');
@@ -35,14 +36,19 @@ describe("export privacy", () => {
       syncFolderName: "D:/local-only",
       lastBackupAt: "2026-09-07T08:00:00.000Z",
     };
-    const incoming = sanitizeSettingsForExport({ ...current, theme: "dark" });
+    const incoming = {
+      ...sanitizeSettingsForExport({ ...current, theme: "dark" }),
+      ai: { currentProviderId: "cloud-ai", providers: [], presets: [] },
+      tts: { currentProviderId: "cloud-tts", providers: [] },
+    } as typeof current;
 
     const restored = preserveLocalSettings(incoming, current);
 
     expect(restored.theme).toBe("dark");
     expect(restored.syncFolderName).toBe("D:/local-only");
     expect(restored.lastBackupAt).toBe("2026-09-07T08:00:00.000Z");
-    expect(restored.ai?.presets).toEqual(current.ai?.presets);
+    expect(restored.ai).toEqual(current.ai);
+    expect(restored.tts).toEqual(current.tts);
   });
 
   it("sanitizes hand-built streamable snapshots at native write boundaries", () => {

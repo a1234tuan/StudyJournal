@@ -20,20 +20,18 @@ export const stripPrivateExportFields = <T>(value: T): T => {
     .map(([key, item]) => [key, stripPrivateExportFields(item)])) as T;
 };
 
-/**
- * Prompts and device-local backup paths do not belong in cloud sync or ordinary exports.
- * Empty prompt collections keep the serialized settings structurally valid for older importers.
- */
+/** Provider/runtime choices, prompts, and local backup paths stay on this device. */
 export const sanitizeSettingsForExport = (settings: AppSettings): AppSettings => {
   const {
     lastBackupAt: _lastBackupAt,
     syncFolderName: _syncFolderName,
     knowledgePodcastModeTemplates: _knowledgePodcastModeTemplates,
+    ai: _ai,
+    tts: _tts,
     ...portable
   } = settings;
   return stripPrivateExportFields({
     ...portable,
-    ...(portable.ai ? { ai: { ...portable.ai, presets: [] } } : {}),
     knowledgePodcastModeTemplates: [],
   } as AppSettings);
 };
@@ -43,9 +41,8 @@ export const preserveLocalSettings = (incoming: AppSettings, current: AppSetting
   ...incoming,
   ...(current.lastBackupAt !== undefined ? { lastBackupAt: current.lastBackupAt } : {}),
   ...(current.syncFolderName !== undefined ? { syncFolderName: current.syncFolderName } : {}),
-  ai: incoming.ai
-    ? { ...incoming.ai, presets: current.ai?.presets ?? [] }
-    : current.ai,
+  ai: current.ai,
+  tts: current.tts,
   knowledgePodcastModeTemplates: current.knowledgePodcastModeTemplates ?? [],
 });
 

@@ -563,29 +563,40 @@ export const mergeCloudSyncSmallEntity = (
   if (local.entityType !== remote.entityType || (local.entityType !== "settings" && local.entityType !== "template")) {
     return { payload: remote.payload, deleted: Boolean(remote.deleted), conflicts: ["entity"] };
   }
-  if (!basePayload) return { payload: remote.payload, deleted: Boolean(remote.deleted), conflicts: ["entity"] };
+
+  const normalizePayload = (payload: Record<string, unknown>) => local.entityType === "settings"
+    ? sanitizeSettingsForExport(payload as unknown as AppSettings) as unknown as Record<string, unknown>
+    : payload;
+  const localPayload = normalizePayload(local.payload);
+  const remotePayload = normalizePayload(remote.payload);
+  if (!basePayload) {
+    return !local.deleted && !remote.deleted && stableJson(localPayload) === stableJson(remotePayload)
+      ? { payload: remotePayload, deleted: false, conflicts: [] }
+      : { payload: remotePayload, deleted: Boolean(remote.deleted), conflicts: ["entity"] };
+  }
+  const normalizedBasePayload = normalizePayload(basePayload);
 
   const localDeleted = Boolean(local.deleted);
   const remoteDeleted = Boolean(remote.deleted);
   const ignored = new Set(local.entityType === "settings" ? ["updatedAt", "lastBackupAt", "syncFolderName"] : ["updatedAt"]);
   const allowed = local.entityType === "template" ? new Set(["title", "contentHtml"]) : undefined;
   const keys = new Set([
-    ...Object.keys(basePayload),
-    ...(localDeleted ? [] : Object.keys(local.payload)),
-    ...(remoteDeleted ? [] : Object.keys(remote.payload)),
+    ...Object.keys(normalizedBasePayload),
+    ...(localDeleted ? [] : Object.keys(localPayload)),
+    ...(remoteDeleted ? [] : Object.keys(remotePayload)),
   ].filter((key) => !ignored.has(key)));
   const conflicts: string[] = [];
-  const merged: Record<string, unknown> = { ...(remoteDeleted ? {} : remote.payload) };
+  const merged: Record<string, unknown> = { ...(remoteDeleted ? {} : remotePayload) };
   const localChangedKeys = new Set<string>();
   const remoteChangedKeys = new Set<string>();
   let localContentChanged = false;
   let remoteContentChanged = false;
   for (const key of keys) {
-    const baseValue = basePayload[key];
+    const baseValue = normalizedBasePayload[key];
     // A tombstone has no payload; compare it to the common base as unchanged
     // content and handle the deletion separately below.
-    const localValue = localDeleted ? baseValue : local.payload[key];
-    const remoteValue = remoteDeleted ? baseValue : remote.payload[key];
+    const localValue = localDeleted ? baseValue : localPayload[key];
+    const remoteValue = remoteDeleted ? baseValue : remotePayload[key];
     const localChanged = stableJson(localValue) !== stableJson(baseValue);
     const remoteChanged = stableJson(remoteValue) !== stableJson(baseValue);
     if (localChanged) localContentChanged = true;

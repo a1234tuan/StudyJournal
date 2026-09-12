@@ -21,6 +21,7 @@ import { deleteObject, getBlob, getMetadata, list, ref, uploadBytesResumable } f
 import type { StorageReference } from "firebase/storage";
 
 import type {
+  AppSettings,
   CloudSyncEntityType,
   CloudSyncExpectedValue,
   CloudSyncLedgerRecord,
@@ -60,6 +61,7 @@ import {
 } from "./cloudSyncModel";
 import { CloudSyncLocalMutationError, storage } from "./storageAdapter";
 import { snapshotToZip, summarizeSnapshot, zipToSnapshot } from "./backup";
+import { sanitizeSettingsForExport } from "./exportPrivacy";
 import {
   downloadNativeFirebaseStorageBlob,
   listNativeFirebaseStoragePaths,
@@ -468,8 +470,17 @@ const parseRemoteEntity = (id: string, value: unknown): RemoteEntity | undefined
   };
 };
 
-const normalizeRemoteEntity = async (entity: RemoteEntity): Promise<RemoteEntity> => {
+export const normalizeRemoteEntity = async (entity: RemoteEntity): Promise<RemoteEntity> => {
   if (entity.deleted || Object.keys(entity.payload).length === 0) return entity;
+  if (entity.entityType === "settings") {
+    const payload = sanitizeSettingsForExport(entity.payload as unknown as AppSettings) as unknown as Record<string, unknown>;
+    return {
+      ...entity,
+      payload,
+      contentHash: await hashValue(syncHashPayload(entity.entityType, payload)),
+      contentHashAlgorithm: "sha256",
+    };
+  }
   const currentVersion = entity.entityType === "asset"
     ? ASSET_CONTENT_HASH_VERSION
     : entity.entityType === "block" ? BLOCK_CONTENT_HASH_VERSION : undefined;

@@ -13,7 +13,7 @@ vi.mock("./firebase", () => ({
   googleAuthProvider: {},
 }));
 
-const { canSkipCloudSyncLock, deriveLocalCloudChanges } = await import("./cloudSyncService");
+const { canSkipCloudSyncLock, deriveLocalCloudChanges, normalizeRemoteEntity } = await import("./cloudSyncService");
 
 const stamp = "2026-09-07T08:00:00.000Z";
 const record: RecordBlock = {
@@ -67,6 +67,40 @@ const ledgerFor = (exported: Awaited<ReturnType<typeof exportCloudSync>>, revisi
 ];
 
 describe("two-device incremental sync protocol", () => {
+  it("keeps device-local AI and TTS profiles out of two-device sync", async () => {
+    const desktopSettings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      ai: { currentProviderId: "desktop-ai", providers: [{ id: "desktop-ai", providerName: "Desktop AI", baseUrl: "https://desktop.invalid", model: "desktop-model", temperature: 0.2, maxTokens: 320 }], presets: [] },
+      tts: { currentProviderId: "desktop-tts", providers: [{ id: "desktop-tts", providerId: "fish-audio" as const, providerName: "Desktop TTS", model: "desktop-model", voice: "desktop-voice" }] },
+    };
+    const androidSettings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      ai: { currentProviderId: "android-ai", providers: [{ id: "android-ai", providerName: "Android AI", baseUrl: "https://android.invalid", model: "android-model", temperature: 0.2, maxTokens: 320 }], presets: [] },
+      tts: { currentProviderId: "android-tts", providers: [{ id: "android-tts", providerId: "doubao" as const, providerName: "Android TTS", model: "android-model", voice: "android-voice" }] },
+    };
+    const desktop = await exportCloudSync(snapshot({ settings: desktopSettings }));
+    const android = await exportCloudSync(snapshot({ settings: androidSettings }));
+    const desktopSettingsEntity = desktop.entities.find((entity) => entity.key === "settings:settings")!;
+    const androidSettingsEntity = android.entities.find((entity) => entity.key === "settings:settings")!;
+
+    expect(desktopSettingsEntity.payload.ai).toBeUndefined();
+    expect(desktopSettingsEntity.payload.tts).toBeUndefined();
+    expect(androidSettingsEntity.payload.ai).toBeUndefined();
+    expect(androidSettingsEntity.payload.tts).toBeUndefined();
+    expect(desktopSettingsEntity.contentHash).toBe(androidSettingsEntity.contentHash);
+    expect(await deriveLocalCloudChanges(android, ledgerFor(desktop))).toEqual({ entities: [], events: [] });
+
+    const normalizedLegacyRemote = await normalizeRemoteEntity({
+      ...androidSettingsEntity,
+      payload: androidSettings as unknown as Record<string, unknown>,
+      contentHash: "legacy-settings-hash",
+      revision: 2,
+    });
+    expect(normalizedLegacyRemote.payload.ai).toBeUndefined();
+    expect(normalizedLegacyRemote.payload.tts).toBeUndefined();
+    expect(normalizedLegacyRemote.contentHash).toBe(desktopSettingsEntity.contentHash);
+  });
+
   it("does not report a conflict when only the phone edited a record", async () => {
     const base = await exportCloudSync(snapshot());
     const ledger = ledgerFor(base);
