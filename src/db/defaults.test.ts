@@ -9,13 +9,13 @@ import {
 import { createBaseEntity } from "../lib/entity";
 
 describe("default AI settings", () => {
-  it("uses DeepSeek v4 pro compatible defaults", () => {
+  it("uses DeepSeek v4 flash compatible defaults", () => {
     expect(DEFAULT_SETTINGS.ai?.currentProviderId).toBe("default");
     expect(DEFAULT_SETTINGS.ai?.providers[0]).toMatchObject({
       id: "default",
       providerName: "DeepSeek",
       baseUrl: "https://api.deepseek.com",
-      model: "deepseek-v4-pro",
+      model: "deepseek-v4-flash",
     });
   });
 

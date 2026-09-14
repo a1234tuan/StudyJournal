@@ -133,6 +133,13 @@ export const runPaddleOcr = async (
   throw new Error("Web 端 OCR 需要服务器代理；请在 Android App 内识别，或后续接入服务器代理。");
 };
 
+// Deliberately kept, currently unreferenced. `runPaddleOcr` (above) is the only
+// production entry point and throws on web because the PaddleOCR job API is not
+// reachable directly from the browser (CORS + credential exposure). This browser
+// direct-connect implementation is retained as a working reference for a future
+// server-proxy or direct-connect mode; do not delete it. Enabling it requires
+// validating CORS, credential handling, and the ocrStatus/ocrJobId progress
+// contract first. Decision recorded 2026-09-14 (audit F-19).
 export const runPaddleOcrViaBrowserFetch = async (
   asset: Asset,
   onProgress?: (patch: Partial<Asset>) => Promise<void> | void,

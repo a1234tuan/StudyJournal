@@ -796,7 +796,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       ? {
         ...legacyAi,
         baseUrl: legacyAi.baseUrl === "https://api.deepseek.com/v1" ? "https://api.deepseek.com" : legacyAi.baseUrl,
-        model: legacyAi.model === "deepseek-chat" ? "deepseek-v4-pro" : legacyAi.model,
+        model: legacyAi.model === "deepseek-chat" ? "deepseek-v4-flash" : legacyAi.model,
       }
       : legacyAi;
     const nextAi = normalizeAiConfig(

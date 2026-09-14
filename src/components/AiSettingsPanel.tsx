@@ -302,7 +302,7 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
                       <input
                         value={provider.model}
                         onChange={(event) => updateProvider(provider.id, { model: event.target.value })}
-                        placeholder="deepseek-v4-pro / qwen-plus / meta/llama-3.3-70b-instruct"
+                        placeholder="deepseek-v4-flash / qwen-plus / meta/llama-3.3-70b-instruct"
                       />
                     </label>
                     <label>

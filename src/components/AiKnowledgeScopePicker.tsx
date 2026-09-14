@@ -2,6 +2,7 @@ import { ArrowLeft, ChevronDown, RefreshCw, Search, Sparkles } from "lucide-reac
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { todayISO } from "../lib/date";
 import { getSubjectRecordTags } from "../lib/recordTags";
 import { isDesktopPlatform } from "../lib/platform";
 import { searchRecordTitlesAsync } from "../lib/search";
@@ -75,7 +76,7 @@ export const AiKnowledgeScopePicker = ({
   const [scopeSubject, setScopeSubject] = useState(initialScope?.kind === "tag" ? initialScope.subject : "");
   const [scopeTag, setScopeTag] = useState(initialScope?.kind === "tag" ? initialScope.tag : "");
   const [recentDays, setRecentDays] = useState<7 | 14 | 30>(initialScope?.kind === "recent" ? initialScope.days : 7);
-  const [scopeDate, setScopeDate] = useState(initialScope?.kind === "date" ? initialScope.date : new Date().toISOString().slice(0, 10));
+  const [scopeDate, setScopeDate] = useState(initialScope?.kind === "date" ? initialScope.date : todayISO());
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>(initialScope?.kind === "records" ? initialScope.recordIds : []);
   const [recordTitleQuery, setRecordTitleQuery] = useState("");
   const [recordSearchInput, setRecordSearchInput] = useState("");
@@ -180,7 +181,7 @@ export const AiKnowledgeScopePicker = ({
     return undefined;
   }, [includeDate, recentDays, scopeDate, scopeKind, scopeSubject, scopeTag, selectedRecordIds]);
   const pendingScopeRecords = useMemo(
-    () => pendingScope ? getAiKnowledgeScopeRecords(pendingScope, blocks, new Date().toISOString().slice(0, 10)) : [],
+    () => pendingScope ? getAiKnowledgeScopeRecords(pendingScope, blocks, todayISO()) : [],
     [blocks, pendingScope],
   );
   const pendingScopeOcrCount = useMemo(() => {

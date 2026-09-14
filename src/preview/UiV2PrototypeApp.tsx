@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { isDesktopPlatform, isNativePlatform } from "../lib/platform";
 import "@fontsource-variable/jetbrains-mono";
 import "./uiV2Prototype.css";
 
@@ -100,12 +101,16 @@ const saveLabels: Record<SaveState, string> = {
 };
 
 const canPreviewUiV2 = (): boolean => {
+  if (typeof window === "undefined") return false;
+  // The Android Capacitor WebView and the Electron shell both serve from a localhost host,
+  // so the prototype shells must also be excluded on native/desktop platforms.
+  if (isNativePlatform() || isDesktopPlatform()) return false;
   const host = window.location.hostname;
   return (host === "127.0.0.1" || host === "localhost")
     && new URLSearchParams(window.location.search).get("preview") === "ui-v2";
 };
 
-export const isUiV2PrototypeRequest = (): boolean => typeof window !== "undefined" && canPreviewUiV2();
+export const isUiV2PrototypeRequest = (): boolean => canPreviewUiV2();
 
 interface ScreenHeaderProps {
   eyebrow?: string;

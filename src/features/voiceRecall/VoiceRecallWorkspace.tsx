@@ -18,6 +18,7 @@ import { Capacitor } from "@capacitor/core";
 
 import { AiKnowledgeScopePicker } from "../../components/AiKnowledgeScopePicker";
 import { MotionPresence } from "../../components/MotionPresence";
+import { todayISO } from "../../lib/date";
 import { getAiKnowledgeScopeRecords } from "../../services/aiContextService";
 import { DEFAULT_AI_CONTEXT_WINDOW_TOKENS, getCurrentAiProvider } from "../../lib/aiProviders";
 import { getCurrentTtsProvider } from "../../lib/ttsProviders";
@@ -378,7 +379,7 @@ export const VoiceRecallWorkspace = ({
   };
 
   const startScope = async (scope: import("../../types").AiKnowledgeScope) => {
-    const records = getAiKnowledgeScopeRecords(scope, blocks, new Date().toISOString().slice(0, 10));
+    const records = getAiKnowledgeScopeRecords(scope, blocks, todayISO());
     if (!records.length) {
       setMessage("当前资料范围没有可用日志，请重新选择。");
       return;

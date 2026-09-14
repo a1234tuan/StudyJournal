@@ -192,6 +192,7 @@ export const RecordEditorPage = ({
   const leavingRef = useRef(false);
   const stoppingRecordingRef = useRef<Promise<void> | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle");
   const [wideContent, setWideContent] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -293,8 +294,12 @@ export const RecordEditorPage = ({
             updatedAt: nowISO(),
           });
           setDraftSaveStatus("saved");
+          setDraftSaveError(null);
         } catch (error) {
+          // Keep the queue chain alive for later retries, but surface a diagnosable
+          // message instead of silently swallowing the failure.
           setDraftSaveStatus("error");
+          setDraftSaveError(formatUiError(error, "record-save"));
           throw error;
         }
       });

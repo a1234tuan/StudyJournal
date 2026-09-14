@@ -23,6 +23,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AiKnowledgeScopePicker } from "../components/AiKnowledgeScopePicker";
+import { todayISO } from "../lib/date";
 import type { AppSettings, Asset, Block, KnowledgePodcast, KnowledgePodcastAudioUnit, KnowledgePodcastCreativeBrief, KnowledgePodcastSegment, RecordBlock } from "../types";
 import {
   applyPodcastCreativeBriefMode,
@@ -176,7 +177,7 @@ export const KnowledgePodcastPage = ({
         confirmLabel="使用此范围"
         onBack={onBack}
         onConfirm={async (scope) => {
-          const sourceRecords = getAiKnowledgeScopeRecords(scope, blocks, new Date().toISOString().slice(0, 10));
+          const sourceRecords = getAiKnowledgeScopeRecords(scope, blocks, todayISO());
           await onSavePodcast({
             ...selected,
             scope,
@@ -318,7 +319,7 @@ const PodcastEditor = ({
   );
   const scriptNeedsRegeneration = podcast.scriptStatus === "idle" && Boolean(podcast.opening?.trim() || podcast.closing?.trim() || podcast.segments.length);
   const scopeRecordCount = useMemo(
-    () => getAiKnowledgeScopeRecords(podcast.scope, records, new Date().toISOString().slice(0, 10)).length,
+    () => getAiKnowledgeScopeRecords(podcast.scope, records, todayISO()).length,
     [podcast.scope, records],
   );
   const promptPreview = useMemo(() => {
@@ -370,7 +371,7 @@ const PodcastEditor = ({
   const generateScript = async () => {
     if (promptPreview.error) { setMessage(promptPreview.error); return; }
     const scope = podcast.scope;
-    const sourceRecords = getAiKnowledgeScopeRecords(scope, records, new Date().toISOString().slice(0, 10));
+    const sourceRecords = getAiKnowledgeScopeRecords(scope, records, todayISO());
     if (sourceRecords.length === 0) { setMessage("当前范围没有可用于播客的记录。"); return; }
     const draft = { ...podcast, creativeBrief, scope, audioStatus: "idle" as const, sourceRecordIds: sourceRecords.map((record) => record.id), lastError: undefined };
     try {

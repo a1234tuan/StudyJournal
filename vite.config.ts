@@ -47,7 +47,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           editor: ["@tiptap/react", "@tiptap/starter-kit", "@tiptap/extension-placeholder"],
-          charts: ["recharts"],
           storage: ["dexie", "jszip", "file-saver"],
           math: ["katex"],
         },

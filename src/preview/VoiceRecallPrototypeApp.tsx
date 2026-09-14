@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 
+import { isDesktopPlatform, isNativePlatform } from "../lib/platform";
 import {
   createVoiceRecallState,
   isVoiceCaptureActive,
@@ -37,10 +38,14 @@ import "../features/voiceRecall/voiceRecallPresentation.css";
 
 type VisualTheme = "reading" | "modern";
 
-const canPreviewVoiceRecall = (): boolean =>
-  typeof window !== "undefined"
-  && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost")
-  && new URLSearchParams(window.location.search).get("preview") === "voice-recall";
+const canPreviewVoiceRecall = (): boolean => {
+  if (typeof window === "undefined") return false;
+  // The Android Capacitor WebView and the Electron shell both serve from a localhost host,
+  // so the prototype shell must also be excluded on native/desktop platforms.
+  if (isNativePlatform() || isDesktopPlatform()) return false;
+  return (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost")
+    && new URLSearchParams(window.location.search).get("preview") === "voice-recall";
+};
 
 export const isVoiceRecallPrototypeRequest = (): boolean => canPreviewVoiceRecall();
 

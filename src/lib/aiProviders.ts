@@ -17,14 +17,17 @@ export const createAiProviderTemplate = (
 ): AiProviderProfile => {
   const base = baseProvider();
   switch (builtIn) {
+    // Unknown or legacy builtIn values read from persisted settings fall back to the
+    // documented default provider instead of returning undefined.
     case "deepseek":
+    default:
       return {
         ...base,
         id,
         providerName: "DeepSeek",
         baseUrl: "https://api.deepseek.com",
-        model: "deepseek-v4-pro",
-        builtIn,
+        model: "deepseek-v4-flash",
+        builtIn: "deepseek",
       };
     case "nvidia":
       return {
