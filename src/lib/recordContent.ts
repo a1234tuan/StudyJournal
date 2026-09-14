@@ -158,6 +158,39 @@ export const renameAssetTitleInContent = (
   return { contentHtml: doc.body.innerHTML, changed };
 };
 
+/**
+ * Remove `<record-asset>` nodes that the export deliberately leaves out of a snapshot.
+ *
+ * Two kinds of reference can never be packed into a backup: generated podcast audio (the backup
+ * format intentionally omits it, exactly as `normalizeSnapshotPodcasts` already strips
+ * `audioAssetId` from podcast rows) and references left dangling by data that was already broken
+ * locally. Writing either of them into a snapshot made `assertSnapshotIntegrity` treat the whole
+ * snapshot as corrupt, which permanently blocked every backup channel — so the export drops the
+ * node instead, and the caller decides which ids are droppable.
+ *
+ * Nested nodes are handled too, since asset references may live inside collapse / highlight /
+ * decision blocks.
+ */
+export const stripRecordAssetRefs = (
+  contentHtml: string,
+  shouldDrop: (assetId: string) => boolean,
+): { contentHtml: string; dropped: string[] } => {
+  if (!contentHtml || !contentHtml.includes("record-asset")) {
+    return { contentHtml, dropped: [] };
+  }
+  const doc = parseElement(contentHtml);
+  const dropped: string[] = [];
+  for (const node of Array.from(doc.querySelectorAll("record-asset"))) {
+    const id = node.getAttribute("data-asset-id") ?? "";
+    if (!id || !shouldDrop(id)) {
+      continue;
+    }
+    dropped.push(id);
+    node.remove();
+  }
+  return dropped.length === 0 ? { contentHtml, dropped } : { contentHtml: doc.body.innerHTML, dropped };
+};
+
 export const renameRecordAssetTitle = (
   record: RecordBlock,
   assetId: string,

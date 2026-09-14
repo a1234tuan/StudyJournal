@@ -58,6 +58,7 @@ import {
   hasLinearRecordNodes,
   renameAssetTitleInContent,
   renameRecordAssetTitle,
+  stripRecordAssetRefs,
   syncRecordRefsFromContent,
 } from "../lib/recordContent";
 import { normalizeRecordTags, sameRecordTags } from "../lib/recordTags";
@@ -184,6 +185,100 @@ const assertSnapshotIntegrity = (
       }
     }
   }
+};
+
+/**
+ * A snapshot may only reference assets it actually packs.
+ *
+ * Export deliberately omits generated podcast audio, and historical data can also reference assets
+ * that no longer exist locally. Either kind of reference made `assertSnapshotIntegrity` reject the
+ * snapshot, which permanently blocked every backup channel (manual zip, streaming export, folder
+ * backup, repository backup and cloud snapshot all share this code). The exported copy is
+ * reconciled instead: a reference whose asset is not packed is dropped from the exported content.
+ *
+ * The assertion still runs afterwards as a final guard, and it stays fully strict on restore, where
+ * the input is untrusted.
+ */
+const reconcileRecordAssetRefs = (
+  record: RecordBlock,
+  shouldDrop: (assetId: string) => boolean,
+): RecordBlock => {
+  const { contentHtml, dropped } = stripRecordAssetRefs(record.contentHtml, shouldDrop);
+  if (dropped.length === 0) {
+    return record;
+  }
+  const droppedIds = new Set(dropped);
+  // The refs list has to shrink with the content, otherwise re-syncing would re-append the very
+  // node that was just dropped (normalizeRecordContent rebuilds refs from `assets` when the
+  // content carries no linear record nodes at all).
+  return syncRecordRefsFromContent({
+    ...record,
+    contentHtml,
+    assets: record.assets.filter((ref) => !droppedIds.has(ref.id)),
+  });
+};
+
+const reconcileSnapshotAssetRefs = (params: {
+  blocks: Block[];
+  templates: ContentTemplate[];
+  drafts: RecordDraft[];
+  packedAssetIds: ReadonlySet<string>;
+  excludedAssetIds: ReadonlySet<string>;
+}): { blocks: Block[]; templates: ContentTemplate[]; drafts: RecordDraft[] } => {
+  const { packedAssetIds, excludedAssetIds } = params;
+  const droppedExcluded: string[] = [];
+  const droppedDangling: string[] = [];
+  const shouldDrop = (assetId: string): boolean => {
+    if (packedAssetIds.has(assetId)) {
+      return false;
+    }
+    (excludedAssetIds.has(assetId) ? droppedExcluded : droppedDangling).push(assetId);
+    return true;
+  };
+
+  const blocks = params.blocks.map((block) =>
+    block.type === "record" ? reconcileRecordAssetRefs(block, shouldDrop) : block,
+  );
+  const templates = params.templates.map((template) => {
+    const { contentHtml, dropped } = stripRecordAssetRefs(template.contentHtml, shouldDrop);
+    return dropped.length === 0 ? template : { ...template, contentHtml };
+  });
+  const drafts = params.drafts.map((draft) => {
+    const reconciled = reconcileRecordAssetRefs(draft.draft, shouldDrop);
+    return reconciled === draft.draft ? draft : { ...draft, draft: reconciled };
+  });
+
+  if (droppedExcluded.length > 0 || droppedDangling.length > 0) {
+    console.warn(
+      `[backup] 导出已移除 ${droppedExcluded.length} 处播客音频引用（备份格式不包含播客音频）`
+      + `、${droppedDangling.length} 处失效资源引用（本机已不存在对应资源）。`,
+    );
+  }
+  return { blocks, templates, drafts };
+};
+
+/**
+ * Normalize stored rows and reconcile asset references in one step, so the in-memory export
+ * (`createSnapshot`) and the streaming export (`createStreamableSnapshot`) cannot drift apart.
+ */
+const prepareExportContent = (
+  blocks: Block[],
+  templates: ContentTemplate[],
+  drafts: RecordDraft[],
+  assets: Asset[],
+): { blocks: Block[]; templates: ContentTemplate[]; drafts: RecordDraft[]; backupAssets: Asset[] } => {
+  const excludedAssetIds = new Set(
+    assets.filter((asset) => asset.generatedBy === "knowledge-podcast").map((asset) => asset.id),
+  );
+  const backupAssets = assets.filter((asset) => !excludedAssetIds.has(asset.id));
+  const reconciled = reconcileSnapshotAssetRefs({
+    blocks: normalizeSnapshotRecords(blocks),
+    templates: normalizeSnapshotTemplates(templates),
+    drafts: normalizeSnapshotRecordDrafts(drafts),
+    packedAssetIds: new Set(backupAssets.map((asset) => asset.id)),
+    excludedAssetIds,
+  });
+  return { ...reconciled, backupAssets };
 };
 
 export class CloudSyncLocalMutationError extends Error {
@@ -602,6 +697,15 @@ export class DexieStorageAdapter implements StorageAdapter {
       .delete();
   }
 
+  /**
+   * Drop the assets that became unreachable after a record was permanently deleted.
+   *
+   * Every store that can reference an asset has to be scanned before an asset is declared an
+   * orphan. Templates were missing from that list, so an image referenced by both a record and a
+   * template was deleted as soon as the record was purged, and the template was left with a
+   * dangling reference that blocked export. Podcast audio rows are scanned too: deleting a record
+   * that embedded generated audio must not silently break an episode.
+   */
   private async cleanupOrphanAssetsForRecord(record: RecordBlock, draft?: RecordDraft): Promise<void> {
     const candidateAssetIds = new Set([
       ...record.assets.map((asset) => asset.id),
@@ -611,8 +715,12 @@ export class DexieStorageAdapter implements StorageAdapter {
       return;
     }
 
-    const blocks = await db.blocks.toArray();
-    const drafts = await db.recordDrafts.toArray();
+    const [blocks, drafts, templates, podcasts] = await Promise.all([
+      db.blocks.toArray(),
+      db.recordDrafts.toArray(),
+      db.templates.toArray(),
+      db.knowledgePodcasts.toArray(),
+    ]);
     const stillReferencedAssetIds = new Set<string>();
     for (const block of blocks) {
       if (block.type !== "record" || block.id === record.id) {
@@ -631,6 +739,25 @@ export class DexieStorageAdapter implements StorageAdapter {
       for (const asset of otherDraft.draft.assets) {
         if (candidateAssetIds.has(asset.id)) {
           stillReferencedAssetIds.add(asset.id);
+        }
+      }
+    }
+    for (const template of templates) {
+      for (const ref of extractRecordRefsFromContent(template.contentHtml).assets) {
+        if (candidateAssetIds.has(ref.id)) {
+          stillReferencedAssetIds.add(ref.id);
+        }
+      }
+    }
+    for (const podcast of podcasts) {
+      const podcastAssetIds = [
+        ...podcast.segments.map((segment) => segment.audioAssetId),
+        ...(podcast.audioUnits?.map((unit) => unit.audioAssetId) ?? []),
+        ...(podcast.pendingAudioCleanupAssetIds ?? []),
+      ];
+      for (const assetId of podcastAssetIds) {
+        if (assetId && candidateAssetIds.has(assetId)) {
+          stillReferencedAssetIds.add(assetId);
         }
       }
     }
@@ -1462,7 +1589,9 @@ export class DexieStorageAdapter implements StorageAdapter {
     const draft = await db.recordDrafts.get(blockId);
 
     await markCloudSyncMutation();
-    await db.transaction("rw", [db.blocks, db.recordDrafts, db.assets, db.studySessions, db.recordReviews, db.recordReviewLogs, db.reviewAnnotationDrafts, ...reviewCoachFormalTables(db)], async () => {
+    // `templates` and `knowledgePodcasts` are in scope because orphan cleanup has to check every
+    // store that can reference an asset before it deletes one.
+    await db.transaction("rw", [db.blocks, db.recordDrafts, db.assets, db.templates, db.knowledgePodcasts, db.studySessions, db.recordReviews, db.recordReviewLogs, db.reviewAnnotationDrafts, ...reviewCoachFormalTables(db)], async () => {
       await db.blocks.delete(blockId);
       await db.recordDrafts.delete(blockId);
       await db.studySessions.where("blockId").equals(blockId).delete();
@@ -1926,10 +2055,8 @@ export class DexieStorageAdapter implements StorageAdapter {
         return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach };
       },
     );
-    const cleanedBlocks = normalizeSnapshotRecords(snapshot.blocks);
-    const cleanedDrafts = normalizeSnapshotRecordDrafts(snapshot.recordDrafts);
-    const cleanedTemplates = normalizeSnapshotTemplates(snapshot.templates);
-    const backupAssets = snapshot.assets.filter((asset) => asset.generatedBy !== "knowledge-podcast");
+    const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
+      prepareExportContent(snapshot.blocks, snapshot.templates, snapshot.recordDrafts, snapshot.assets);
     assertSnapshotIntegrity(cleanedBlocks, cleanedTemplates, backupAssets);
 
     return {
@@ -2001,10 +2128,9 @@ export class DexieStorageAdapter implements StorageAdapter {
         return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach };
       },
     );
-    const cleanedBlocks = normalizeSnapshotRecords(snapshot.blocks);
-    const cleanedDrafts = normalizeSnapshotRecordDrafts(snapshot.recordDrafts);
-    const cleanedTemplates = normalizeSnapshotTemplates(snapshot.templates);
-    const assets = snapshot.assets.filter((asset) => asset.generatedBy !== "knowledge-podcast").map(assetToMeta);
+    const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
+      prepareExportContent(snapshot.blocks, snapshot.templates, snapshot.recordDrafts, snapshot.assets);
+    const assets = backupAssets.map(assetToMeta);
     assertSnapshotIntegrity(cleanedBlocks, cleanedTemplates, assets);
 
     return {
