@@ -10,7 +10,7 @@ vi.mock("../../services/storageAdapter", () => ({
   },
 }));
 
-import { createProductionVoiceSession } from "./productionPipeline";
+import { clampVoiceLlmMaxTokens, createProductionVoiceSession } from "./productionPipeline";
 
 const settings = (): AppSettings => ({
   ...DEFAULT_SETTINGS,
@@ -38,6 +38,14 @@ const seedAllSecrets = () => {
 
 describe("createProductionVoiceSession", () => {
   beforeEach(() => secrets.store.clear());
+
+  it("clamps voice output to the bounded default and global ceiling", () => {
+    expect(clampVoiceLlmMaxTokens(undefined)).toBe(224);
+    expect(clampVoiceLlmMaxTokens(4096)).toBe(224);
+    expect(clampVoiceLlmMaxTokens(200)).toBe(200);
+    expect(clampVoiceLlmMaxTokens(250)).toBe(250);
+    expect(clampVoiceLlmMaxTokens(512)).toBe(224);
+  });
 
   it("refuses to build a session when a stage has no credential", async () => {
     await expect(createProductionVoiceSession({ settings: settings(), platform: "desktop", socketFactory: () => { throw new Error("unused"); } }))

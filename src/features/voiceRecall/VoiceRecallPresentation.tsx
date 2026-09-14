@@ -135,7 +135,7 @@ export const VoiceRecallStartView = ({
       <div className="vr-start-copy">
         <p className="vr-eyebrow"><Sparkles />主动回忆</p>
         <h1 id="vr-start-title">把刚学过的内容讲出来</h1>
-        <p>AI 一次问一个问题，练习不评分，也不改写原笔记。</p>
+        <p>AI 会根据你的话自然回应，练习不评分，也不改写原笔记。</p>
       </div>
       <div className="vr-kind-switch" role="tablist" aria-label="复述来源">
         <button type="button" role="tab" aria-selected={knowledgeMode === "material"} onClick={() => onKnowledgeModeChange("material")}>从学习资料开始</button>
@@ -219,6 +219,8 @@ export interface VoiceRecallCallViewProps {
   onContinueSupplement?: () => void;
   onViewSummary?: () => void;
   onFinishReturn?: () => void;
+  pendingPlayback?: boolean;
+  onContinuePlayback?: () => void;
 }
 
 export interface VoiceRecallHistoryViewProps {
@@ -226,15 +228,16 @@ export interface VoiceRecallHistoryViewProps {
   history: readonly VoiceRecallLocalHistory[];
   onBack: () => void;
   onDelete: (id: string) => void;
+  onOpenSession?: (item: VoiceRecallLocalHistory) => void;
   onLoadMore?: () => void;
   loading?: boolean;
 }
 
-export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
+export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onOpenSession, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
   <main className="vr-shell vr-history page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机通话历史</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>摘要不会进入云同步。需要跨设备保留时，请整理为正式日志。</p></section>
-    <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></article>)}</section>
+    <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><div className="vr-history-actions">{item.sessionId && onOpenSession && <button type="button" onClick={() => onOpenSession(item)}>打开通话</button>}<button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></div></article>)}</section>
     {onLoadMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更多</button>}
   </main>
 );
@@ -307,6 +310,8 @@ export const VoiceRecallCallView = ({
   onContinueSupplement,
   onViewSummary,
   onFinishReturn,
+  pendingPlayback = false,
+  onContinuePlayback,
 }: VoiceRecallCallViewProps) => {
   const MainControlIcon = mainControl.icon;
   return (
@@ -348,6 +353,7 @@ export const VoiceRecallCallView = ({
                 <button className={`vr-control-secondary ${state.userMuted ? "is-active" : ""}`} type="button" aria-pressed={state.userMuted} onClick={onMute}>{state.userMuted ? <MicOff /> : <Mic />}<span>{state.userMuted ? "已静音" : "静音"}</span></button>
                 <button className={`vr-control-secondary ${captionsVisible ? "is-active" : ""}`} type="button" aria-pressed={transcriptEditorOpen} aria-label="字幕与键盘输入" onClick={() => { onToggleCaptions(); onToggleTranscriptEditor(); }}><Captions /><span>{transcriptEditorOpen ? "收起输入" : "字幕输入"}</span></button>
                 <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={onPressStart} onPointerUp={onPressEnd} onPointerCancel={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
+                {pendingPlayback && state.status === "listening" && onContinuePlayback && <button type="button" className="vr-control-secondary" onClick={onContinuePlayback}><Play /><span>继续回复</span></button>}
                 <button className="vr-control-secondary vr-control-end" type="button" aria-label="结束并查看摘要" onClick={onEnd}><X /><span>结束</span></button>
               </>}
         </>}

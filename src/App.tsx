@@ -120,7 +120,7 @@ const isVoiceRecallPolicyPreview = () => isVoiceRecallProductionPreview() && voi
 const createVoiceRecallPolicyPreviewSession = async (): Promise<ProductionVoiceSession> => ({
   pipeline: new VoiceRecallPipeline(
     new MockAsrStreamAdapter(),
-    new MockLlmStreamAdapter(undefined, ["核心概念", "运行机制", "实际应用"]),
+    new MockLlmStreamAdapter(),
     new MockTtsStreamAdapter(),
   ),
   provider: { templateId: "voice-policy-preview", configurationIdentity: "voice-policy-preview@1" },

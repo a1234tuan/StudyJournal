@@ -65,7 +65,6 @@ describe("Second audit: credential and accounting integration", () => {
     submitText("本轮回答");
     await waitFor(async () => expect(await repository.listTurns(runtime.activeSessionId!)).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
-    fireEvent.click(screen.getByRole("button", { name: /结束通话/ }));
     await screen.findByRole("heading", { name: "本次复述摘要" });
     fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
     await waitFor(async () => expect(await repository.listHistory()).toHaveLength(1));
@@ -113,7 +112,7 @@ const openCall = async (automatic = false) => {
   resources.push({ database, runtime });
   const pipeline = new VoiceRecallPipeline(
     new MockAsrStreamAdapter(),
-    new MockLlmStreamAdapter(undefined, ["核心概念", "运行机制", "实际应用"]),
+    new MockLlmStreamAdapter(),
     new MockTtsStreamAdapter(),
   );
   let currentRoute: VoiceRecallNavigationRoute = { screen: "start", returnTab: "review", sourceKind: "review-home", recordIds: [] };
@@ -130,7 +129,7 @@ const openCall = async (automatic = false) => {
   fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
   fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
   fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
-  await screen.findByRole("heading", { name: "先说说你对“核心概念”的整体理解。" });
+  await screen.findByRole("heading", { name: "已接通，你可以直接说。" });
   await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
   return { database, repository, runtime, pipeline, sessionFactory, view, Harness };
 };
@@ -293,8 +292,12 @@ it("keeps observed consumption when a provider fails", async () => {
     const stored = await repository.getSession(runtime.activeSessionId!);
     expect(Object.values(stored?.usageOperations ?? {})).toContainEqual({ llmInputTokens: 7, llmOutputTokens: 2 });
   });
-  expect(await repository.listTurns(runtime.activeSessionId!)).toEqual([]);
-  await waitFor(() => expect(screen.getByRole("button", { name: "确认并发送" })).not.toBeDisabled());
+   await waitFor(async () => {
+     const turns = await repository.listTurns(runtime.activeSessionId!);
+     expect(turns).toHaveLength(1);
+     expect(turns[0]).toMatchObject({ status: "failed", confirmedText: "测试失败计量" });
+   });
+   await waitFor(() => expect(screen.getByRole("button", { name: "确认并发送" })).not.toBeDisabled());
 });
 
 it("warns at 90 seconds and transcribes at 120 seconds without submitting to the LLM", async () => {

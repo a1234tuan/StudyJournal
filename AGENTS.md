@@ -16,6 +16,11 @@
 - The 2026-09-12 editor toolbar follow-up is complete through automated acceptance: the log editor uses a compact icon-only recorder on narrow screens, recorder feedback occupies a full-width row, and the code-language selector spans two mobile grid cells. These changes remain scoped to `.record-editor-page` and do not alter record persistence or editor document semantics.
 - The 2026-09-12 usage-guide follow-up is complete through automated acceptance: More -> Usage Guide is organized as a task-oriented document with nine chapters, five responsive semantic illustrations under `public/guide/`, and a narrow-screen horizontal chapter index. The guide describes only implemented product capabilities and keeps provider credentials, local voice history, backup, and sync boundaries explicit.
 
+## Voice Call Natural Conversation Freeze
+
+- `docs/voice-call-natural-conversation-freeze-2026-09-14.md` is the active design baseline (`voice-conversation-design@1.0`); v1 uses user-first natural conversation and button-only interruption.
+- Prompt version is `voice-conversation-prompt@1.0`; ordinary validation excludes live provider tests.
+
 ## Voice Recall Boundaries
 
 - Voice recall is an `ASR -> LLM -> TTS` active-recall medium, not a video-call feature or a third learning truth system.
@@ -24,7 +29,7 @@
 - `userMuted` and `systemCaptureGate` are independent. Navigation, backgrounding, and view unmount pause capture/playback without ending the session; recovery always resumes paused.
 - `NativeVoiceCapture` is separate from `NativeAudioRecorder`, and the two Android microphone paths must remain mutually exclusive.
 - The deterministic `voice-mock-cn@1` template is verified for automation. `voice-default-cn@2` defaults to Aliyun Paraformer ASR, the user's current LLM, and Fish Audio TTS, while the start workspace can independently select configured ASR/LLM/TTS profiles. The default three legs were verified against live services on 2026-09-09, but the template stays `candidate` until physical-device acceptance. Doubao speech profiles remain candidates because no activated real account has validated them; never claim model, voice, quota, cost, browser-direct support, or streaming behavior from configuration alone.
-- The reply chain must clamp `max_tokens` (currently 320) and send `thinking: { type: "disabled" }`: a reasoning model otherwise spends the whole budget on reasoning and returns an empty body. `voicePipeline.live.test.ts` covers this with a real provider when keys are supplied.
+- The natural-conversation voice reply chain clamps `max_tokens` to 224 by default and 250 globally. It sends no `thinking` option unless the selected provider explicitly declares `voiceThinkingMode: "enabled"`; reasoning deltas are never forwarded to TTS. Deterministic adapter tests cover this; live provider tests remain opt-in.
 - Web permits only Mock, a user-controlled relay, or a profile explicitly validated as `browserDirectSupported`. Provider credentials and account-specific overrides remain device-local.
 - Voice practice never writes FSRS or auto-rates a review card. A user-confirmed Coach transcript uses the existing `ReviewCoachOrchestrator.submitQuizAnswer` path with one answer per formal turn; a voice summary becomes a journal only after explicit confirmation.
 
@@ -79,7 +84,7 @@ git diff --check
 
 Use deterministic mocks in automated tests. Real AI providers are limited to explicit, controlled acceptance runs and must never replace deterministic CI coverage.
 
-The current automated acceptance baseline is `158` deterministic Vitest files / `978` tests (the two additional opt-in live files are explicitly excluded from ordinary acceptance), `52` Playwright tests collected across Desktop and Android-narrow projects (`51` passed and one Desktop-only assertion was skipped on Android-narrow), and `4` isolated Firebase Emulator tests. The local host protocol gates also include two Node WebSocket tests and one Android OkHttp MockWebServer test. Physical Android keyboard/IME, system back, image gestures, real-device audio behaviour, and controlled real-account Firebase quota checks remain manual release gates. See `docs/second-audit-repair-acceptance.md` for R1–R15 and credential setup.
+The current automated acceptance baseline is `163` deterministic Vitest files / `1021` tests (the opt-in live files are explicitly excluded from ordinary acceptance), `54` Playwright tests collected across Desktop and Android-narrow projects (`53` passed and one Android-narrow-inapplicable assertion was skipped), and `4` isolated Firebase Emulator tests. The local host protocol gates also include two Node WebSocket tests and one Android OkHttp MockWebServer test. Physical Android keyboard/IME, system back, image gestures, real-device audio behaviour, button interruption, and controlled real-account Firebase quota checks remain manual release gates. See `docs/second-audit-repair-acceptance.md` for R1–R15 and credential setup.
 
 For local Stage 3 UI acceptance, run `npm run build`, start `npm run preview -- --host 127.0.0.1 --port 4177`, and open `http://127.0.0.1:4177/?preview=stage3`. This localhost-only query seeds an isolated `BFS Stage3 Preview` record with an overdue review, block feedback, and an analysis-queue item; it is gated out of normal URLs and native shells.
 

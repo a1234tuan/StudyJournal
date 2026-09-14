@@ -72,7 +72,7 @@ export const createVoiceRecallState = (
   captureRequested: false,
   preflightConfirmed: false,
   transcript: "",
-  teacherText: "正在准备第一问…",
+  teacherText: "已接通，你可以直接说。",
   generation: 0,
 });
 

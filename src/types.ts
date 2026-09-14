@@ -345,6 +345,7 @@ export interface AiProviderProfile {
   maxTokens: number;
   contextWindowTokens?: number;
   memoryTurns?: number;
+  voiceThinkingMode?: "enabled" | "disabled";
   builtIn?: "deepseek" | "nvidia" | "aliyun" | "custom-proxy";
 }
 

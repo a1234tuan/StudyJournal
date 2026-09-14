@@ -1,5 +1,7 @@
 # Real-time 语音主动回忆实现基线
 
+> 交互与输出预算以 `docs/voice-call-natural-conversation-freeze-2026-09-14.md` 的 `voice-conversation-design@1.0` 为准。本文件保留 2026-09-11 的链路基线；其中旧的 prompt、320 token 和强制 disabled thinking 描述不再适用于自然对话实现。
+
 > 状态（2026-09-11）：自动听说半双工已完成 Android 真机多轮验证；手动输入与结束/保存动作仍未验收，计费核对仍是量产门槛
 > 二次审计修复：保留手动录音与校对确认，并增加自动听说半双工候选模式；回复采用流式 LLM、句级 TTS 和有限预取。旧 live 记录不替代本轮设备与账户验收。
 > 基线日期：2026-09-11
@@ -81,7 +83,7 @@
 - `audioPlaybackSink.ts` 用 Web Audio 真实播放：`provider-native`（Fish MP3）走 `decodeAudioData`，`pcm-s16le` 直接转采样；`play()` 只在播放结束或被打断后 resolve，因此「说完」与「播完」不再靠标志位假装。
 - 工作区删除 `createTeacherReply` 与伪造转写；采集帧经 `AsyncQueue` 交给真实 ASR，partial 实时上屏，`finalizing-asr` 阶段承载「转写校对」，用户确认后由 `buildVoiceTeacherMessages` 组装提示词交给真实 LLM。
 - 状态真实化：波形与「正在识别」由**真实采集状态**驱动；主按钮文案与实际动作一致；连接指示改为会话状态（通话中 / 正在连接 / 已暂停 / 已断开）；披露文案显示**实际运行的模型**。
-- 成本护栏：语音 LLM `max_tokens` 钳制到 320 并强制 `thinking: { type: "disabled" }`（`deepseek-v4-pro` 否则会把预算耗在推理上并返回空正文）；教练提示词限 80 字回复、6k 字符材料、最近 3 轮；TTS 每个请求 2 分钟超时。
+- 成本护栏（历史基线）：当前自然对话实现使用 `max_tokens` 默认 224、全局上限 250；仅对显式声明支持的 provider 发送 thinking，reasoning 不进入 TTS。材料上限和最近 10 个已完成 turns 由自然对话 Prompt 版本控制。
 - 采集健壮性：原生 `captureError` 被消费并中止采集，异常经 `startCapture(onError)` 上报；`startSession` 重置转写/回复草稿/历史标记；启动时修复中断会话并清理过期临时会话；删除记录时把相关语音来源标记为不可用；本机保留历史不再按数量淘汰，按 savedAt + id 稳定分页，每页 50 条。
 
 **已验证（2026-09-09，受控账号）**

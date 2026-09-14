@@ -98,6 +98,37 @@ describe("VoiceRecallRepository", () => {
     database.close();
   });
 
+  it("updates playback metadata without deleting the confirmed transcript", async () => {
+    const { database, repository } = await openRepository();
+    await repository.putSession({ ...session(), checkpoint: { ...session().checkpoint, nextSequence: 0 } });
+    await repository.commitTurn({
+      ...turn(),
+      status: "completed",
+      assistantText: "AI 回复",
+      playedText: "",
+      pendingText: "AI 回复",
+      playbackStatus: "pending",
+    }, "回答");
+
+    const pending = (await repository.listTurns("session-1"))[0];
+    await repository.updateTurn({
+      ...pending,
+      playedText: "AI 回复",
+      pendingText: undefined,
+      playbackStatus: "completed",
+      updatedAt: "2026-09-08T08:00:01.000Z",
+    });
+
+    expect(await repository.listTurns("session-1")).toEqual([expect.objectContaining({
+      confirmedText: "回答",
+      assistantText: "AI 回复",
+      playedText: "AI 回复",
+      pendingText: undefined,
+      playbackStatus: "completed",
+    })]);
+    database.close();
+  });
+
   it("rejects out-of-order commits without persisting a partial turn", async () => {
     const { database, repository } = await openRepository();
     await repository.putSession(session());

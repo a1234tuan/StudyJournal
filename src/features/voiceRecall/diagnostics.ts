@@ -7,6 +7,31 @@ export const recordVoiceStage = (operationId: string, stage: VoiceStage, event: 
   if (events.length > 512) events.splice(0, events.length - 512);
 };
 export const voiceStageSnapshot = () => events.map((event) => ({ ...event }));
+export interface VoiceTurnObservation {
+  operationId: string;
+  promptVersion?: string;
+  provider?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  asrDurationMs?: number;
+  llmDurationMs?: number;
+  firstTokenDelayMs?: number;
+  firstAudioDelayMs?: number;
+  playbackDurationMs?: number;
+  replyCharacters: number;
+  playedCharacters: number;
+  endsWithQuestion: boolean;
+  interrupted: boolean;
+  asrRetries: number;
+  errorCode?: string;
+  playbackStatus?: string;
+}
+const turnObservations: VoiceTurnObservation[] = [];
+export const recordVoiceTurnObservation = (observation: VoiceTurnObservation) => {
+  turnObservations.push({ ...observation });
+  if (turnObservations.length > 256) turnObservations.splice(0, turnObservations.length - 256);
+};
+export const voiceTurnObservationSnapshot = () => turnObservations.map((item) => ({ ...item }));
 export class VoiceStageError extends Error {
   constructor(readonly stage: VoiceStage, cause: unknown) { super(`${labels[stage]}没有完成`, { cause }); this.name = "VoiceStageError"; }
 }

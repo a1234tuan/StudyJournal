@@ -3,6 +3,7 @@ import type { VoiceRecallSource } from "./contracts";
 
 export type VoiceRecallLocalSessionStatus = VoiceRecallStatus | "interrupted" | "completed";
 export type VoiceRecallLocalTurnStatus = "draft" | "finalizing" | "confirmed" | "completed" | "cancelled" | "failed";
+export type VoicePlaybackStatus = "pending" | "playing" | "completed" | "interrupted" | "failed" | "truncated";
 
 export interface VoiceRecallProviderSnapshot {
   templateId?: string;
@@ -65,6 +66,11 @@ export interface VoiceRecallTurnLocal {
   operationId: string;
   status: VoiceRecallLocalTurnStatus;
   teacherText: string;
+  assistantText?: string;
+  playedText?: string;
+  pendingText?: string;
+  playbackStatus?: VoicePlaybackStatus;
+  systemGenerated?: boolean;
   providerFinalText?: string;
   cleanText?: string;
   confirmedText?: string;

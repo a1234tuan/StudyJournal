@@ -135,4 +135,19 @@ describe("VoiceRecallRuntimeController", () => {
     await runtime.end();
     database.close();
   });
+
+  it("restores an ended session with its checkpoint available for transcript recovery", async () => {
+    const { database, runtime } = await openRuntime();
+    const id = await runtime.createSession(request);
+    runtime.dispatch({ type: "OPEN_PREFLIGHT" });
+    runtime.dispatch({ type: "CONFIRM_DISCLOSURE", confirmed: true });
+    runtime.dispatch({ type: "CONNECT" });
+    runtime.dispatch({ type: "CONNECTED" });
+    await runtime.end();
+
+    const restored = new VoiceRecallRuntimeController(new VoiceRecallRepository(database));
+    await restored.restoreSession(id);
+    expect(restored.snapshot).toMatchObject({ status: "paused", captureRequested: false });
+    database.close();
+  });
 });

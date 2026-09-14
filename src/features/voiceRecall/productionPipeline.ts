@@ -28,7 +28,13 @@ import { VoiceStageError, describeVoiceStage } from "./diagnostics";
 
 /** Voice replies are spoken, so they must stay short: a long answer costs more
  * TTS and forces the user to wait. Clamped regardless of the chat setting. */
-export const VOICE_LLM_MAX_TOKENS = 320;
+export const VOICE_LLM_MAX_TOKENS = 250;
+export const VOICE_LLM_DEFAULT_MAX_TOKENS = 224;
+
+export const clampVoiceLlmMaxTokens = (configured: number | undefined): number => {
+  const requested = Number.isFinite(configured) && (configured ?? 0) > 0 ? configured! : VOICE_LLM_DEFAULT_MAX_TOKENS;
+  return Math.min(requested > VOICE_LLM_MAX_TOKENS ? VOICE_LLM_DEFAULT_MAX_TOKENS : requested, VOICE_LLM_MAX_TOKENS);
+};
 
 /** Configuration/platform problems we author ourselves: shown to the user
  * verbatim because they say what to fix, unlike raw provider errors. */
@@ -134,7 +140,7 @@ export const createProductionVoiceSession = async (
     ? input.settings.ai?.providers.find((profile) => profile.id === input.config?.llmProfileId)
     : getCurrentAiProvider(input.settings.ai);
   if (!configuredLlm) throw new VoiceConfigurationError("请先在“更多 → AI 设置”里配置 AI 供应商。");
-  const llmProfile = { ...configuredLlm, maxTokens: Math.min(configuredLlm.maxTokens || VOICE_LLM_MAX_TOKENS, VOICE_LLM_MAX_TOKENS) };
+  const llmProfile = { ...configuredLlm, maxTokens: clampVoiceLlmMaxTokens(configuredLlm.maxTokens) };
   const configuredTts = getCurrentTtsProvider(input.settings.tts);
   const ttsProfiles = createVoiceTtsProfiles(input.settings.tts?.providers);
   const selectedAsrId = input.config?.asrProfileId || baseTemplate.asrProfileId;

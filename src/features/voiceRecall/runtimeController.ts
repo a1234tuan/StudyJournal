@@ -13,7 +13,7 @@ import { VoiceAudioFocusManager } from "./audioFocus";
 import { recordVoiceStage, stageFailure } from "./diagnostics";
 import { createVoiceRecallState, transitionVoiceRecallState, type VoiceRecallAction, type VoiceRecallState } from "./domain";
 import type { VoiceRecallSessionLocal, VoiceRecallStructuredMemory, VoiceRecallTurnLocal } from "./localTypes";
-import type { VoiceRecallPipeline, VoiceRecallPipelineEvents, VoiceTeacherResponsePolicy } from "./pipeline";
+import type { VoiceRecallPipeline, VoiceRecallPipelineEvents } from "./pipeline";
 import { VoiceRecallRepository, voiceRecallRepository } from "./repository";
 
 type RuntimeListener = (state: VoiceRecallState | undefined) => void;
@@ -102,7 +102,7 @@ export class VoiceRecallRuntimeController {
   async restoreSession(id: string) {
     if (this.session) await this.end();
     const session = await this.repository.getSession(id);
-    if (!session || session.sourceUnavailable || ["completed", "ending", "ended"].includes(session.status)) {
+    if (!session || session.sourceUnavailable || ["completed", "ending"].includes(session.status)) {
       throw new Error("该语音复述会话已无法恢复");
     }
     this.cancellation = new VoiceRecallCancellationTree();
@@ -237,6 +237,14 @@ export class VoiceRecallRuntimeController {
     }
   }
 
+  async updateTurn(turn: VoiceRecallTurnLocal) {
+    recordVoiceStage(turn.operationId, "storage", "start");
+    try { await this.repository.updateTurn(turn); }
+    catch (error) { recordVoiceStage(turn.operationId, "storage", "failed"); throw stageFailure("storage", error); }
+    recordVoiceStage(turn.operationId, "storage", "completed");
+    return turn;
+  }
+
   async transcribeTurn(input: {
     pipeline: VoiceRecallPipeline;
     frames: AsyncIterable<VoiceAudioFrame>;
@@ -266,8 +274,8 @@ export class VoiceRecallRuntimeController {
     pipeline: VoiceRecallPipeline;
     messages: readonly VoiceTeacherMessage[];
     voice: string;
-    policy?: VoiceTeacherResponsePolicy;
     events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
+    deferPlayback?: boolean;
   }) {
     if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
     const operationGeneration = this.operationEpoch;
@@ -281,20 +289,43 @@ export class VoiceRecallRuntimeController {
       turnId: crypto.randomUUID(),
       operationId,
       messages: input.messages,
-      policy: input.policy,
       rate: input.rate,
       voice: input.voice,
       generation,
       signal: turnSignal,
-      events: {
+        events: {
         waitForAudioCapacity: () => this.playback.waitForCapacity(2),
         onUsage,
         onTeacherToken: (token) => { if (!turnSignal.aborted) input.events?.onTeacherToken?.(token); },
         onAudio: (chunk, generation, segmentId) => { if (!turnSignal.aborted) return input.events?.onAudio?.(chunk, generation, segmentId); },
-      },
-    }));
+        },
+        deferPlayback: input.deferPlayback,
+      }));
     if (turnSignal.aborted) throw new DOMException("语音轮次已取消", "AbortError");
     return result;
+  }
+
+  async speakText(input: {
+    rate?: number;
+    pipeline: VoiceRecallPipeline;
+    text: string;
+    voice: string;
+    events?: Pick<VoiceRecallPipelineEvents, "onAudio" | "onUsage">;
+  }) {
+    if (!this.session || !this.state) throw new Error("当前没有活动的语音复述会话");
+    const signal = this.cancellation.beginTurn();
+    const sessionId = this.session.id;
+    return this.withUsage(sessionId, async (operationId, onUsage) => ({ usage: await input.pipeline.speakText({
+      sessionId,
+      turnId: crypto.randomUUID(),
+      operationId,
+      text: input.text,
+      voice: input.voice,
+      rate: input.rate,
+      generation: this.state?.generation ?? 0,
+      signal,
+      events: { onUsage, onAudio: input.events?.onAudio },
+    }) }));
   }
 
   async pause() {

@@ -131,14 +131,15 @@ describe("voice provider adapters", () => {
       ...context(),
       frames: frames(),
       format: { encoding: "pcm-s16le", sampleRate: 16_000, channelCount: 1 },
-      messages: [{ role: "system", content: "一次只问一个问题", contentBoundary: "trusted-instruction" }],
+      messages: [{ role: "system", content: "自然语音通话", contentBoundary: "trusted-instruction" }],
       voice: "mock-teacher",
       generation: 2,
       events: { onAudio: (chunk) => { audio.push(new TextDecoder().decode(chunk)); } },
     });
     expect(result.transcript).toContain("提取练习");
-    expect(result.teacherText).toContain("再举一个");
-    expect(audio).toEqual(["回答抓住了提取练习。再举一个你自己的例子。"]);
+    expect(result.teacherText).toContain("提取练习");
+    expect(result.teacherText).not.toContain("voice_control");
+    expect(audio.join("")).toBe("我理解你刚才的重点是“主动回忆通过提取练习强化长期记忆。”。我先直接回应这个观点。");
     expect(result.usage).toMatchObject({ asrSeconds: 1, llmInputTokens: 24, llmOutputTokens: 16 });
   });
 

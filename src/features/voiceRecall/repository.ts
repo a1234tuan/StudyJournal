@@ -22,7 +22,7 @@ const validateSession = (session: VoiceRecallSessionLocal) => {
 };
 
 const validateTurn = (turn: VoiceRecallTurnLocal) => {
-  const textSize = [turn.teacherText, turn.providerFinalText, turn.cleanText, turn.confirmedText]
+  const textSize = [turn.teacherText, turn.assistantText, turn.playedText, turn.pendingText, turn.providerFinalText, turn.cleanText, turn.confirmedText]
     .reduce((total, text) => total + (text?.length ?? 0), 0);
   if (!turn.id || !turn.sessionId || turn.sequence < 0 || !turn.operationId || textSize > VOICE_RECALL_LIMITS.maxTurnTextCharacters) {
     throw new Error("语音复述轮次无效或文本已达上限");
@@ -142,6 +142,18 @@ export class VoiceRecallRepository {
     const items = rows.slice(0, size);
     const last = items.at(-1);
     return { items, nextCursor: rows.length > size && last ? { savedAt: last.savedAt, id: last.id } : undefined };
+  }
+
+  async updateTurn(turn: VoiceRecallTurnLocal) {
+    validateTurn(turn);
+    await this.database.transaction("rw", this.database.voiceRecallTurns, async () => {
+      const existing = await this.database.voiceRecallTurns.get(turn.id);
+      if (!existing || existing.sessionId !== turn.sessionId || existing.sequence !== turn.sequence) {
+        throw new Error("语音复述轮次不存在或无法更新");
+      }
+      await this.database.voiceRecallTurns.put(structuredClone(turn));
+    });
+    return turn;
   }
 
   listHistory() {

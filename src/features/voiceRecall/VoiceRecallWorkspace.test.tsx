@@ -80,7 +80,7 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallWorkspace", () => {
-  it("does not start automatic capture until the generated opening question finishes playback", async () => {
+  it("starts automatic capture after the user-first connection", async () => {
     let finishPlayback: () => void = () => undefined;
     const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () { return; });
     const { database, runtime, Harness } = await openWorkspace({
@@ -96,9 +96,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
-    expect(capture).not.toHaveBeenCalled();
-    finishPlayback();
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     await waitFor(() => expect(capture).toHaveBeenCalledOnce());
 
     await runtime.end();
@@ -175,7 +173,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     expect(screen.getByText("1 条学习资料")).toBeInTheDocument();
     await runtime.disposeView();
@@ -196,7 +194,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
     fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "这是人工确认后的正式回答" } });
@@ -205,8 +203,7 @@ describe("VoiceRecallWorkspace", () => {
     await waitFor(async () => expect(await repository.listTurns((await repository.listResumableSessions())[0].id)).toEqual([
       expect.objectContaining({ confirmedText: "这是人工确认后的正式回答", sequence: 0 }),
     ]));
-    await screen.findByRole("button", { name: "查看总结" });
-    fireEvent.click(screen.getByRole("button", { name: "查看总结" }));
+    fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
 
     await screen.findByRole("heading", { name: "本次复述摘要" });
     expect(screen.getByText(/这是人工确认后的正式回答/)).toBeInTheDocument();
@@ -254,15 +251,15 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
     fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
 
-    await screen.findByRole("heading", { name: "先说说你对“事件循环”的整体理解。" });
     await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
-    expect(respond).toHaveBeenCalledOnce();
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    expect(respond).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
     fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "结束" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
 
     await screen.findByRole("heading", { name: "要继续补充，还是查看总结？" });
-    expect(respond).toHaveBeenCalledOnce();
+    expect(respond).not.toHaveBeenCalled();
     expect(runtime.snapshot?.status).toBe("paused");
     const stored = (await repository.listResumableSessions())[0];
     expect(stored.memory.completionReason).toBe("user-requested");

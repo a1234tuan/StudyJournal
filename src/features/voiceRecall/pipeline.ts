@@ -10,22 +10,11 @@ import type {
 import { SpeakableSentenceBuffer } from "./sentenceBuffer";
 import { recordVoiceStage, stageFailure } from "./diagnostics";
 import { VoiceUsageMeter, type VoiceUsageTotals } from "./providerRuntime";
-import {
-  VoiceTeacherStreamParser,
-  type VoiceTeacherControlledReply,
-  type VoiceTeacherDecision,
-} from "./teacherProtocol";
 
 export interface VoiceRecallPipelineResult {
   transcript: string;
   teacherText: string;
-  decision?: VoiceTeacherDecision;
   usage: VoiceUsageTotals;
-}
-
-export interface VoiceTeacherResponsePolicy {
-  validateDecision: (decision: VoiceTeacherDecision) => string | undefined;
-  fallback: VoiceTeacherControlledReply;
 }
 
 export interface VoiceRecallPipelineEvents {
@@ -108,9 +97,9 @@ export class VoiceRecallPipeline {
     voice: string;
     generation: number;
     signal: AbortSignal;
-    policy?: VoiceTeacherResponsePolicy;
+    deferPlayback?: boolean;
     events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio" | "onUsage" | "waitForAudioCapacity">;
-  }): Promise<{ teacherText: string; decision?: VoiceTeacherDecision; usage: VoiceUsageTotals }> {
+  }): Promise<{ teacherText: string; usage: VoiceUsageTotals }> {
     const usage = new VoiceUsageMeter();
     const sentenceBuffer = new SpeakableSentenceBuffer(18);
     const controller = new AbortController();
@@ -118,7 +107,6 @@ export class VoiceRecallPipeline {
     input.signal.addEventListener("abort", abort, { once: true });
     if (input.signal.aborted) abort();
     let teacherText = "";
-    let decision: VoiceTeacherDecision | undefined;
     let sentenceIndex = 0;
     let failure: unknown;
     const ttsTasks: Promise<void>[] = [];
@@ -134,7 +122,7 @@ export class VoiceRecallPipeline {
       const task = (async () => {
         await acquireTtsSlot();
         try {
-          await input.events?.waitForAudioCapacity?.();
+          if (!input.deferPlayback) await input.events?.waitForAudioCapacity?.();
           controller.signal.throwIfAborted();
           const segmentId = input.operationId + ":tts:" + index;
           recordVoiceStage(segmentId, "tts", "start");
@@ -164,14 +152,12 @@ export class VoiceRecallPipeline {
       input.events?.onTeacherToken?.(text);
       for (const sentence of sentenceBuffer.append(text)) speak(sentence);
     };
-    const completeLlmAttempt = async (messages: readonly VoiceTeacherMessage[], repair: boolean) => {
-      const parser = input.policy ? new VoiceTeacherStreamParser() : undefined;
-      let invalidReason: string | undefined;
+    const completeLlmAttempt = async (messages: readonly VoiceTeacherMessage[]) => {
       let firstToken = true;
       for await (const event of this.llm.complete({
         sessionId: input.sessionId,
         turnId: input.turnId,
-        operationId: input.operationId + (repair ? ":llm:repair" : ":llm"),
+        operationId: input.operationId + ":llm",
         signal: controller.signal,
         messages,
       })) {
@@ -188,40 +174,13 @@ export class VoiceRecallPipeline {
           firstToken = false;
           recordVoiceStage(input.operationId, "llm", "first-token");
         }
-        if (!parser) {
-          emitTeacherText(event.text);
-          continue;
-        }
-        const spoken = parser.push(event.text);
-        if (!invalidReason && parser.decision) invalidReason = input.policy?.validateDecision(parser.decision);
-        if (!invalidReason && parser.decision) emitTeacherText(spoken);
+        emitTeacherText(event.text);
       }
-      if (!parser) return undefined;
-      const parsed = parser.finish();
-      invalidReason ??= parsed.error;
-      if (!invalidReason && parsed.decision) invalidReason = input.policy?.validateDecision(parsed.decision);
-      return invalidReason ? { error: invalidReason } : { decision: parsed.decision };
     };
     try {
       controller.signal.throwIfAborted();
       recordVoiceStage(input.operationId, "llm", "start");
-      let attempt = await completeLlmAttempt(input.messages, false);
-      if (input.policy && attempt?.error) {
-        attempt = await completeLlmAttempt([
-          ...input.messages,
-          {
-            role: "system",
-            content: `上一回复未通过应用校验：${attempt.error}。请重新输出完整控制头和口语回复，并严格服从应用维护的教学状态。`,
-            contentBoundary: "trusted-instruction",
-          },
-        ], true);
-      }
-      if (input.policy && attempt?.error) {
-        decision = input.policy.fallback.decision;
-        emitTeacherText(input.policy.fallback.spokenReply);
-      } else {
-        decision = attempt?.decision;
-      }
+      await completeLlmAttempt(input.messages);
       const trailing = sentenceBuffer.flush();
       if (!teacherText.trim()) throw new Error("AI 返回空正文");
       recordVoiceStage(input.operationId, "llm", "completed");
@@ -229,7 +188,7 @@ export class VoiceRecallPipeline {
       await Promise.all(ttsTasks);
       if (failure) throw failure;
       controller.signal.throwIfAborted();
-      return { teacherText, decision, usage: usage.snapshot() };
+      return { teacherText, usage: usage.snapshot() };
     } catch (error) {
       recordVoiceStage(input.operationId, "llm", input.signal.aborted ? "cancelled" : "failed");
       throw failure ?? stageFailure("llm", error);
@@ -237,6 +196,44 @@ export class VoiceRecallPipeline {
       controller.abort();
       input.signal.removeEventListener("abort", abort);
       await Promise.allSettled(ttsTasks);
+    }
+  }
+
+  async speakText(input: {
+    rate?: number;
+    sessionId: string;
+    turnId: string;
+    operationId: string;
+    text: string;
+    voice: string;
+    generation: number;
+    signal: AbortSignal;
+    events?: Pick<VoiceRecallPipelineEvents, "onAudio" | "onUsage">;
+  }): Promise<VoiceUsageTotals> {
+    const usage = new VoiceUsageMeter();
+    recordVoiceStage(input.operationId, "tts", "start");
+    try {
+      for await (const event of this.tts.synthesize({
+        sessionId: input.sessionId,
+        turnId: input.turnId,
+        operationId: input.operationId,
+        signal: input.signal,
+        text: input.text,
+        voice: input.voice,
+        rate: input.rate,
+      })) {
+        input.signal.throwIfAborted();
+        if (event.type === "usage" && event.characters !== undefined) {
+          usage.add({ ttsCharacters: event.characters });
+          input.events?.onUsage?.({ ttsCharacters: usage.snapshot().ttsCharacters });
+        }
+        if (event.type === "audio") await input.events?.onAudio?.(event.chunk, input.generation, input.operationId);
+      }
+      recordVoiceStage(input.operationId, "tts", "completed");
+      return usage.snapshot();
+    } catch (error) {
+      recordVoiceStage(input.operationId, "tts", input.signal.aborted ? "cancelled" : "failed");
+      throw stageFailure("tts", error);
     }
   }
 
@@ -271,6 +268,6 @@ export class VoiceRecallPipeline {
       signal: input.signal,
       events: input.events,
     });
-    return { transcript: asr.transcript, teacherText: llm.teacherText, decision: llm.decision, usage: mergeUsage(asr.usage, llm.usage) };
+    return { transcript: asr.transcript, teacherText: llm.teacherText, usage: mergeUsage(asr.usage, llm.usage) };
   }
 }
