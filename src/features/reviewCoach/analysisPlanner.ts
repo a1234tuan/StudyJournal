@@ -126,6 +126,12 @@ export const buildAnalysisPlanningBlocks = (input: {
 export const planAnalysisBatches = (
   blocks: readonly AnalysisPlanningBlock[],
   maxInputTokens: number,
+  /**
+   * B-2 (F-01): the objective effect rows that `analyzeFeedback` hands to the planner. They are
+   * folded into the frozen `inputFingerprint` so "which evidence was this batch planned against"
+   * is auditable from the existing immutable batch record, with no new synced field.
+   */
+  effectSummaries: readonly { strategyKey: string; replayFingerprint: string }[] = [],
 ): AnalysisBatchPlan => {
   const oversized = blocks.filter((item) => item.estimatedTokens > maxInputTokens);
   const eligible = blocks.filter((item) => item.estimatedTokens <= maxInputTokens);
@@ -143,12 +149,17 @@ export const planAnalysisBatches = (
     subBatches,
     oversized,
     estimatedTokens: eligible.reduce((total, item) => total + item.estimatedTokens, 0),
-    inputFingerprint: hashAiContext(JSON.stringify(eligible.map((item) => ({
-      decisionBlockId: item.decisionBlockId,
-      contentVersion: item.contentVersion,
-      inputRefs: item.inputRefs,
-      excerptHash: item.excerptHash,
-    })))),
+    inputFingerprint: hashAiContext(JSON.stringify({
+      blocks: eligible.map((item) => ({
+        decisionBlockId: item.decisionBlockId,
+        contentVersion: item.contentVersion,
+        inputRefs: item.inputRefs,
+        excerptHash: item.excerptHash,
+      })),
+      effects: [...effectSummaries]
+        .map((item) => `${item.strategyKey}:${item.replayFingerprint}`)
+        .sort(),
+    })),
     maxInputTokens,
   };
 };

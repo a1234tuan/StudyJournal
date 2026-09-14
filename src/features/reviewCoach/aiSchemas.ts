@@ -11,7 +11,7 @@ export const FEEDBACK_INTERPRETATION_PROMPT_VERSION = "feedback-interpretation-v
 export const SESSION_BLUEPRINT_PROMPT_VERSION = "session-blueprint-v1";
 export const QUIZ_TURN_PROMPT_VERSION = "quiz-turn-v2";
 export const QUESTION_QUALITY_PROMPT_VERSION = "question-quality-v1";
-export const ANSWER_EVALUATION_PROMPT_VERSION = "answer-evaluation-v1";
+export const ANSWER_EVALUATION_PROMPT_VERSION = "answer-evaluation-v2";
 export const REVIEW_COACH_POLICY_VERSION = "review-coach-policy-v1";
 
 export interface InsufficientContextAiResult {
@@ -83,7 +83,7 @@ export type QuestionQualityAiResponse =
   | {
       status: "ok";
       verdict: "pass" | "fail";
-      severeIssues: Array<"unsolvable" | "missing-condition" | "source-drift" | "non-unique-answer" | "answer-contradiction">;
+      severeIssues: QuestionQualitySevereIssue[];
       rationale: string;
     }
   | InsufficientContextAiResult;
@@ -133,6 +133,28 @@ const practiceTypes: AdaptivePracticeType[] = [
   "chunk-training",
   "prerequisite-check",
 ];
+
+/**
+ * C-2 (F-04): single source of truth for the quiz-turn enums.
+ *
+ * These are exported because the *prompt text* must be generated from them. The prompt used to
+ * hard-code `concept|calculation|discrimination|cloze|variation|chunk`, of which three values were
+ * invalid; a model obeying the prompt produced a payload the parser rejected with a
+ * non-retryable `AiSchemaError` after the request had already been billed.
+ */
+export const quizPracticeTypes: readonly AdaptivePracticeType[] = practiceTypes;
+export const answerModes = ["open", "objective", "unique"] as const;
+
+/** C-4 (F-20): the local leak check raises this so non-open questions' AI review can report it too. */
+export const questionQualitySevereIssues = [
+  "unsolvable",
+  "missing-condition",
+  "source-drift",
+  "non-unique-answer",
+  "answer-contradiction",
+  "answer-leakage",
+] as const;
+export type QuestionQualitySevereIssue = typeof questionQualitySevereIssues[number];
 
 export const feedbackInterpretationJsonSchema: JsonSchema = {
   $id: `review-coach/feedback-interpretation/${REVIEW_COACH_AI_SCHEMA_VERSION}`,
@@ -247,7 +269,7 @@ export const questionQualityJsonSchema: JsonSchema = {
       properties: {
         status: { const: "ok" },
         verdict: { enum: ["pass", "fail"] },
-        severeIssues: { type: "array", items: { enum: ["unsolvable", "missing-condition", "source-drift", "non-unique-answer", "answer-contradiction"] } },
+        severeIssues: { type: "array", items: { enum: [...questionQualitySevereIssues] } },
         rationale: { type: "string" },
       },
     },
@@ -398,7 +420,7 @@ export const parseQuestionQualityAiResponse = (value: unknown): QuestionQualityA
   }
   const body = requireOkObject(value, "question quality");
   assertExactKeys(body, ["status", "verdict", "severeIssues", "rationale"], "question quality");
-  const issues = ["unsolvable", "missing-condition", "source-drift", "non-unique-answer", "answer-contradiction"];
+  const issues = [...questionQualitySevereIssues] as readonly string[];
   if (!["pass", "fail"].includes(String(body.verdict)) || !isStringArray(body.severeIssues) || body.severeIssues.some((item) => !issues.includes(item)) || typeof body.rationale !== "string") {
     throw new AiSchemaError("Invalid question quality response body.");
   }

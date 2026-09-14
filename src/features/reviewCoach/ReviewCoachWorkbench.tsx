@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AiProviderProfile, RecordBlock } from "../../types";
 import type { AdaptiveReviewTask, AnalysisBatch, ReviewCoachFormalSnapshot } from "./domain";
 import { maxAnalysisInputTokensForProvider, planAnalysisBatches, type AnalysisPlanningBlock } from "./analysisPlanner";
-import { replayInterventionEffectSummaries } from "./replay";
+import { listDecayedBlocksNeedingReplan, replayInterventionEffectSummaries } from "./replay";
 import { formatActionableError } from "../../lib/uiError";
 
 interface ReviewCoachWorkbenchProps {
@@ -17,6 +17,17 @@ interface ReviewCoachWorkbenchProps {
   onSwitchTask: (taskId: string) => Promise<unknown>;
   onDeferTask: (taskId: string) => Promise<unknown>;
   onOpenTask?: (taskId: string) => void;
+  /**
+   * B-3 (F-03): records the user's own note for a block whose delayed verification decayed and
+   * which nothing has addressed since. The note becomes ordinary user-authored feedback, so the
+   * block re-enters the normal analysis queue — no system-authored formal facts are created.
+   */
+  onReplanDecayedBlock?: (input: {
+    decisionBlockId: string;
+    recordId: string;
+    contentVersion: number;
+    note: string;
+  }) => Promise<unknown>;
 }
 
 const formatDateTime = (value?: string) => value
@@ -46,6 +57,7 @@ export const ReviewCoachWorkbench = ({
   onSwitchTask,
   onDeferTask,
   onOpenTask,
+  onReplanDecayedBlock,
 }: ReviewCoachWorkbenchProps) => {
   const candidateKey = planningBlocks.map((item) => item.decisionBlockId).join("|");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(planningBlocks.map((item) => item.decisionBlockId)));
@@ -55,6 +67,7 @@ export const ReviewCoachWorkbench = ({
   const [message, setMessage] = useState<string>();
   const [switchTargetId, setSwitchTargetId] = useState<string>();
   const [deferTargetId, setDeferTargetId] = useState<string>();
+  const [replanNotes, setReplanNotes] = useState<Record<string, string>>({});
 
   // Keyed on candidateKey only: planningBlocks is rebuilt on every snapshot
   // refresh, and re-seating on identity would silently re-check blocks the user
@@ -92,7 +105,9 @@ export const ReviewCoachWorkbench = ({
     verifications: snapshot.delayedVerifications,
     replayedAt: new Date().toISOString(),
   }), [snapshot]);
-  const hasContent = planningBlocks.length > 0 || pausedBatches.length > 0 || activeTasks.length > 0 || Boolean(latestBatch);
+  // B-3 (F-03): blocks whose decay is still the newest word on them. Derived, never written.
+  const replanBlocks = useMemo(() => listDecayedBlocksNeedingReplan(snapshot), [snapshot]);
+  const hasContent = planningBlocks.length > 0 || pausedBatches.length > 0 || activeTasks.length > 0 || Boolean(latestBatch) || replanBlocks.length > 0;
   if (!hasContent) return null;
 
   const run = async (action: string, work: () => Promise<unknown>, success: string) => {
@@ -266,6 +281,45 @@ export const ReviewCoachWorkbench = ({
           <h3>延迟验证</h3>
           {snapshot.delayedVerifications.filter((item) => ["scheduled", "eligible", "missed"].includes(item.status)).sort((a, b) => a.verificationDueAt.localeCompare(b.verificationDueAt)).slice(0, 3).map((item) => (
             <div key={item.id}><strong>{recordById.get(item.recordId)?.title ?? "已删除的日志"}</strong><small>{item.status === "scheduled" ? "等待验证" : "已到验证窗口"} · {formatDateTime(item.verificationDueAt)}</small></div>
+          ))}
+        </div>
+      )}
+
+      {replanBlocks.length > 0 && (
+        <div className="review-coach-verification-list review-coach-replan-list">
+          <h3>需要重新规划</h3>
+          {replanBlocks.slice(0, 3).map((item) => (
+            <div key={item.decisionBlockId}>
+              <strong>{recordById.get(item.recordId)?.title ?? "已删除的日志"}</strong>
+              <small>延迟验证出现衰退 · {formatDateTime(item.decayedAt)}</small>
+              {onReplanDecayedBlock && (
+                <span className="review-coach-replan-actions">
+                  <input
+                    type="text"
+                    value={replanNotes[item.decisionBlockId] ?? ""}
+                    onChange={(event) => setReplanNotes((current) => ({ ...current, [item.decisionBlockId]: event.target.value }))}
+                    aria-label={`${recordById.get(item.recordId)?.title ?? "该记录"}的重新规划说明`}
+                    placeholder="写一句这次卡在哪里"
+                  />
+                  <button
+                    type="button"
+                    disabled={Boolean(busyAction) || !(replanNotes[item.decisionBlockId] ?? "").trim()}
+                    onClick={() => void run(
+                      `replan:${item.decisionBlockId}`,
+                      () => onReplanDecayedBlock({
+                        decisionBlockId: item.decisionBlockId,
+                        recordId: item.recordId,
+                        contentVersion: item.contentVersion,
+                        note: (replanNotes[item.decisionBlockId] ?? "").trim(),
+                      }),
+                      "已记下这次的卡点，可在上方加入分析。",
+                    )}
+                  >
+                    <RefreshCw size={15} />补充说明并加入分析
+                  </button>
+                </span>
+              )}
+            </div>
           ))}
         </div>
       )}

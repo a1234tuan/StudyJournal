@@ -125,6 +125,7 @@ interface ReviewPageProps {
   onSwitchAdaptiveTask?: (taskId: string) => Promise<unknown>;
   onDeferAdaptiveTask?: (taskId: string) => Promise<unknown>;
   onOpenAdaptiveTask?: (taskId: string) => void;
+  onReplanDecayedBlock?: (input: { decisionBlockId: string; recordId: string; contentVersion: number; note: string }) => Promise<unknown>;
   coachOpen?: boolean;
   onCoachOpenChange?: (open: boolean) => void;
 }
@@ -319,6 +320,7 @@ export const ReviewPage = ({
   onSwitchAdaptiveTask,
   onDeferAdaptiveTask,
   onOpenAdaptiveTask,
+  onReplanDecayedBlock,
   coachOpen: controlledCoachOpen,
   onCoachOpenChange,
 }: ReviewPageProps) => {
@@ -948,6 +950,7 @@ export const ReviewPage = ({
           onSwitchTask={onSwitchAdaptiveTask}
           onDeferTask={onDeferAdaptiveTask}
           onOpenTask={onOpenAdaptiveTask}
+          onReplanDecayedBlock={onReplanDecayedBlock}
         />
       )}
 

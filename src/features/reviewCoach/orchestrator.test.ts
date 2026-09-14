@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AiRequestError } from "../../services/aiClientService";
 
 import type { AdaptiveReviewTask, AnalysisBatch, AnalysisInputRef, FeedbackInterpretation, ReviewCoachFormalSnapshot, SessionBlueprint } from "./domain";
+import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT } from "./domain";
 import type { SessionBlueprintAiCandidate } from "./aiSchemas";
 import type { AnalysisPlanningBlock } from "./analysisPlanner";
 import { ReviewCoachOrchestrator, rankWaitingTasks } from "./orchestrator";
@@ -343,6 +344,129 @@ describe("ReviewCoachOrchestrator", () => {
     expect(result.batch).toMatchObject({ status: "succeeded", totalTokens: 900 });
     expect(store.blueprints).toHaveLength(1);
     expect(store.getTasks()).toMatchObject([{ status: "current", priorityTier: "consolidation" }]);
+  });
+
+  /** B-2 fixture: a block whose objective answer evidence is (or is not) usable. */
+  const effectPlanSnapshot = (objectiveAnswers: number): ReviewCoachFormalSnapshot => ({
+    ...EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT,
+    sessionBlueprints: [{
+      id: "effect-blueprint", batchId: "earlier-batch", decisionBlockId: "effect-block", recordId: "effect-record", contentVersion: 1,
+      status: "accepted", supportingDecisionBlockIds: [], feedbackIds: [], interpretationIds: ["effect-interpretation"],
+      problemHypothesis: "unstable", hypothesisConfidence: 0.8, objective: "apply it", completionCriteria: ["states it"],
+      initialPracticeType: "variation", initialDifficulty: 2, expectedKeyPoints: ["rule"],
+      branches: [{ when: "correct", nextStrategy: "finish" }, { when: "partial", nextStrategy: "hint" }, { when: "incorrect", nextStrategy: "explain" }, { when: "skipped", nextStrategy: "prerequisite-check" }],
+      allowedStrategies: ["finish", "hint", "explain", "prerequisite-check"], forbiddenScope: [],
+      evidence: [{ decisionBlockId: "effect-block", recordId: "effect-record", contentVersion: 1, excerptHash: "effect-hash", purpose: "source" }],
+      maxTurns: 4, maxRetriesPerTurn: 1, maxEstimatedTokens: 4000,
+      provider: "test", model: "deep", promptVersion: "session-blueprint-v1", policyVersion: "policy", schemaVersion: 1,
+      idempotencyKey: "effect-blueprint-key", createdAt: stamp, updatedAt: stamp,
+    }],
+    adaptiveReviewTasks: [{
+      id: "effect-task", blueprintId: "effect-blueprint", decisionBlockId: "effect-block", recordId: "effect-record", contentVersion: 1,
+      status: "completed", priorityTier: "consolidation", queuedAt: stamp, startedAt: stamp, endedAt: stamp,
+      idempotencyKey: "effect-task-key", createdAt: stamp, updatedAt: stamp,
+    }],
+    adaptiveQuizTurns: Array.from({ length: objectiveAnswers }, (_, index) => ({
+      id: `effect-turn-${index + 1}`, taskId: "effect-task", decisionBlockId: "effect-block", recordId: "effect-record", contentVersion: 1,
+      sequence: index + 1, status: "answered" as const, practiceType: "variation" as const, question: `q${index + 1}`,
+      displayedAt: stamp, sourceEvidence: [], answerCriteria: ["rule"], hintsUsed: [], answerText: `a${index + 1}`, answeredAt: stamp,
+      assessment: "correct" as const, qualityChecked: true, generationModel: "mock", promptVersion: "quiz-turn-v1", policyVersion: "policy",
+      idempotencyKey: `effect-turn-key-${index + 1}`, createdAt: stamp, updatedAt: stamp,
+    })),
+    taskOutcomeEvents: Array.from({ length: objectiveAnswers }, (_, index) => ({
+      id: `effect-outcome-${index + 1}`, taskId: "effect-task", turnId: `effect-turn-${index + 1}`, decisionBlockId: "effect-block",
+      recordId: "effect-record", contentVersion: 1, kind: "answer-assessment" as const, answerAssessment: "correct" as const,
+      occurredAt: stamp, idempotencyKey: `effect-outcome-key-${index + 1}`, createdAt: stamp, updatedAt: stamp,
+    })),
+    feedbackInterpretations: [{
+      id: "effect-interpretation", feedbackId: "effect-feedback", decisionBlockId: "effect-block", contentVersion: 1,
+      status: "succeeded", actionability: "needs_training", difficultyType: "procedure", stuckAt: "order", userHypothesis: null,
+      preferredPractice: "variation", missingInformation: [], confidence: 0.8, promptTokens: 10, completionTokens: 10, totalTokens: 20,
+      requestId: "effect-request", attemptCount: 1, aiGenerated: true, model: "mock", provider: "test",
+      promptVersion: "feedback-interpretation-v1", policyVersion: "policy", schemaVersion: 1, createdAt: stamp, updatedAt: stamp,
+    }],
+  });
+
+  const analyzeWithEffects = async (objectiveAnswers: number) => {
+    let batch: AnalysisBatch | undefined;
+    const repository = {
+      getFormalSnapshot: vi.fn(async () => effectPlanSnapshot(objectiveAnswers)),
+      createAnalysisBatch: vi.fn(async (next: AnalysisBatch) => { batch ??= next; return batch; }),
+      transitionAnalysisBatch: vi.fn(async (_id: string, status: AnalysisBatch["status"], updatedAt: string) => { batch = { ...batch!, status, updatedAt }; return batch; }),
+      updateAnalysisBatch: vi.fn(async (next: AnalysisBatch) => { batch = next; return next; }),
+    } as unknown as ReviewCoachRepository;
+    const planSession = vi.fn(async (_input: unknown) => ({ response: { status: "ok" as const, summary: "done", blueprints: [] }, usage: { totalTokens: 10 }, requestId: "plan-request" }));
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository, ids: { next: () => "generated" }, clock: { now: () => stamp },
+      aiGateway: { interpretFeedback: vi.fn(), planSession, generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+    const block = { ...planningBlock("block-1"), feedback: [{ ...planningBlock("block-1").feedback[0], interpretation: effectPlanSnapshot(0).feedbackInterpretations[0] }] };
+
+    await orchestrator.analyzeFeedback({ blocks: [block], maxInputTokens: 1000, allowCrossBlockSupport: false, provider: "test", model: "deep", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, operationId: "operation", maxRetries: 0 });
+    return planSession;
+  };
+
+  it("hands usable objective effect evidence to the deep planner (B-2)", async () => {
+    const planSession = await analyzeWithEffects(3);
+    const payload = planSession.mock.calls[0][0] as { interventionEffects: Array<Record<string, unknown>> };
+
+    expect(payload.interventionEffects).toHaveLength(1);
+    expect(payload.interventionEffects[0]).toMatchObject({ problemType: "procedure", actualPracticeType: "variation", objectiveAnswerCount: 3, objectiveCorrectRate: 1 });
+    // D-1 contract: the planner must never see the subjective figure, in any form.
+    expect(JSON.stringify(payload.interventionEffects)).not.toContain("retentionRate");
+    expect(JSON.stringify(payload.interventionEffects)).not.toContain("selfReported");
+  });
+
+  it("withholds effect evidence that has too few objective samples (B-2)", async () => {
+    const planSession = await analyzeWithEffects(2);
+    const payload = planSession.mock.calls[0][0] as { interventionEffects: unknown[] };
+
+    expect(payload.interventionEffects).toEqual([]);
+  });
+
+  /** C-5: the gate must survive a candidate that anchors itself in another block's evidence. */
+  const analyzeTwoBlocks = async (candidateFeedbackIds: string[], allowCrossBlockSupport: boolean) => {
+    const store = deepAnalysisRepository();
+    let nextId = 0;
+    const planSession = vi.fn(async () => ({
+      response: {
+        status: "ok" as const,
+        summary: "done",
+        blueprints: [{ ...blueprintCandidate("block-1"), feedbackIds: candidateFeedbackIds }, blueprintCandidate("block-2")],
+      },
+      usage: { totalTokens: 10 },
+      requestId: "request-1",
+    }));
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository: store.repository, ids: { next: () => `generated-${++nextId}` }, clock: { now: () => stamp },
+      aiGateway: { interpretFeedback: vi.fn(), planSession, generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+    const result = await orchestrator.analyzeFeedback({
+      blocks: [planningBlock("block-1"), planningBlock("block-2")], maxInputTokens: 1000, allowCrossBlockSupport,
+      provider: "test", model: "deep", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, operationId: "operation", maxRetries: 0,
+    });
+    return { result, store };
+  };
+
+  it("rejects a candidate that cites another block's feedback while cross-block support is off (C-5)", async () => {
+    const { result, store } = await analyzeTwoBlocks(["feedback-block-2"], false);
+
+    expect(result.batch.status).toBe("failed");
+    expect(store.blueprints).toHaveLength(0);
+  });
+
+  it("accepts a candidate that stays inside its own block while cross-block support is off (C-5)", async () => {
+    const { result, store } = await analyzeTwoBlocks(["feedback-block-1"], false);
+
+    expect(result.batch.status).toBe("succeeded");
+    expect(store.blueprints).toHaveLength(2);
+  });
+
+  it("still accepts a cross-block reference when support is explicitly enabled (C-5)", async () => {
+    const { result, store } = await analyzeTwoBlocks(["feedback-block-2"], true);
+
+    expect(result.batch.status).toBe("succeeded");
+    expect(store.blueprints).toHaveLength(2);
   });
 
   it("keeps successful sub-batches and returns failed inputs for retry", async () => {

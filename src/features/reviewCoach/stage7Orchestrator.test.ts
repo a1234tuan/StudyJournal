@@ -74,7 +74,10 @@ describe("Stage 7 delayed verification orchestrator", () => {
     });
     const generateTurn = vi.fn()
       .mockResolvedValueOnce(response(coachTestTurn.question))
-      .mockResolvedValueOnce(response("Explain why marking before enqueue prevents duplicates."));
+      // Deliberately does not restate the criterion, so C-4's local leak check lets it through:
+      // this test is about duplicate-history regeneration, and the previous fixture text
+      // ("...marking before enqueue...") actually leaked the acceptance criterion.
+      .mockResolvedValueOnce(response("Explain why duplicate enqueueing happens when a node is marked late."));
     const orchestrator = new ReviewCoachOrchestrator({
       repository,
       ids: createIds(),
@@ -84,7 +87,7 @@ describe("Stage 7 delayed verification orchestrator", () => {
 
     const result = await orchestrator.generateQuizTurn({ taskId: verificationTask.id, decisionBlockContent: "source", provider: "test", model: "fast", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy-v1", operationId: "verify" });
 
-    expect(result.question).toBe("Explain why marking before enqueue prevents duplicates.");
+    expect(result.question).toBe("Explain why duplicate enqueueing happens when a node is marked late.");
     expect(generateTurn).toHaveBeenCalledTimes(2);
     expect(generateTurn.mock.calls[1][0]).toMatchObject({ verificationMode: { verificationId: coachTestVerification.id, requireFreshRetrieval: true }, priorQualityFailure: "延迟验证题与历史题目重复" });
   });

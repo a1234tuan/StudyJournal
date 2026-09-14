@@ -31,4 +31,21 @@ describe("analysis planner", () => {
     expect(plan.subBatches).toHaveLength(1);
     expect(plan.oversized.map((item) => item.decisionBlockId)).toEqual(["large"]);
   });
+
+  it("folds the effect evidence into the frozen input fingerprint (B-2)", () => {
+    const blocks = [block("1", 400)];
+    const withoutEffects = planAnalysisBatches(blocks, 1_000);
+    const withEffects = planAnalysisBatches(blocks, 1_000, [{ strategyKey: "strategy-a", replayFingerprint: "replay-a" }]);
+
+    // Same blocks, different evidence → the batch records that it was planned against other facts.
+    expect(withEffects.inputFingerprint).not.toBe(withoutEffects.inputFingerprint);
+    // Same evidence in a different order → the same fingerprint.
+    expect(planAnalysisBatches(blocks, 1_000, [
+      { strategyKey: "strategy-a", replayFingerprint: "replay-a" },
+      { strategyKey: "strategy-b", replayFingerprint: "replay-b" },
+    ]).inputFingerprint).toBe(planAnalysisBatches(blocks, 1_000, [
+      { strategyKey: "strategy-b", replayFingerprint: "replay-b" },
+      { strategyKey: "strategy-a", replayFingerprint: "replay-a" },
+    ]).inputFingerprint);
+  });
 });

@@ -6,6 +6,7 @@ import {
   parseFeedbackInterpretationAiResponse,
 } from "./aiSchemas";
 import type { ReviewCoachAiGateway } from "./orchestrator";
+import { REVIEW_COACH_ROLE_SYSTEM_PROMPT } from "./rolePrompts";
 import { AiSchemaError, sendChatCompletionDetailed } from "../../services/aiClientService";
 
 export interface FeedbackInterpretationGatewayOptions {
@@ -77,6 +78,8 @@ export const createFeedbackInterpretationGateway = (options: FeedbackInterpretat
         timeoutMs: options.timeoutMs,
         signal,
         maxTokens: Math.min(options.provider.maxTokens, 900),
+        // F-17: JSON-only role prompt instead of the conversational default.
+        systemPrompt: REVIEW_COACH_ROLE_SYSTEM_PROMPT,
       },
     });
     return {

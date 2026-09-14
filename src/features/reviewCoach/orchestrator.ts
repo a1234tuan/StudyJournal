@@ -28,6 +28,9 @@ import type {
 } from "./aiSchemas";
 import type { ReviewCoachRepository } from "./repository";
 import { planAnalysisBatches, type AnalysisPlanningBlock } from "./analysisPlanner";
+import { assertNoAnswerLeakage } from "./questionIntegrity";
+import { replayInterventionEffectSummaries } from "./replay";
+import { toSessionPlanningEffectSummary } from "./sessionPlanningGateway";
 
 export interface ReviewCoachAiGateway {
   interpretFeedback(input: unknown, signal?: AbortSignal): Promise<FeedbackInterpretationAiCallResult>;
@@ -137,9 +140,23 @@ const truncateHistoryText = (value: string | undefined, maxChars: number) => {
   return trimmed.length <= maxChars ? trimmed : trimmed.slice(0, maxChars) + "…[已截断]";
 };
 
+/**
+ * C-3 (F-06): marks a per-turn assessment as "the model could not judge this answer".
+ *
+ * `unreliable` mixes "the model could not judge" with "the user skipped the turn"
+ * (`skipQuizTurn` writes `reason: "skipped"`), and treating either as a wrong answer would
+ * penalise the user for the model's limits. The prefix keeps the not-assessable case explicit in
+ * the existing, synchronised `TaskOutcomeEvent.reason` field — no schema change — so "could not
+ * judge" can never again be confused with "nothing judged this turn".
+ */
+export const UNRELIABLE_ASSESSMENT_REASON_PREFIX = "unreliable:";
+
 export interface SubmitQuizAnswerInput {
   turnId: string;
   answerText: string;
+  /** Full decision-block material. Required so the evaluator can contradict a wrong criterion
+   *  produced by the question generator (the criteria alone are not self-validating). */
+  decisionBlockContent: string;
   provider: string;
   model: string;
   promptVersion: string;
@@ -177,10 +194,19 @@ const validateBlueprintCandidates = (
     const suppliedFeedback = new Set(blocks.flatMap((item) => item.feedback.map((feedback) => feedback.id)));
     const suppliedInterpretations = new Set(blocks.flatMap((item) => item.feedback.map((feedback) => feedback.interpretation?.id).filter((id): id is string => Boolean(id))));
     const mainFeedback = new Set(main.feedback.map((item) => item.id));
-    if (candidate.feedbackIds.length === 0 || !candidate.feedbackIds.some((id) => mainFeedback.has(id)) || candidate.feedbackIds.some((id) => !suppliedFeedback.has(id))) {
+    // C-5 (F-19): `allowCrossBlockSupport` used to only gate `supportingDecisionBlockIds`, while
+    // feedback / interpretation / evidence references were validated against the *whole* sub-batch
+    // union and only had to hit "at least one" main-block feedback. So a candidate could anchor
+    // itself in another block's evidence even with support disabled. The allowed sets now differ
+    // per mode, and every reference must be inside them.
+    const allowedFeedback = allowCrossBlockSupport ? suppliedFeedback : mainFeedback;
+    const allowedInterpretations = allowCrossBlockSupport
+      ? suppliedInterpretations
+      : new Set(main.feedback.map((item) => item.interpretation?.id).filter((id): id is string => Boolean(id)));
+    if (candidate.feedbackIds.length === 0 || candidate.feedbackIds.some((id) => !allowedFeedback.has(id))) {
       throw new Error("Blueprint feedback references are missing or outside the frozen input.");
     }
-    if (candidate.interpretationIds.some((id) => !suppliedInterpretations.has(id))) {
+    if (candidate.interpretationIds.some((id) => !allowedInterpretations.has(id))) {
       throw new Error("Blueprint interpretation references are outside the frozen input.");
     }
     if (!candidate.evidence.some((item) => item.decisionBlockId === main.decisionBlockId)) {
@@ -190,6 +216,9 @@ const validateBlueprintCandidates = (
       const source = blockById.get(evidence.decisionBlockId);
       if (!source || evidence.recordId !== source.recordId || evidence.contentVersion !== source.contentVersion || evidence.excerptHash !== source.excerptHash) {
         throw new Error("Blueprint evidence is stale or outside the frozen input.");
+      }
+      if (!allowCrossBlockSupport && evidence.decisionBlockId !== main.decisionBlockId) {
+        throw new Error("Blueprint evidence is outside its main decision block.");
       }
     }
   }
@@ -429,7 +458,23 @@ export class ReviewCoachOrchestrator {
 
   async analyzeFeedback(input: AnalyzeFeedbackInput): Promise<AnalyzeFeedbackResult> {
     if (!this.dependencies.aiGateway) throw new Error("Review coach AI gateway is not configured.");
-    const plan = planAnalysisBatches(input.blocks, input.maxInputTokens);
+    const existingSnapshot = await this.dependencies.repository.getFormalSnapshot();
+    // B-2 (F-01): computed once per analysis run, and never inside the sub-batch loop.
+    const usableEffects = replayInterventionEffectSummaries({
+      interpretations: existingSnapshot.feedbackInterpretations,
+      blueprints: existingSnapshot.sessionBlueprints,
+      tasks: existingSnapshot.adaptiveReviewTasks,
+      turns: existingSnapshot.adaptiveQuizTurns,
+      outcomes: existingSnapshot.taskOutcomeEvents,
+      verifications: existingSnapshot.delayedVerifications,
+      replayedAt: this.dependencies.clock.now(),
+    })
+      // D-1 contract clause 3: the gate is the *objective* one, so a missing self-assessment can
+      // never erase real objective evidence. (The remediation plan draft said `evidenceStatus`
+      // here, which contradicts the ratified D-1 contract — corrected to the objective gate.)
+      .filter((item) => item.objectiveEvidenceStatus === "usable")
+      .sort((left, right) => right.sampleCount - left.sampleCount || left.strategyKey.localeCompare(right.strategyKey));
+    const plan = planAnalysisBatches(input.blocks, input.maxInputTokens, usableEffects);
     if (plan.oversized.length > 0) throw new Error(`决策块超过模型上下文上限：${plan.oversized.map((item) => item.recordTitle).join("、")}`);
     if (plan.subBatches.length === 0) throw new Error("没有可分析的决策块。");
     const blockById = new Map(input.blocks.map((item) => [item.decisionBlockId, item]));
@@ -449,12 +494,25 @@ export class ReviewCoachOrchestrator {
     if (batch.status === "draft") batch = await this.dependencies.repository.transitionAnalysisBatch(batch.id, "confirmed", this.dependencies.clock.now());
     if (batch.status === "confirmed") batch = await this.dependencies.repository.transitionAnalysisBatch(batch.id, "running", this.dependencies.clock.now());
 
-    const existingSnapshot = await this.dependencies.repository.getFormalSnapshot();
     const blueprints = existingSnapshot.sessionBlueprints.filter((item) => item.batchId === batch.id && item.status === "accepted");
     const existingBlueprintIds = new Set(blueprints.map((item) => item.id));
     const tasks = existingSnapshot.adaptiveReviewTasks.filter((item) => existingBlueprintIds.has(item.blueprintId) && !item.deletedAt);
     const summaries: string[] = [];
     const maxRetries = Math.max(0, Math.min(2, Math.floor(input.maxRetries ?? 1)));
+    const MAX_PLANNING_EFFECTS = 5;
+    /**
+     * Effects are scoped to the difficulty types the sub-batch is actually about, so the planner
+     * can only reuse evidence from within the same learning objective.
+     */
+    const effectsForBlocks = (blocks: readonly AnalysisPlanningBlock[]) => {
+      const difficultyTypes = new Set(blocks.flatMap((block) => block.feedback
+        .map((item) => item.interpretation?.difficultyType)
+        .filter((value): value is NonNullable<FeedbackInterpretation["difficultyType"]> => Boolean(value))));
+      return usableEffects
+        .filter((item) => difficultyTypes.has(item.problemType))
+        .slice(0, MAX_PLANNING_EFFECTS)
+        .map(toSessionPlanningEffectSummary);
+    };
     for (let index = 0; index < batch.subBatches.length; index += 1) {
       const subBatch = batch.subBatches[index];
       if (subBatch.status === "succeeded") continue;
@@ -499,6 +557,7 @@ export class ReviewCoachOrchestrator {
               })),
             })),
             allowedSupportingDecisionBlockIds: input.allowCrossBlockSupport ? blocks.map((block) => block.decisionBlockId) : [],
+            interventionEffects: effectsForBlocks(blocks),
           }, input.signal);
           if (call.response.status === "insufficient-context") throw new AiRequestError(`insufficient-context:${call.response.missingInformation.join("、")}`, false);
           validateBlueprintCandidates(call.response.blueprints, blocks, input.allowCrossBlockSupport);
@@ -703,12 +762,25 @@ export class ReviewCoachOrchestrator {
         answerText: answerHistoryIds.has(item.id) ? truncateHistoryText(item.answerText, MAX_HISTORY_ANSWER_CHARS) : undefined,
         assessmentRationale: answerHistoryIds.has(item.id) ? truncateHistoryText(item.assessmentRationale, MAX_HISTORY_RATIONALE_CHARS) : undefined,
       })),
-        requestedStrategy: verification ? "continue" : branch?.nextStrategy ?? (turns.length === 0 ? blueprint.initialPracticeType : "continue"),
+        // F-07: `requestedStrategy` carries a *strategy* only. It used to fall back to
+        // `blueprint.initialPracticeType`, so a practice type was sent through a strategy field and
+        // the two concepts were indistinguishable in the payload. The first turn has no branch,
+        // and the practice type already travels on `blueprint.initialPracticeType`.
+        requestedStrategy: verification ? "continue" : branch?.nextStrategy,
         verificationMode: verification ? { verificationId: verification.id, requireFreshRetrieval: true } : undefined,
         priorQualityFailure: lastQualityReason || undefined,
       }, input.signal);
       input.signal?.throwIfAborted();
       if (response.status === "insufficient-context") throw new Error(`生成题目所需背景不足：${response.missingInformation.join("、")}`);
+      // C-4 (F-20): local, deterministic leak check, run before the paid quality review. A leak is
+      // handled exactly like a quality failure — one regeneration, then a readable error — so it
+      // never adds a provider call. Open questions, which get no AI review at all, are covered here.
+      try {
+        assertNoAnswerLeakage({ question: response.question, hints: response.hints, answerCriteria: response.answerCriteria });
+      } catch (error) {
+        lastQualityReason = error instanceof Error ? error.message : "题面或提示泄露了答案判据";
+        continue;
+      }
       if (response.sourceEvidence.some((item) => !evidenceByKey.has(`${item.decisionBlockId}:${item.recordId}:${item.contentVersion}:${item.excerptHash}`))) {
         throw new Error("题目引用了蓝图之外的来源。");
       }
@@ -771,7 +843,7 @@ export class ReviewCoachOrchestrator {
     const task = turn ? snapshot.adaptiveReviewTasks.find((item) => item.id === turn.taskId && item.status === "in-progress") : undefined;
     const blueprint = task ? snapshot.sessionBlueprints.find((item) => item.id === task.blueprintId && item.status === "accepted") : undefined;
     if (!turn || !task || !blueprint) throw new Error("当前题目已经失效或不再进行中。");
-    const evaluation = await this.dependencies.aiGateway.evaluateAnswer({ blueprint, question: turn.question, answerCriteria: turn.answerCriteria, answerText, hintsUsed: turn.hintsUsed }, input.signal);
+    const evaluation = await this.dependencies.aiGateway.evaluateAnswer({ blueprint, decisionBlockContent: input.decisionBlockContent, question: turn.question, answerCriteria: turn.answerCriteria, answerText, hintsUsed: turn.hintsUsed }, input.signal);
     input.signal?.throwIfAborted();
     if (evaluation.status === "insufficient-context") throw new Error(`无法可靠判断回答：${evaluation.missingInformation.join("、")}`);
     const criteria = new Set(turn.answerCriteria);
@@ -780,7 +852,12 @@ export class ReviewCoachOrchestrator {
     const answered: AdaptiveQuizTurn = { ...turn, status: "answered", answerText, answeredAt: stamp, assessment: evaluation.assessment, assessmentRationale: evaluation.rationale, updatedAt: stamp };
     const outcome: TaskOutcomeEvent = {
       id: this.dependencies.ids.next(), taskId: task.id, turnId: turn.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: task.contentVersion,
-      kind: "answer-assessment", answerAssessment: evaluation.assessment, reason: evaluation.rationale, occurredAt: stamp,
+      kind: "answer-assessment", answerAssessment: evaluation.assessment,
+      // C-3 (F-06): "the model could not judge" and "nothing judged this turn" used to be
+      // indistinguishable. The prefix makes the not-assessable case explicit in formal data without
+      // touching the schema, and no strategy/difficulty/mastery decision is written for it.
+      reason: evaluation.assessment === "unreliable" ? `${UNRELIABLE_ASSESSMENT_REASON_PREFIX}${evaluation.rationale}` : evaluation.rationale,
+      occurredAt: stamp,
       idempotencyKey: `answer:${input.operationId}`, createdAt: stamp, updatedAt: stamp,
     };
     return this.dependencies.repository.commitQuizAnswer(answered, outcome, input.signal);

@@ -66,4 +66,43 @@ describe("ReviewCoachWorkbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认切换" }));
     await waitFor(() => expect(onSwitchTask).toHaveBeenCalledWith("waiting"));
   });
+
+  it("does not offer replanning when nothing has decayed", () => {
+    render(<ReviewCoachWorkbench {...baseProps} />);
+
+    expect(screen.queryByText("需要重新规划")).toBeNull();
+  });
+
+  it("surfaces a decayed block and records the user's own note before replanning", async () => {
+    const onReplanDecayedBlock = vi.fn().mockResolvedValue(undefined);
+    render(<ReviewCoachWorkbench
+      {...baseProps}
+      planningBlocks={[]}
+      onReplanDecayedBlock={onReplanDecayedBlock}
+      snapshot={{
+        ...EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT,
+        decisionBlocks: [{ id: "block-1", recordId: record.id, contentVersion: 1, position: 0, contentUpdatedAt: stamp, createdAt: stamp, updatedAt: stamp }],
+        delayedVerifications: [{
+          id: "verification-1", sourceOutcomeEventId: "outcome-1", decisionBlockId: "block-1", recordId: record.id, contentVersion: 1,
+          status: "completed", verificationEligibleAt: stamp, verificationDueAt: stamp, lastVerifiedAt: "2026-09-06T08:00:00.000Z",
+          verificationOutcome: "decayed", strategyVersion: "verification-v1", idempotencyKey: "verification-1", createdAt: stamp, updatedAt: "2026-09-06T08:00:00.000Z",
+        }],
+      }}
+    />);
+
+    expect(screen.getByText("需要重新规划")).toBeInTheDocument();
+    // An empty note must not be queueable: the button stays disabled until the user says something.
+    const submit = screen.getByRole("button", { name: /补充说明并加入分析/ });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("textbox", { name: /重新规划说明/ }), { target: { value: "还是记不住标记顺序" } });
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(onReplanDecayedBlock).toHaveBeenCalledWith({
+      decisionBlockId: "block-1",
+      recordId: record.id,
+      contentVersion: 1,
+      note: "还是记不住标记顺序",
+    }));
+  });
 });

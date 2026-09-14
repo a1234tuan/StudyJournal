@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AdaptiveQuizTurn, AdaptiveReviewTask, ReviewCoachFormalSnapshot, SessionBlueprint } from "./domain";
+import { quizPracticeTypes } from "./aiSchemas";
 import { ReviewCoachOrchestrator } from "./orchestrator";
 import type { ReviewCoachRepository } from "./repository";
 
@@ -61,7 +62,7 @@ describe("Stage 6 quiz orchestrator", () => {
     let id = 0;
     const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${++id}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "incorrect", matchedCriteria: [], missingCriteria: ["states invariant"], rationale: "missing invariant" }) } });
 
-    await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "I am unsure", provider: "test", model: "mock", promptVersion: "answer-v1", policyVersion: "policy", operationId: "answer-op" });
+    await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "I am unsure", decisionBlockContent: "决策块材料：B 树所有叶节点深度相同。", provider: "test", model: "mock", promptVersion: "answer-v1", policyVersion: "policy", operationId: "answer-op" });
     await orchestrator.finishQuizTask({ taskId: task.id, outcome: "not-mastered", reason: "I cannot state the invariant", operationId: "finish-op" });
 
     expect(commitTaskOutcome).toHaveBeenCalledWith(task.id, expect.any(Array), "not-achieved", stamp, undefined, undefined);
@@ -72,7 +73,19 @@ describe("Stage 6 quiz orchestrator", () => {
     const displayed: AdaptiveQuizTurn = { id: "turn-1", taskId: task.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: 1, sequence: 1, status: "displayed", practiceType: "variation", question: "Explain", displayedAt: stamp, sourceEvidence: blueprint.evidence, answerCriteria: ["states invariant"], hintsUsed: [], qualityChecked: false, generationModel: "mock", promptVersion: "p", policyVersion: "policy", idempotencyKey: "turn-key", createdAt: stamp, updatedAt: stamp };
     const repository = { getFormalSnapshot: vi.fn(async () => snapshot([displayed], { ...task, status: "in-progress" })) } as unknown as ReviewCoachRepository;
     const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "correct", matchedCriteria: ["invented"], missingCriteria: [], rationale: "wrong" }) } });
-    await expect(orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "answer", provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "op" })).rejects.toThrow("题目之外的判据");
+    await expect(orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "answer", decisionBlockContent: "决策块材料", provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "op" })).rejects.toThrow("题目之外的判据");
+  });
+
+  it("hands the raw decision-block material to the answer evaluator", async () => {
+    const displayed: AdaptiveQuizTurn = { id: "turn-1", taskId: task.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: 1, sequence: 1, status: "displayed", practiceType: "variation", question: "Explain", displayedAt: stamp, sourceEvidence: blueprint.evidence, answerCriteria: ["states invariant"], hintsUsed: [], qualityChecked: false, generationModel: "mock", promptVersion: "p", policyVersion: "policy", idempotencyKey: "turn-key", createdAt: stamp, updatedAt: stamp };
+    const commitQuizAnswer = vi.fn(async (next: AdaptiveQuizTurn) => next);
+    const repository = { getFormalSnapshot: vi.fn(async () => snapshot([displayed], { ...task, status: "in-progress" })), commitQuizAnswer } as unknown as ReviewCoachRepository;
+    const evaluateAnswer = vi.fn().mockResolvedValue({ status: "ok", assessment: "partial", matchedCriteria: ["states invariant"], missingCriteria: [], rationale: "partly right" });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer } });
+    const material = "决策块材料：B 树的叶节点深度相同，插入时沿路径分裂。";
+    await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "answer", decisionBlockContent: material, provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "op" });
+    expect(evaluateAnswer).toHaveBeenCalledWith(expect.objectContaining({ decisionBlockContent: material }), undefined);
+    expect(commitQuizAnswer).toHaveBeenCalledTimes(1);
   });
 
   it("records a skipped answer and requests the Blueprint skipped strategy next", async () => {
@@ -108,5 +121,62 @@ describe("Stage 6 quiz orchestrator", () => {
     const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() } });
 
     await expect(orchestrator.finishQuizTask({ taskId: task.id, outcome: "mastered", operationId: "finish-op" })).rejects.toThrow("至少完成一轮有效作答");
+  });
+
+  it("records an unjudgeable answer explicitly and picks no strategy for the next turn (C-3)", async () => {
+    const displayed: AdaptiveQuizTurn = { id: "turn-1", taskId: task.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: 1, sequence: 1, status: "displayed", practiceType: "variation", answerMode: "open", question: "Explain", displayedAt: stamp, sourceEvidence: blueprint.evidence, answerCriteria: ["states invariant"], hintsUsed: [], availableHints: [], qualityChecked: false, generationModel: "mock", promptVersion: "p", policyVersion: "policy", idempotencyKey: "turn-key", createdAt: stamp, updatedAt: stamp };
+    let turns = [displayed];
+    const commitQuizAnswer = vi.fn(async (next: AdaptiveQuizTurn) => { turns = [next]; return next; });
+    const addQuizTurn = vi.fn(async (next: AdaptiveQuizTurn) => { turns = [...turns, next]; return next; });
+    const commitTaskOutcome = vi.fn();
+    const generateTurn = vi.fn().mockResolvedValue({ ...turnResponse, answerMode: "open" });
+    const repository = {
+      getFormalSnapshot: vi.fn(async () => snapshot(turns, { ...task, status: "in-progress" })),
+      commitQuizAnswer,
+      addQuizTurn,
+      commitTaskOutcome,
+    } as unknown as ReviewCoachRepository;
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${turns.length}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "unreliable", matchedCriteria: [], missingCriteria: [], rationale: "材料不足以覆盖该判据" }) } });
+
+    await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "我不太确定", decisionBlockContent: "决策块材料", provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "answer-op" });
+    await orchestrator.generateQuizTurn({ taskId: task.id, decisionBlockContent: "source", provider: "test", model: "mock", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy", operationId: "next-op" });
+
+    // "Could not judge" is now explicit in formal data, not silently folded into "no judgement".
+    expect(commitQuizAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({ assessment: "unreliable" }),
+      expect.objectContaining({ answerAssessment: "unreliable", reason: expect.stringMatching(/^unreliable:/) }),
+      undefined,
+    );
+    // And it drives nothing: no mastery decision, no task outcome, no branch strategy at all —
+    // in particular not the `partial` branch's strategy.
+    expect(commitTaskOutcome).not.toHaveBeenCalled();
+    const payload = generateTurn.mock.calls.at(-1)![0] as { requestedStrategy?: string };
+    // The key is present but undefined, so it is dropped from the serialised payload entirely.
+    expect(payload.requestedStrategy).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain('"requestedStrategy":"');
+    // And whatever it ever carries, it must never be a practice type (F-07).
+    expect(quizPracticeTypes.includes(payload.requestedStrategy as never)).toBe(false);
+  });
+
+  it("regenerates once on a local leak, then stops without another provider call (C-4)", async () => {
+    let currentTask: AdaptiveReviewTask = { ...task, status: "in-progress" };
+    const addQuizTurn = vi.fn();
+    const repository = {
+      getFormalSnapshot: vi.fn(async () => snapshot([], currentTask)),
+      transitionTask: vi.fn(async (_id: string, status: AdaptiveReviewTask["status"]) => (currentTask = { ...currentTask, status })),
+      addQuizTurn,
+    } as unknown as ReviewCoachRepository;
+    const reviewQuestion = vi.fn();
+    const leaking = { status: "ok" as const, practiceType: "variation" as const, answerMode: "open" as const, question: "直接说出答案：标记必须在入队前标记。", answerCriteria: ["在入队前标记"], sourceEvidence: blueprint.evidence, hints: [] };
+    const generateTurn = vi.fn().mockResolvedValue(leaking);
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "turn" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion, evaluateAnswer: vi.fn() } });
+
+    await expect(orchestrator.generateQuizTurn({ taskId: task.id, decisionBlockContent: "source", provider: "test", model: "mock", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy", operationId: "op" })).rejects.toThrow("题目质检连续失败");
+
+    expect(generateTurn).toHaveBeenCalledTimes(2);
+    expect(generateTurn.mock.calls[1][0]).toMatchObject({ priorQualityFailure: expect.stringContaining("泄露") });
+    // The leak is caught locally, so the paid quality review is never reached and nothing persists.
+    expect(reviewQuestion).not.toHaveBeenCalled();
+    expect(addQuizTurn).not.toHaveBeenCalled();
   });
 });

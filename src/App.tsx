@@ -1652,6 +1652,7 @@ export const App = () => {
             onSwitchAdaptiveTask={app.switchAdaptiveTask}
             onDeferAdaptiveTask={app.deferAdaptiveTask}
             onOpenAdaptiveTask={openAdaptiveTask}
+            onReplanDecayedBlock={app.replanDecayedDecisionBlock}
             coachOpen={reviewCoachOpen}
             onCoachOpenChange={setReviewCoachOpen}
           />

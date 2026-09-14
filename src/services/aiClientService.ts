@@ -59,9 +59,19 @@ export interface AiCompletionRequestOptions {
   reasoningEffort?: "low" | "high" | "max";
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Replaces the default chat system prompt for this request only.
+   *
+   * Structured-data callers (the Review Coach gateways, the knowledge podcast) must pass their own
+   * role prompt: the default one asks for Markdown/LaTeX and a trailing source list, which directly
+   * contradicts "return one JSON object and nothing else" and measurably degraded their output.
+   * Leaving it undefined preserves the previous behaviour exactly.
+   */
+  systemPrompt?: string;
 }
 
-const SYSTEM_PROMPT = [
+/** Default system prompt for conversational requests. Structured-data roles pass their own. */
+export const CHAT_SYSTEM_PROMPT = [
   "你是一个基于用户本地学习日志工作的学习助手。优先执行用户当前请求和所选预设，不要把所有任务固定成同一种回答流程。",
   "优先依据日志内容回答；日志没有的信息不要伪装成来自日志。需要补充通用知识时，请标明“日志外补充”。证据不足时直接说“不确定”或“日志中没有足够依据”。",
   "如果用户要求出题、批改、追问或测试，请按用户当前要求决定是否给答案、是否等待作答；不要默认必须等待用户回答。",
@@ -220,8 +230,9 @@ export const buildAiMessages = (
   memoryTurns = DEFAULT_AI_MEMORY_TURNS,
   memorySummary?: string,
   nextContent?: string | AiChatPayloadContentPart[],
+  systemPrompt = CHAT_SYSTEM_PROMPT,
 ): AiChatPayloadMessage[] => {
-  const messages: AiChatPayloadMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const messages: AiChatPayloadMessage[] = [{ role: "system", content: systemPrompt }];
   if (attachment) {
     const selectedChunks = attachment.selectedChunks?.length ? attachment.selectedChunks : attachment.allChunks ?? [];
     const sourceLines = selectedChunks.map(formatAiContextSource);
@@ -566,7 +577,7 @@ export const sendChatCompletionDetailed = async (options: {
   return requestOpenAiChatCompletionDetailed({
     provider,
     apiKey: apiKey.trim(),
-    messages: buildAiMessages(attachment, history, prompt, provider.memoryTurns ?? DEFAULT_AI_MEMORY_TURNS, memorySummary),
+    messages: buildAiMessages(attachment, history, prompt, provider.memoryTurns ?? DEFAULT_AI_MEMORY_TURNS, memorySummary, undefined, options.request?.systemPrompt),
     maxTokens: options.request?.maxTokens ?? budget.outputTokens,
     ...options.request,
   });

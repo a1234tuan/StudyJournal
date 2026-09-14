@@ -51,6 +51,7 @@ import { createFeedbackInterpretationGateway, defaultFeedbackInterpretationMetad
 import { processFeedbackInterpretationQueue } from "../features/reviewCoach/feedbackInterpretationWorker";
 import { getCurrentAiProvider } from "../lib/aiProviders";
 import { buildAnalysisPlanningBlocks, maxAnalysisInputTokensForProvider, type AnalysisPlanningBlock } from "../features/reviewCoach/analysisPlanner";
+import { assertTurnContextBudget } from "../features/reviewCoach/contextBudget";
 import { createSessionPlanningGateway, defaultSessionPlanningMetadata } from "../features/reviewCoach/sessionPlanningGateway";
 import { createQuizExecutionGateway, defaultQuizExecutionMetadata } from "../features/reviewCoach/quizExecutionGateway";
 import { buildDecisionBlockAiContextPack } from "../services/aiContextService";
@@ -580,14 +581,22 @@ export const useAppData = () => {
   }, [refresh]);
 
   const submitAdaptiveQuizAnswer = useCallback(async (turnId: string, answerText: string, signal?: AbortSignal) => {
+    const turn = reviewCoachSnapshot.adaptiveQuizTurns.find((item) => item.id === turnId);
+    const task = turn ? reviewCoachSnapshot.adaptiveReviewTasks.find((item) => item.id === turn.taskId) : undefined;
+    const record = task ? recordBlocks.find((item) => item.id === task.recordId) : undefined;
+    if (!turn || !task || !record) throw new Error("当前题目对应的学习记录不存在。");
+    const context = buildDecisionBlockAiContextPack(record, task.decisionBlockId, assets).markdown;
     const { provider, orchestrator } = await createQuizOrchestrator();
+    // The evaluator now receives the full material, so a large block must be rejected here
+    // rather than letting the provider fail with an opaque context-length error.
+    assertTurnContextBudget(provider, context);
     try {
-      return await orchestrator.submitQuizAnswer({ turnId, answerText, provider: provider.providerName, model: provider.model, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId(), signal });
+      return await orchestrator.submitQuizAnswer({ turnId, answerText, decisionBlockContent: context, provider: provider.providerName, model: provider.model, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId(), signal });
     } finally {
       await refresh();
       await markAutoBackupDirty("review-coach-quiz-answer");
     }
-  }, [createQuizOrchestrator, refresh]);
+  }, [assets, createQuizOrchestrator, recordBlocks, refresh, reviewCoachSnapshot.adaptiveQuizTurns, reviewCoachSnapshot.adaptiveReviewTasks]);
 
   const skipAdaptiveQuizTurn = useCallback(async (turnId: string) => {
     const result = await reviewCoachOrchestrator.skipQuizTurn(turnId, newId());
@@ -629,6 +638,32 @@ export const useAppData = () => {
     await refresh();
     await markAutoBackupDirty("decision-block-feedback-delete");
     return deleted;
+  }, [refresh]);
+
+  /**
+   * B-3 (F-03): turn a decayed block back into a plan. The note is the *user's own* comment —
+   * it is recorded through the ordinary user-authored feedback path, so nothing system-authored
+   * ever enters the formal, synchronised fact set. Recording it makes the block eligible again
+   * and un-lists it from "需要重新规划"; the user then runs the usual analysis flow.
+   */
+  const replanDecayedDecisionBlock = useCallback(async (input: {
+    decisionBlockId: string;
+    recordId: string;
+    contentVersion: number;
+    note: string;
+  }) => {
+    const feedback = await reviewCoachOrchestrator.recordFeedback({
+      decisionBlockId: input.decisionBlockId,
+      recordId: input.recordId,
+      contentVersion: input.contentVersion,
+      comment: input.note,
+      includeInAnalysis: true,
+      source: "manual",
+      operationId: newId(),
+    });
+    await refresh();
+    await markAutoBackupDirty("review-coach-replan-after-decay");
+    return feedback;
   }, [refresh]);
 
   const confirmFeedbackInterpretation = useCallback(async (
@@ -1039,6 +1074,7 @@ export const useAppData = () => {
     rateRecordReview,
     undoRecordReview,
     deleteDecisionBlockFeedback,
+    replanDecayedDecisionBlock,
     confirmFeedbackInterpretation,
     retryFeedbackInterpretation,
     runDeepAnalysis,

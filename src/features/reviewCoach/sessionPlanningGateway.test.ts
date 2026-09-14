@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sendChatCompletionDetailed } from "../../services/aiClientService";
-import { buildSessionPlanningPrompt, createSessionPlanningGateway } from "./sessionPlanningGateway";
+import { buildSessionPlanningPrompt, createSessionPlanningGateway, toSessionPlanningEffectSummary } from "./sessionPlanningGateway";
+import type { InterventionEffectSummary } from "./domain";
 
 vi.mock("../../services/aiClientService", async (importOriginal) => ({ ...await importOriginal<typeof import("../../services/aiClientService")>(), sendChatCompletionDetailed: vi.fn() }));
 
@@ -20,7 +21,7 @@ describe("session planning gateway", () => {
   beforeEach(() => vi.mocked(sendChatCompletionDetailed).mockReset());
 
   it("pins role boundaries and source hashes in the prompt", () => {
-    const prompt = buildSessionPlanningPrompt({ blocks: [{ decisionBlockId: "block-1", recordId: "record-1", contentVersion: 1, recordTitle: "BFS", subject: "DS", contextMarkdown: "context", excerptHash: "hash-1", feedback: [] }], allowedSupportingDecisionBlockIds: [] });
+    const prompt = buildSessionPlanningPrompt({ blocks: [{ decisionBlockId: "block-1", recordId: "record-1", contentVersion: 1, recordTitle: "BFS", subject: "DS", contextMarkdown: "context", excerptHash: "hash-1", feedback: [] }], allowedSupportingDecisionBlockIds: [], interventionEffects: [] });
     expect(prompt).toContain("不得补造来源");
     expect(prompt).toContain("hash-1");
     expect(prompt).toContain("session-blueprint-v1");
@@ -33,5 +34,87 @@ describe("session planning gateway", () => {
 
     expect(result).toMatchObject({ response: { status: "ok", summary: "done" }, usage: { totalTokens: 900 }, requestId: "request-1" });
     expect(vi.mocked(sendChatCompletionDetailed).mock.calls[0][0].request?.structuredOutput).toBe(true);
+  });
+});
+
+describe("session planning effect evidence (B-2 / F-01)", () => {
+  it("states the read-only boundary of the effect evidence in the prompt", () => {
+    const prompt = buildSessionPlanningPrompt({
+      blocks: [],
+      allowedSupportingDecisionBlockIds: [],
+      interventionEffects: [{
+        strategyKey: "procedure:variation:test:deep-model:session-blueprint-v1:review-coach-policy-v1:variation:none:quiz-turn-v1",
+        problemType: "procedure",
+        actualPracticeType: "variation",
+        hintLevelUsed: "none",
+        sampleCount: 3,
+        objectiveAnswerCount: 3,
+        objectiveCorrectRate: 0,
+        objectiveUnreliableCount: 0,
+        verificationObjectiveCount: 3,
+        verificationObjectiveCorrectRate: 0,
+      }],
+    });
+
+    expect(prompt).toContain("不得据此改变主决策块");
+    expect(prompt).toContain("不得据此宣告掌握");
+    // The evidence must not be presentable as a self-report figure.
+    expect(prompt).toContain("这些数字来自客观判题");
+  });
+
+  it("projects only objective fields, never the self-reported retention figure", () => {
+    const effect = {
+      id: "strategy-key",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+      problemType: "procedure",
+      practiceType: "variation",
+      strategyKey: "strategy-key",
+      sampleFrom: "2026-09-01T00:00:00.000Z",
+      sampleTo: "2026-09-09T00:00:00.000Z",
+      sampleCount: 7,
+      recentSampleCount: 7,
+      recencyWeight: 1,
+      actualPracticeType: "variation",
+      hintLevelUsed: "none",
+      selfReportedMasteredCount: 5,
+      immediateMasteredCount: 5,
+      delayedRetainedCount: 4,
+      delayedDecayedCount: 1,
+      retentionRate: 0.8,
+      decayRate: 0.2,
+      objectiveAnswerCount: 3,
+      objectiveCorrectCount: 1,
+      objectivePartialCount: 1,
+      objectiveIncorrectCount: 1,
+      objectiveUnreliableCount: 0,
+      objectiveCorrectRate: 1 / 3,
+      verificationObjectiveCount: 3,
+      verificationObjectiveCorrectCount: 1,
+      verificationObjectiveCorrectRate: 1 / 3,
+      objectiveEvidenceStatus: "usable" as const,
+      masteryAssessmentBreakdown: { correct: 1, partial: 0, incorrect: 0 },
+      averageTurnsToMastery: 2,
+      averageHintsUsed: 0,
+      deferredCount: 0,
+      abandonedCount: 0,
+      invalidQuestionCount: 0,
+      replanCount: 0,
+      deletedCount: 0,
+      confidence: 0.7,
+      evidenceStatus: "usable" as const,
+      modelVersions: ["deep-model"],
+      promptVersions: ["session-blueprint-v1"],
+      policyVersions: ["review-coach-policy-v1"],
+      replayFingerprint: "replay-abc",
+    } satisfies InterventionEffectSummary;
+
+    const projected = toSessionPlanningEffectSummary(effect);
+
+    expect(projected).toMatchObject({ strategyKey: "strategy-key", objectiveCorrectRate: 1 / 3, verificationObjectiveCorrectRate: 1 / 3 });
+    // D-1 contract clause 4: the planner must never receive the subjective figure.
+    expect(Object.keys(projected)).not.toContain("retentionRate");
+    expect(Object.keys(projected)).not.toContain("selfReportedMasteredCount");
+    expect(Object.keys(projected)).not.toContain("evidenceStatus");
   });
 });

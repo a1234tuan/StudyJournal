@@ -427,6 +427,18 @@ export const buildPodcastPromptPreview = (options: {
   } as AiContextPack,
 });
 
+/**
+ * F-21: the podcast prompt has always demanded "纯 JSON，不要 Markdown 代码围栏", while the
+ * conversational default system prompt asked for Markdown/LaTeX and a trailing source list. That
+ * contradiction is the same root cause as the Review Coach one (F-17) and produced the same kind of
+ * malformed first attempts. This role prompt replaces the default for the script call only.
+ */
+export const PODCAST_SCRIPT_SYSTEM_PROMPT = [
+  "你是一个结构化数据生成器，为本地学习日志应用输出播客脚本 JSON。",
+  "只输出一个 JSON 对象，不要 Markdown、不要代码围栏、不要 LaTeX、不要在 JSON 之外追加任何文字（包括来源列表）。",
+  "只能使用输入中给出的知识范围与来源记录，不得补造来源或事实。",
+].join("\n");
+
 const buildPodcastRetryPrompt = (prompt: string): string => `${prompt}
 
 这是第二次也是最后一次尝试。请停止继续分析，立即输出最终 JSON 对象。不要输出思考过程、解释、代码围栏或 JSON 以外的字符。`;
@@ -553,6 +565,7 @@ export const generatePodcastScript = async (options: {
           reasoningEffort: deepSeek ? "high" : undefined,
           timeoutMs: PODCAST_SCRIPT_TIMEOUT_MS,
           signal: ttsRequestSignal(options.signal),
+          systemPrompt: PODCAST_SCRIPT_SYSTEM_PROMPT,
         },
       });
     } catch (error) {

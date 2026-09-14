@@ -3024,6 +3024,23 @@
   font-size: 0.74rem;
 }
 
+/* B-3: the replan row needs room for a note plus the action, so it opts out of the shared row grid. */
+.review-coach-replan-list > div {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.review-coach-replan-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-coach-replan-actions input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .review-coach-analysis-list {
   border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
 }

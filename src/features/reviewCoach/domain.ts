@@ -237,6 +237,10 @@ export interface AdaptiveReviewTask extends CoachBaseEntity, VersionedDecisionBl
 export type AdaptiveQuizTurnStatus = "displayed" | "answered" | "invalid";
 export type ImmediateAnswerAssessment = "correct" | "partial" | "incorrect" | "unreliable";
 
+/** Strongest hint level used inside an intervention group. Derived locally from `hintsUsed`
+ *  (`QuizHintUsage.level` is 1-based and ordered weak → strong); never inferred from the model. */
+export type EffectHintLevel = "none" | "hint-only" | "explain-or-worked-example";
+
 export interface QuizHintUsage {
   level: number;
   requestedAt: CoachIsoDateTime;
@@ -330,6 +334,7 @@ export interface DecisionBlockState extends CoachBaseEntity, VersionedDecisionBl
 
 export interface InterventionEffectSummary extends CoachBaseEntity {
   problemType: FeedbackDifficultyType;
+  /** The blueprint's planned practice type. This is what the workbench label shows. */
   practiceType: AdaptivePracticeType;
   strategyKey: string;
   sampleFrom: CoachIsoDateTime;
@@ -337,11 +342,48 @@ export interface InterventionEffectSummary extends CoachBaseEntity {
   sampleCount: number;
   recentSampleCount: number;
   recencyWeight: number;
+  /** The practice type that actually dominated the turns of this group's tasks. Differs from
+   *  `practiceType` whenever the blueprint branched away from its planned type. `"none"` when
+   *  the tasks produced no turns at all. */
+  actualPracticeType: AdaptivePracticeType | "none";
+  /** Strongest hint level reached inside this group: no hints, level-1 hints only, or a
+   *  level >= 2 hint (explanation / worked example). Derived locally from `hintsUsed`. */
+  hintLevelUsed: EffectHintLevel;
+  /** Self-reported "mastered" count. The user-facing retention figure is still derived from
+   *  self-assessment only (D-1 option b); this is the canonical name for that count. */
+  selfReportedMasteredCount: number;
+  /** @deprecated Renamed to `selfReportedMasteredCount`. Kept so existing readers keep compiling. */
   immediateMasteredCount: number;
   delayedRetainedCount: number;
   delayedDecayedCount: number;
   retentionRate?: number;
   decayRate?: number;
+  /**
+   * Objective (AI-graded) answer evidence. Computed and persisted, but deliberately NOT
+   * shown in the workbench (D-1 option b) and NOT used as the primary mastery figure.
+   * It exists so the system can calibrate teaching internally and so a future UI decision
+   * can surface it without a data migration.
+   *
+   * `unreliable` is excluded from every denominator: it mixes "the model could not judge"
+   * with "the user skipped the turn" (`orchestrator.skipQuizTurn`), so counting it as a
+   * wrong answer would penalise the user for the model's limits.
+   */
+  objectiveAnswerCount: number;
+  objectiveCorrectCount: number;
+  objectivePartialCount: number;
+  objectiveIncorrectCount: number;
+  objectiveUnreliableCount: number;
+  objectiveCorrectRate?: number;
+  /** Same objective measure restricted to delayed-verification turns (fresh retrieval). */
+  verificationObjectiveCount: number;
+  verificationObjectiveCorrectCount: number;
+  verificationObjectiveCorrectRate?: number;
+  /** Usability gate for the objective measure alone. Intentionally separate from
+   *  `evidenceStatus`, which gates the primary (self-reported) figure. */
+  objectiveEvidenceStatus: "insufficient" | "usable";
+  /** Last-turn assessments of the tasks the user self-reported as mastered: answers
+   *  "how far apart are the user's confidence and their actual performance". */
+  masteryAssessmentBreakdown: { correct: number; partial: number; incorrect: number };
   averageTurnsToMastery?: number;
   averageHintsUsed?: number;
   deferredCount: number;

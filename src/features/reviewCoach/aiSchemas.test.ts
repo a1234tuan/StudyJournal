@@ -10,9 +10,20 @@ import {
 } from "./aiSchemas";
 
 describe("review coach AI contracts", () => {
+  // Bumping any of these is a deliberate act: `promptVersion` is recorded on blueprints and
+  // turns, and feeds effect attribution, so an unannounced change would silently pool
+  // results produced under different instructions.
+  const EXPECTED_PROMPT_VERSIONS: Record<string, string> = {
+    feedbackInterpretation: "feedback-interpretation-v1",
+    sessionBlueprint: "session-blueprint-v1",
+    quizTurn: "quiz-turn-v2",
+    questionQuality: "question-quality-v1",
+    answerEvaluation: "answer-evaluation-v2",
+  };
+
   it("pins prompt, policy, and JSON schema versions for every AI role", () => {
-    for (const contract of Object.values(REVIEW_COACH_AI_CONTRACTS)) {
-      expect(contract.promptVersion).toMatch(contract.promptVersion === "quiz-turn-v2" ? /-v2$/ : /-v1$/);
+    for (const [role, contract] of Object.entries(REVIEW_COACH_AI_CONTRACTS)) {
+      expect(contract.promptVersion).toBe(EXPECTED_PROMPT_VERSIONS[role]);
       expect(contract.policyVersion).toBe("review-coach-policy-v1");
       expect(contract.schemaVersion).toBe(1);
       expect(contract.schema).toHaveProperty("oneOf");
