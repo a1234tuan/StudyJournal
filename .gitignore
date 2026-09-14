@@ -31,4 +31,5 @@ functions/lib/
 .firebase/
 audit/second-review/implementation-*.txt
 .workbuddy/
-dist-verify-review/
+dist-verify-*/
+vitest.config.ts.timestamp-*.mjs
