@@ -1040,6 +1040,7 @@ export const RecordEditorPage = ({
         <>
           {draftRestored && <p className="status-message draft-status">已恢复未保存草稿，点击保存后才会写入正式记录。</p>}
           {saveError && <p className="status-message draft-status">{saveError}</p>}
+          {draftSaveError && <p className="status-message draft-status">{draftSaveError}</p>}
           {exportMessage && <p className="status-message draft-status">{exportMessage}</p>}
           <section className="record-editor-head">
             <textarea className="record-title-input" rows={1} value={draft.title} onChange={(event) => update({ title: event.target.value })} aria-label="记录标题" disabled={interactionLocked} />

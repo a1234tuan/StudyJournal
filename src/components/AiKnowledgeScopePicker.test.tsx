@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RecordBlock } from "../types";
+import { todayISO } from "../lib/date";
 import { AiKnowledgeScopePicker } from "./AiKnowledgeScopePicker";
 
 const record = (id: string, subject: string, title: string, tags: string[] = []): RecordBlock => ({
@@ -63,5 +64,59 @@ describe("AiKnowledgeScopePicker", () => {
     fireEvent.click(screen.getByRole("tab", { name: "按日期" }));
     fireEvent.click(screen.getByRole("button", { name: "确认范围" }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ kind: "date" })));
+  });
+});
+
+/**
+ * F-03: the date scope default must be the *local* calendar day.
+ *
+ * The removed implementation used `new Date().toISOString().slice(0, 10)`, which is
+ * the UTC day. In UTC+8 that resolves to yesterday for every local time between
+ * midnight and 08:00, so a user opening the picker in the morning got yesterday's
+ * material with no indication that anything was wrong.
+ */
+describe("AiKnowledgeScopePicker date scope basis", () => {
+  const originalTimezone = process.env.TZ;
+
+  afterEach(() => {
+    process.env.TZ = originalTimezone;
+    vi.useRealTimers();
+  });
+
+  it("defaults to the local day, not the UTC day, during the UTC+8 early-morning window", async () => {
+    process.env.TZ = "Asia/Shanghai";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 2026-09-13T16:30Z === 2026-09-14 00:30 in UTC+8.
+    vi.setSystemTime(new Date("2026-09-13T16:30:00.000Z"));
+
+    // The minimal trigger: the two readings of "today" disagree, and the UTC one is stale.
+    expect(new Date().toISOString().slice(0, 10)).toBe("2026-09-13");
+    expect(todayISO()).toBe("2026-09-14");
+
+    const onConfirm = vi.fn();
+    const view = renderPicker(
+      [{ ...record("r1", "数学", "极限"), date: "2026-09-14" }],
+      onConfirm,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "按日期" }));
+
+    const dateInput = view.container.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(dateInput).toBeTruthy();
+    expect(dateInput.value).toBe("2026-09-14");
+
+    fireEvent.click(screen.getByRole("button", { name: "确认范围" }));
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({ kind: "date", date: "2026-09-14" }),
+    );
+  });
+
+  it("still returns the local day outside the ambiguous window", () => {
+    process.env.TZ = "Asia/Shanghai";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 2026-09-14T04:00Z === 2026-09-14 12:00 in UTC+8: both readings agree.
+    vi.setSystemTime(new Date("2026-09-14T04:00:00.000Z"));
+
+    expect(new Date().toISOString().slice(0, 10)).toBe("2026-09-14");
+    expect(todayISO()).toBe("2026-09-14");
   });
 });

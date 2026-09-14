@@ -39,7 +39,7 @@ test.describe("voice recall production workspace migration", () => {
     const llm = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "LLM：" }) });
     await llm.locator("summary").click();
     await expect(llm.getByLabel("大语言模型服务")).toBeVisible();
-    await expect(llm.getByLabel("模型", { exact: true })).toHaveValue("deepseek-v4-pro");
+    await expect(llm.getByLabel("模型", { exact: true })).toHaveValue("deepseek-v4-flash");
     const asr = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "ASR：" }) });
     await asr.locator("summary").click();
     await expect(asr.getByLabel("语音识别服务")).toBeVisible();

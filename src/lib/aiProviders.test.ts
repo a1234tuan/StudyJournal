@@ -23,6 +23,43 @@ describe("aiProviders", () => {
     });
   });
 
+  // F-28: the seed model must be one the project actually verified end to end.
+  // `deepseek-v4-pro` could not be confirmed to exist, so an out-of-the-box request
+  // against the default provider would 404.
+  it("seeds the verified DeepSeek v4 flash model for the default provider", () => {
+    expect(createAiProviderTemplate("deepseek")).toMatchObject({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      builtIn: "deepseek",
+    });
+  });
+
+  // F-15: `builtIn` is read back from persisted settings, so a value written by a
+  // newer build (or tampered data) is not guaranteed to be in the union. The
+  // template factory used to fall through the switch and return `undefined`.
+  it("falls back to the DeepSeek template for an unknown builtIn value", () => {
+    const template = createAiProviderTemplate("some-unreleased-provider" as never);
+
+    expect(template).toMatchObject({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      builtIn: "deepseek",
+    });
+    // A complete profile, not a half-built object.
+    expect(template.contextWindowTokens).toBe(65536);
+    expect(template.temperature).toBe(0.7);
+    expect(template.maxTokens).toBe(4096);
+    expect(template.id).toEqual(expect.any(String));
+  });
+
+  it("keeps a caller-supplied id for the DeepSeek fallback", () => {
+    const created = createAiProviderTemplate("deepseek", "default");
+    expect(created.id).toBe("default");
+    expect(createAiProviderTemplate("legacy-value" as never, "default").id).toBe("default");
+  });
+
   it("uses a stable identity for the built-in provider", () => {
     expect(createDefaultAiProviders()).toEqual(createDefaultAiProviders());
   });

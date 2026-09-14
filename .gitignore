@@ -2,6 +2,7 @@ node_modules/
 dist/
 dev-dist/
 test-results/
+test-results-*/
 build/
 release/
 .env
@@ -32,4 +33,4 @@ functions/lib/
 audit/second-review/implementation-*.txt
 .workbuddy/
 dist-verify-*/
-vitest.config.ts.timestamp-*.mjs
+vitest*.config.ts.timestamp-*.mjs

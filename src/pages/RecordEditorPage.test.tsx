@@ -437,6 +437,60 @@ describe("RecordEditorPage", () => {
     });
   });
 
+  // F-18: a failed draft save used to be swallowed (`.catch(() => undefined)`), so the
+  // user only saw a status pill flip and had no way to report what went wrong.
+  it("surfaces a diagnosable message when a draft save fails, and clears it on the next success", async () => {
+    const failing = deferred<RecordDraft>();
+    const onSaveDraft = vi.fn()
+      .mockImplementationOnce(() => failing.promise)
+      .mockImplementation(async (draft: RecordDraft) => draft);
+    const { onGetDraft } = renderEditor({ onSaveDraft });
+
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    act(() => {
+      richEditorMock.html = "<p>草稿一</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      failing.reject(new Error("QuotaExceededError: storage is full"));
+      await expect(failing.promise).rejects.toThrow("storage is full");
+    });
+
+    // The failure is reported with the shared uiError wording plus a diagnostic id,
+    // and never with the raw provider/indexeddb message.
+    expect(await screen.findByText(/^保存失败。内容已存于本机草稿，请重试。（诊断编号 [A-Z]+-[0-9A-Z]+）$/)).toBeInTheDocument();
+    expect(screen.queryByText(/storage is full/)).not.toBeInTheDocument();
+    expect(screen.getByText("本机草稿保存失败")).toBeInTheDocument();
+
+    // Recovery path: the next successful save clears the stale error.
+    act(() => {
+      richEditorMock.html = "<p>草稿二</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/^保存失败。内容已存于本机草稿/)).not.toBeInTheDocument());
+    expect(screen.getByText("草稿已存于本机")).toBeInTheDocument();
+  });
+
+  it("keeps the successful draft-save path free of any error message", async () => {
+    const onSaveDraft = vi.fn(async (draft: RecordDraft) => draft);
+    const { onGetDraft } = renderEditor({ onSaveDraft });
+
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    act(() => {
+      richEditorMock.html = "<p>草稿</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(1));
+
+    expect(screen.queryByText(/保存失败/)).not.toBeInTheDocument();
+    expect(screen.getByText("草稿已存于本机")).toBeInTheDocument();
+  });
+
   it("does not query the native recorder when leaving preview", async () => {
     nativeAudioMock.canUseNativeAudioRecorder.mockReturnValue(true);
     const onBack = vi.fn();
