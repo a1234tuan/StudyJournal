@@ -224,6 +224,54 @@ describe("recordContent", () => {
     expect(markdown).toContain("| 概念 | 作用 | 类比 | 易错点 |");
   });
 
+  it("renders collapse-block formulas in place and exactly once", () => {
+    const formulaLatex = "\\lim_{x \\to 0} \\frac{f(x)}{x^2} = -1";
+    const collapseRecord = {
+      ...record,
+      assets: [],
+      formulas: [],
+      contentHtml: [
+        '<record-collapse data-title="解析" data-summary="标准答案">',
+        "<p>第一步：强行造出 $1 + \\square$ 的形式</p>",
+        `<record-formula data-formula-id="fx" data-title="核心条件" data-latex="${formulaLatex}"></record-formula>`,
+        "<p>第二步：把 <record-inline-math data-formula-id=\"im\" data-latex=\"u-1\"></record-inline-math> 代入求值</p>",
+        "</record-collapse>",
+      ].join(""),
+    };
+
+    const text = recordToPlainText(collapseRecord);
+    const count = (needle: string) => text.split(needle).length - 1;
+
+    // Kept in reading order instead of being dumped after the whole explanation.
+    expect(text.indexOf("第一步")).toBeLessThan(text.indexOf("核心条件"));
+    expect(text.indexOf("核心条件")).toBeLessThan(text.indexOf("第二步"));
+    // Each formula is emitted exactly once: block formulas are no longer re-appended, and
+    // nested inline formulas are no longer both inlined and re-appended.
+    expect(count(formulaLatex)).toBe(1);
+    expect(count("$u-1$")).toBe(1);
+    expect(count("$1 + \\square$")).toBe(1);
+    // Markdown keeps the same guarantees.
+    const markdown = recordToLinearMarkdown(collapseRecord);
+    expect(markdown.split(formulaLatex).length - 1).toBe(1);
+    expect(markdown.split("$u-1$").length - 1).toBe(1);
+  });
+
+  it("does not duplicate inline formulas inside highlight blocks", () => {
+    const highlightRecord = {
+      ...record,
+      assets: [],
+      formulas: [],
+      contentHtml:
+        '<record-highlight-block data-tone="yellow"><p>重点 <record-inline-math data-formula-id="im" data-latex="a^2+b^2=c^2"></record-inline-math> 要记牢</p><record-formula data-formula-id="fb" data-title="结论" data-latex="c=\\sqrt{a^2+b^2}"></record-formula></record-highlight-block>',
+    };
+
+    const text = recordToPlainText(highlightRecord);
+
+    expect(text.split("$a^2+b^2=c^2$").length - 1).toBe(1);
+    expect(text.split("c=\\sqrt{a^2+b^2}").length - 1).toBe(1);
+    expect(text).toContain("要记牢");
+  });
+
   it("exports collapse block content", () => {
     const collapseRecord = {
       ...record,

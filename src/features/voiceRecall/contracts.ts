@@ -1,3 +1,4 @@
+import type { VoiceContentBoundary } from "./contentBoundary";
 import type { VoiceRecallInputMode, VoiceRecallSessionMode } from "./domain";
 
 export interface VoiceOperationContext {
@@ -61,7 +62,7 @@ export type LlmStreamEvent =
 export interface VoiceTeacherMessage {
   role: "system" | "user" | "assistant";
   content: string;
-  contentBoundary?: "trusted-instruction" | "untrusted-learning-content" | "user-utterance";
+  contentBoundary?: VoiceContentBoundary;
 }
 
 export interface LlmStreamRequest extends VoiceOperationContext {

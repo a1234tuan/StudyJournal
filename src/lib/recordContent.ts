@@ -37,6 +37,11 @@ const decodeHtml = (value: string): string => {
     .replace(/&amp;/g, "&");
 };
 
+const htmlAttribute = (attributes: string, name: string): string => {
+  const match = new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i").exec(attributes);
+  return decodeHtml(match?.[1] ?? match?.[2] ?? "").trim();
+};
+
 const stripHtml = (html: string): string =>
   html
     .replace(/<record-tab\b[^>]*>(?:<\/record-tab>)?/gi, RECORD_TAB_PLACEHOLDER)
@@ -44,6 +49,13 @@ const stripHtml = (html: string): string =>
       `📎 ${decodeHtml(doubleQuoted ?? singleQuoted ?? "日志引用")}`,
     )
     .replace(/<record-reference\b[^>]*>(?:<\/record-reference>)?/gi, "📎 日志引用")
+    // Block formulas render in place, matching the top-level `recordToPlainText` formula node
+    // (`title\nlatex`). Previously they were dropped here and re-appended at the end of the
+    // enclosing collapse/highlight block, which both detached them from their explanation and
+    // duplicated every nested inline formula.
+    .replace(/<record-formula\b([^>]*)>(?:<\/record-formula>)?/gi, (_match, attributes: string) =>
+      [htmlAttribute(attributes, "data-title"), htmlAttribute(attributes, "data-latex")].filter(Boolean).join("\n"),
+    )
     .replace(/<record-inline-math\b[^>]*data-latex=(?:"([^"]*)"|'([^']*)')[^>]*>(?:<\/record-inline-math>)?/gi, (_match, doubleQuoted, singleQuoted) =>
       `$${decodeHtml(doubleQuoted ?? singleQuoted ?? "")}$`,
     )
@@ -185,15 +197,12 @@ const collapseElementText = (element: Element, assetMap: Map<string, Asset>, use
   const bodyText = useReferenceMarkdown ? inlineMarkdownText(element.innerHTML) : decodeHtml(stripHtml(element.innerHTML));
   const structures = Array.from(element.querySelectorAll("record-structure-diagram, record-comparison-table, record-sticky-board"))
     .map(structureBlockPlainTextFromElement);
-  const formulas = Array.from(element.querySelectorAll("record-formula, record-inline-math")).map((node) =>
-    [node.getAttribute("data-title"), node.getAttribute("data-latex")].filter(Boolean).join("\n"),
-  );
   const assets = Array.from(element.querySelectorAll("record-asset")).map((node) => {
     const id = node.getAttribute("data-asset-id") ?? "";
     const asset = assetMap.get(id);
     return [node.getAttribute("data-title"), asset?.title, asset?.fileName, asset?.ocrText].filter(Boolean).join("\n");
   });
-  return [title, summary, bodyText, ...structures, ...formulas, ...assets].filter(Boolean).join("\n");
+  return [title, summary, bodyText, ...structures, ...assets].filter(Boolean).join("\n");
 };
 
 const collapseElementMarkdown = (element: Element, assetMap: Map<string, Asset>): string => {
@@ -224,14 +233,12 @@ const highlightElementText = (
   useReferenceMarkdown = false,
 ): string => {
   const body = useReferenceMarkdown ? inlineMarkdownText(element.innerHTML) : decodeHtml(stripHtml(element.innerHTML));
-  const formulas = Array.from(element.querySelectorAll("record-formula, record-inline-math"))
-    .map((node) => [node.getAttribute("data-title"), node.getAttribute("data-latex")].filter(Boolean).join("\n"));
   const assets = Array.from(element.querySelectorAll("record-asset")).map((node) => {
     const id = node.getAttribute("data-asset-id") ?? "";
     const asset = assetMap.get(id);
     return [node.getAttribute("data-title"), asset?.title, asset?.fileName, asset?.ocrText].filter(Boolean).join("\n");
   });
-  return [body, ...formulas, ...assets].filter(Boolean).join("\n");
+  return [body, ...assets].filter(Boolean).join("\n");
 };
 
 const highlightElementMarkdown = (element: Element, assetMap: Map<string, Asset> = new Map()): string => {
@@ -328,30 +335,40 @@ export const parseLinearRecordContent = (record: RecordBlock, assets: Asset[] = 
   return nodes;
 };
 
-export const recordToPlainText = (record: RecordBlock, assets: Asset[] = []): string =>
+const linearNodeToPlainText = (node: LinearNode): string => {
+  if (node.kind === "text") {
+    return node.text;
+  }
+  if (node.kind === "formula") {
+    const formula = [node.formula.title, node.formula.latex].filter(Boolean).join("\n");
+    return node.inline ? `$${formula}$` : formula;
+  }
+  if (node.kind === "structure") {
+    return node.text;
+  }
+  if (node.kind === "highlight") {
+    return node.text;
+  }
+  if (node.kind === "mermaid") {
+    return node.text;
+  }
+  const assetLabel = [node.ref.title, node.asset?.title, node.asset?.fileName].filter(Boolean).join(" / ");
+  return [assetLabel, node.ocrText].filter(Boolean).join("\n");
+};
+
+/**
+ * Plain-text projection of the record, one entry per linear node, in reading order.
+ *
+ * Callers that have to fit a record into a token budget use this instead of `recordToPlainText`
+ * so they can truncate on node boundaries and never cut through a formula or a sentence.
+ */
+export const recordToPlainTextNodes = (record: RecordBlock, assets: Asset[] = []): string[] =>
   parseLinearRecordContent(record, assets)
-    .map((node) => {
-      if (node.kind === "text") {
-        return node.text;
-      }
-      if (node.kind === "formula") {
-        const formula = [node.formula.title, node.formula.latex].filter(Boolean).join("\n");
-        return node.inline ? `$${formula}$` : formula;
-      }
-      if (node.kind === "structure") {
-        return node.text;
-      }
-      if (node.kind === "highlight") {
-        return node.text;
-      }
-      if (node.kind === "mermaid") {
-        return node.text;
-      }
-      const assetLabel = [node.ref.title, node.asset?.title, node.asset?.fileName].filter(Boolean).join(" / ");
-      return [assetLabel, node.ocrText].filter(Boolean).join("\n");
-    })
-    .filter(Boolean)
-    .join("\n\n");
+    .map(linearNodeToPlainText)
+    .filter(Boolean);
+
+export const recordToPlainText = (record: RecordBlock, assets: Asset[] = []): string =>
+  recordToPlainTextNodes(record, assets).join("\n\n");
 
 export const recordToLinearMarkdown = (record: RecordBlock, assets: Asset[] = []): string =>
   [

@@ -19,9 +19,9 @@ import { Capacitor } from "@capacitor/core";
 import { AiKnowledgeScopePicker } from "../../components/AiKnowledgeScopePicker";
 import { MotionPresence } from "../../components/MotionPresence";
 import { getAiKnowledgeScopeRecords } from "../../services/aiContextService";
-import { getCurrentAiProvider } from "../../lib/aiProviders";
+import { DEFAULT_AI_CONTEXT_WINDOW_TOKENS, getCurrentAiProvider } from "../../lib/aiProviders";
 import { getCurrentTtsProvider } from "../../lib/ttsProviders";
-import { recordToPlainText } from "../../lib/recordContent";
+import { recordToPlainTextNodes } from "../../lib/recordContent";
 import type { AppSettings, Asset, Block, ContentTemplate, RecordBlock, SubjectConfig } from "../../types";
 import type { VoiceRecallNavigationRoute } from "../../lib/tabNavigation";
 import type { VisualTheme } from "../../lib/visualTheme";
@@ -34,6 +34,7 @@ import type { VoiceRecallLocalHistory, VoiceRecallStructuredMemory, VoiceRecallT
 import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "./nativeVoiceCapture";
 import type { VoicePlaybackSink } from "./playbackQueue";
 import {
+  clampVoiceLlmMaxTokens,
   createProductionVoiceSession,
   VoiceConfigurationError,
   describeVoiceError,
@@ -42,7 +43,7 @@ import {
 } from "./productionPipeline";
 import { VoiceRecallRepository, voiceRecallRepository } from "./repository";
 import { VoiceRecallRuntimeController, voiceRecallRuntime } from "./runtimeController";
-import { buildVoiceTeacherMessages } from "./teacherPrompt";
+import { buildVoiceTeacherTurn, type VoiceMaterialStats } from "./teacherPrompt";
 import { WebVoiceCaptureAdapter } from "./webVoiceCapture";
 import {
   VoiceRecallCallView,
@@ -190,6 +191,10 @@ export const VoiceRecallWorkspace = ({
   const [journalSubject, setJournalSubject] = useState(() => subjects.find((item) => !item.archivedAt)?.name ?? "");
   const [journalTemplateId, setJournalTemplateId] = useState("");
   const [runtimeState, setRuntimeState] = useState(runtime.snapshot);
+  // Derived on demand from the last turn's material plan. Never persisted: the details panel
+  // recomputes it from the same inputs, so there is no store, no schema change, and nothing to
+  // invalidate when the selected records change.
+  const [materialStats, setMaterialStats] = useState<VoiceMaterialStats | null>(null);
   const [knowledgeMode, setKnowledgeMode] = useState<VoiceRecallKnowledgeMode>(route.sourceKind === "free-topic" ? "topic" : "material");
   const [callPalette] = useState<"bright" | "dark">("bright");
   const [captionsVisible, setCaptionsVisible] = useState(true);
@@ -640,12 +645,16 @@ export const VoiceRecallWorkspace = ({
       setTranscript("");
       setTranscriptEditorOpen(false);
 
-      const messages: VoiceTeacherMessage[] = buildVoiceTeacherMessages({
+      const turnBuild = buildVoiceTeacherTurn({
         topic: route.topic,
         confirmedText,
-        materials: selectedRecords.map((record) => ({ title: record.title, text: recordToPlainText(record, assets) })),
+        materials: selectedRecords.map((record) => ({ title: record.title, nodes: recordToPlainTextNodes(record, assets) })),
         turns: turns.filter((turn) => turn.playbackStatus === "completed").map((turn) => ({ confirmedText: turn.confirmedText, assistantText: turn.assistantText, teacherText: turn.teacherText, playedText: turn.playedText, pendingText: turn.pendingText, playbackStatus: turn.playbackStatus })),
+        contextWindowTokens: voiceContextWindowTokens,
+        outputReserveTokens: voiceOutputReserveTokens,
       });
+      const messages: VoiceTeacherMessage[] = turnBuild.messages;
+      setMaterialStats(turnBuild.materialPlan.stats);
 
       let replyStarted = false;
       const bufferedAudio: Array<{ chunk: Uint8Array; segmentId?: string }> = [];
@@ -937,6 +946,19 @@ export const VoiceRecallWorkspace = ({
     const provider = llmProfiles.find((item) => item.id === activeProviderConfig.llmProfileId);
     return provider ? `${provider.providerName} · ${activeProviderConfig.llmModel || provider.model}` : "未配置的 AI 供应商";
   }, [activeProviderConfig, llmProfiles]);
+  // Voice material is budgeted against the real context window of the selected LLM profile.
+  // Falling back to the app default keeps a misconfigured profile from silently sending an
+  // unbounded prompt.
+  const activeLlmProfile = useMemo(
+    () => llmProfiles.find((item) => item.id === activeProviderConfig.llmProfileId),
+    [activeProviderConfig.llmProfileId, llmProfiles],
+  );
+  const voiceContextWindowTokens = activeLlmProfile?.contextWindowTokens && activeLlmProfile.contextWindowTokens > 0
+    ? activeLlmProfile.contextWindowTokens
+    : DEFAULT_AI_CONTEXT_WINDOW_TOKENS;
+  // Matches the clamp the production pipeline applies, so the reservation reflects what the
+  // provider is actually told to generate rather than the profile's raw `maxTokens`.
+  const voiceOutputReserveTokens = clampVoiceLlmMaxTokens(activeLlmProfile?.maxTokens);
   const providerSummaries = useMemo(() => Object.fromEntries(USER_VOICE_TEMPLATES.map((template) => [
     template.templateId,
     {
@@ -1178,7 +1200,7 @@ export const VoiceRecallWorkspace = ({
         pendingPlayback={Boolean(pendingPlaybackTurn)}
         onContinuePlayback={() => { void continuePendingPlayback(); }}
       />
-      <MotionPresence present={detailsOpen} variant="drawer" className="vr-details-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsOpen(false); }}><aside className="vr-details" aria-label="通话详情" role="dialog" aria-modal="true"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div><div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30), turns: voiceTurnObservationSnapshot().slice(-20) }, null, 2)}</pre></details></aside></MotionPresence>
+      <MotionPresence present={detailsOpen} variant="drawer" className="vr-details-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsOpen(false); }}><aside className="vr-details" aria-label="通话详情" role="dialog" aria-modal="true"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div>{materialStats && materialStats.totalRecords > 0 && <div><dt>本轮发送</dt><dd>{materialStats.sentRecords < materialStats.totalRecords ? `${materialStats.sentRecords} / ${materialStats.totalRecords} 条` : `${materialStats.totalRecords} 条`} · {materialStats.sentChars} / {materialStats.totalChars} 字</dd></div>}<div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{materialStats?.reasons.length ? <p className="vr-details-note">{materialStats.reasons.join(" ")}</p> : null}{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30), turns: voiceTurnObservationSnapshot().slice(-20) }, null, 2)}</pre></details></aside></MotionPresence>
       <MotionPresence present={backOpen} variant="sheet" className="vr-sheet-backdrop" role="presentation"><VoiceRecallExitSheet onPause={() => { void runtime.pause().then(() => onRouteChange({ ...route, screen: "start", sessionId: undefined })); setBackOpen(false); }} onEnd={() => { void finish(); setBackOpen(false); }} onContinue={() => setBackOpen(false)} /></MotionPresence>
     </>;
   }

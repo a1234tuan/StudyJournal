@@ -12,6 +12,7 @@ import type {
   RecordBlock,
 } from "../types";
 import { extractDecisionBlocks } from "../features/reviewCoach/decisionBlockContent";
+import { estimateAiTokens } from "../lib/aiTokens";
 import { addDaysISO, todayISO } from "../lib/date";
 import { parseLinearRecordContent } from "../lib/recordContent";
 import { normalizeRecordTags, recordTagKey, subjectTagKey } from "../lib/recordTags";
@@ -135,15 +136,11 @@ const chineseBigrams = (value: string): string[] => {
   return [...bigrams];
 };
 
-/** A deliberately conservative local estimate used to stay below provider context windows. */
-export const estimateAiTokens = (value: string): number => {
-  const chars = Array.from(value);
-  let cjk = 0;
-  for (const char of chars) {
-    if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(char)) cjk += 1;
-  }
-  return Math.ceil((cjk * 1.5 + (chars.length - cjk) / 3 + 8) * 1.1);
-};
+/**
+ * Re-exported from `lib/aiTokens` so existing callers keep working. The estimator now lives in
+ * the dependency-free `lib` layer because voice recall and the review-coach planner also need it.
+ */
+export { estimateAiTokens };
 
 export const formatAiContextSource = (chunk: AiContextChunk, index: number): string => [
   `[[S${index + 1}]] ${chunk.sourceLabel}`,
