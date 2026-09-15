@@ -2,6 +2,8 @@
 
 本地优先的个人学习应用，把学习记录、间隔复习和 AI 辅助训练连接起来。支持 Windows、Android 和 Web。
 
+> **项目状态（2026-09-15）**：StudyJournal 已进入功能冻结与维护阶段。本仓库保留“学习日志”品牌、现有应用标识、数据目录和升级兼容性；后续产品演进计划在独立的 **Exocortex** 仓库中进行，不在这里原地改名。冻结表示当前源码形成了可复现的收口基线，不表示尚未执行的真机、付费 Provider 或真实 Firebase 配额验收已经通过。详见 [`docs/studyjournal-final-freeze-2026-09-15.md`](docs/studyjournal-final-freeze-2026-09-15.md)。
+
 [![CI](https://github.com/a1234tuan/StudyJournal/actions/workflows/ci.yml/badge.svg)](https://github.com/a1234tuan/StudyJournal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/a1234tuan/StudyJournal)](https://github.com/a1234tuan/StudyJournal/releases/latest)

@@ -32,7 +32,7 @@ test("desktop review layout, brand and click feedback use the new visual hierarc
   await page.getByRole("button", { name: "日志", exact: true }).click();
   const journalCard = page.locator(".record-card").first();
   await expect(journalCard).toBeVisible();
-  const cardHierarchy = await journalCard.evaluate((card) => {
+  const readCardHierarchy = () => journalCard.evaluate((card) => {
     const title = card.querySelector(".record-card-copy > strong")!;
     const excerpt = card.querySelector(".record-card-excerpt")!;
     const meta = card.querySelector(".record-card-meta")!;
@@ -51,6 +51,21 @@ test("desktop review layout, brand and click feedback use the new visual hierarc
       metaColor: metaStyle.color,
     };
   });
+  let cardHierarchy: Awaited<ReturnType<typeof readCardHierarchy>> | undefined;
+  await expect.poll(async () => {
+    try {
+      const candidate = await readCardHierarchy();
+      const ready = Number.isFinite(candidate.titleSize)
+        && Number.isFinite(candidate.excerptSize)
+        && Number.isFinite(candidate.titleWeight)
+        && Number.isFinite(candidate.excerptWeight);
+      if (ready) cardHierarchy = candidate;
+      return ready;
+    } catch {
+      return false;
+    }
+  }, { timeout: 10_000 }).toBe(true);
+  if (!cardHierarchy) throw new Error("Record card styles did not stabilize");
   expect(cardHierarchy.ordered).toBe(true);
   expect(cardHierarchy.titleSize).toBeGreaterThan(cardHierarchy.excerptSize);
   expect(cardHierarchy.titleWeight).toBeGreaterThan(cardHierarchy.excerptWeight);

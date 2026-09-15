@@ -351,7 +351,10 @@ export const VoiceRecallCallView = ({
             : state.status === "ended" ? <button className="vr-retry" type="button" onClick={onBack}><Check />返回复习</button>
               : <>
                 <button className={`vr-control-secondary ${state.userMuted ? "is-active" : ""}`} type="button" aria-pressed={state.userMuted} onClick={onMute}>{state.userMuted ? <MicOff /> : <Mic />}<span>{state.userMuted ? "已静音" : "静音"}</span></button>
-                <button className={`vr-control-secondary ${captionsVisible ? "is-active" : ""}`} type="button" aria-pressed={transcriptEditorOpen} aria-label="字幕与键盘输入" onClick={() => { onToggleCaptions(); onToggleTranscriptEditor(); }}><Captions /><span>{transcriptEditorOpen ? "收起输入" : "字幕输入"}</span></button>
+                <button className={`vr-control-secondary ${captionsVisible ? "is-active" : ""}`} type="button" aria-pressed={transcriptEditorOpen} aria-label="字幕与键盘输入" onClick={() => {
+                  if (transcriptEditorOpen || !captionsVisible) onToggleCaptions();
+                  onToggleTranscriptEditor();
+                }}><Captions /><span>{transcriptEditorOpen ? "收起输入" : "字幕输入"}</span></button>
                 <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={onPressStart} onPointerUp={onPressEnd} onPointerCancel={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
                 {pendingPlayback && state.status === "listening" && onContinuePlayback && <button type="button" className="vr-control-secondary" onClick={onContinuePlayback}><Play /><span>继续回复</span></button>}
                 <button className="vr-control-secondary vr-control-end" type="button" aria-label="结束并查看摘要" onClick={onEnd}><X /><span>结束</span></button>

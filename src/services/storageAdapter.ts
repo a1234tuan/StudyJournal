@@ -427,11 +427,24 @@ const dedupeSnapshotTags = (tags: Tag[]): Tag[] => {
 };
 
 export class DexieStorageAdapter implements StorageAdapter {
+  private initializationPromise?: Promise<void>;
+
   async getCloudSyncMutationEpoch(): Promise<number> {
     return cloudSyncMutationEpoch();
   }
 
   async initialize(): Promise<void> {
+    if (this.initializationPromise) return this.initializationPromise;
+    const initialization = this.initializeOnce();
+    this.initializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) this.initializationPromise = undefined;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
     await db.open();
     // Staging is only meaningful while the current JS process is committing a
     // restore/import. A previous process cannot resume it safely.
