@@ -404,6 +404,28 @@ const reviewActionLog = (
   };
 };
 
+/** A tag name must stay unique locally (&name index). When the cloud merges two
+ * same-name rows (two devices created the tag concurrently), keep one deterministic
+ * winner so snapshot restores never trip the unique index. */
+const dedupeSnapshotTags = (tags: Tag[]): Tag[] => {
+  const byName = new Map<string, Tag>();
+  for (const tag of tags) {
+    const current = byName.get(tag.name);
+    if (!current) {
+      byName.set(tag.name, tag);
+    } else if (current.deletedAt !== undefined && tag.deletedAt === undefined) {
+      // Prefer a live row when a soft-deleted row shares the same name.
+      byName.set(tag.name, tag);
+    } else if (current.deletedAt === undefined && tag.deletedAt !== undefined) {
+      // Keep the live row.
+    } else if (tag.id < current.id) {
+      // Same liveness: smallest id wins so every device picks the same row.
+      byName.set(tag.name, tag);
+    }
+  }
+  return [...byName.values()];
+};
+
 export class DexieStorageAdapter implements StorageAdapter {
   async getCloudSyncMutationEpoch(): Promise<number> {
     return cloudSyncMutationEpoch();
@@ -2261,7 +2283,7 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.recordReviews.bulkPut(snapshot.payload.recordReviews ?? []),
           db.recordReviewLogs.bulkPut(snapshot.payload.recordReviewLogs ?? []),
           db.recordReviewDayStats.bulkPut(snapshot.payload.recordReviewDayStats ?? []),
-          db.tags.bulkPut(snapshot.payload.tags),
+          db.tags.bulkPut(dedupeSnapshotTags(snapshot.payload.tags)),
           db.studySessions.bulkPut(snapshot.payload.studySessions),
           db.settings.put(settingsToRestore),
           db.assets.bulkPut(assetsToRestore),
@@ -2341,7 +2363,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             db.recordReviews.bulkPut(snapshot.payload.recordReviews ?? []),
             db.recordReviewLogs.bulkPut(snapshot.payload.recordReviewLogs ?? []),
             db.recordReviewDayStats.bulkPut(snapshot.payload.recordReviewDayStats ?? []),
-            db.tags.bulkPut(snapshot.payload.tags),
+            db.tags.bulkPut(dedupeSnapshotTags(snapshot.payload.tags)),
             db.studySessions.bulkPut(snapshot.payload.studySessions),
             db.settings.put(ensureSettingsSubjects({ ...snapshot.payload.settings, schemaVersion: 4 }, restoredRecords)),
             db.assets.bulkPut(staged.map((entry) => entry.asset)),
