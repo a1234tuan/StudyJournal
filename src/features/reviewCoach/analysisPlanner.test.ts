@@ -32,20 +32,21 @@ describe("analysis planner", () => {
     expect(plan.oversized.map((item) => item.decisionBlockId)).toEqual(["large"]);
   });
 
-  it("folds the effect evidence into the frozen input fingerprint (B-2)", () => {
+  it("fingerprints only the decision-block inputs", () => {
     const blocks = [block("1", 400)];
-    const withoutEffects = planAnalysisBatches(blocks, 1_000);
-    const withEffects = planAnalysisBatches(blocks, 1_000, [{ strategyKey: "strategy-a", replayFingerprint: "replay-a" }]);
+    const plan = planAnalysisBatches(blocks, 1_000);
 
-    // Same blocks, different evidence → the batch records that it was planned against other facts.
-    expect(withEffects.inputFingerprint).not.toBe(withoutEffects.inputFingerprint);
-    // Same evidence in a different order → the same fingerprint.
-    expect(planAnalysisBatches(blocks, 1_000, [
-      { strategyKey: "strategy-a", replayFingerprint: "replay-a" },
-      { strategyKey: "strategy-b", replayFingerprint: "replay-b" },
-    ]).inputFingerprint).toBe(planAnalysisBatches(blocks, 1_000, [
-      { strategyKey: "strategy-b", replayFingerprint: "replay-b" },
-      { strategyKey: "strategy-a", replayFingerprint: "replay-a" },
-    ]).inputFingerprint);
+    // Same blocks always produce the same fingerprint ...
+    expect(planAnalysisBatches(blocks, 1_000).inputFingerprint).toBe(plan.inputFingerprint);
+    // ... and changing an identity field of a block changes it.
+    expect(planAnalysisBatches([block("2", 400)], 1_000).inputFingerprint).not.toBe(plan.inputFingerprint);
+    expect(planAnalysisBatches([{ ...block("1", 400), excerptHash: "hash-changed" }], 1_000).inputFingerprint)
+      .not.toBe(plan.inputFingerprint);
+  });
+
+  it("no longer accepts intervention effect summaries at all (planning decontamination)", () => {
+    // Removing the third parameter is the point: an AI-graded effect table must
+    // not be able to influence which evidence a batch is planned against.
+    expect(planAnalysisBatches.length).toBe(2);
   });
 });

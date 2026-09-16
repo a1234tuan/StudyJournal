@@ -8,7 +8,7 @@ import { isDesktopPlatform, isNativePlatform } from "./lib/platform";
 import { ReviewCoachPreviewApp } from "./preview/ReviewCoachPreviewApp";
 import { isVoiceRecallPrototypeRequest, VoiceRecallPrototypeApp } from "./preview/VoiceRecallPrototypeApp";
 import { isUiV2PrototypeRequest, UiV2PrototypeApp } from "./preview/UiV2PrototypeApp";
-import { isJournalPerformancePreviewRequest, isReviewCoachPreviewRequest, isStage3PreviewRequest, isStage4PreviewRequest, isStage5PreviewRequest, isStage6PreviewRequest, isStage7PreviewRequest, seedJournalPerformancePreview, seedStage3Preview, seedStage4Preview, seedStage5Preview, seedStage6Preview, seedStage7Preview } from "./preview/stage3PreviewSeed";
+import { isJournalPerformancePreviewRequest, isReviewCoachPreviewRequest, isStage3PreviewRequest, isStage4PreviewRequest, isStage5PreviewRequest, isStage6PreviewRequest, isStage7PreviewRequest, isClosedLoopV2PreviewRequest, isClosedLoopV2VerificationPreviewRequest, seedClosedLoopV2Preview, seedClosedLoopV2VerificationPreview, seedJournalPerformancePreview, seedStage3Preview, seedStage4Preview, seedStage5Preview, seedStage6Preview, seedStage7Preview } from "./preview/stage3PreviewSeed";
 import "./styles.css";
 import "./styles/theme.css";
 import "./styles/layout.css";
@@ -35,9 +35,11 @@ const startApplication = async () => {
     return;
   }
   const reviewCoachPreview = isReviewCoachPreviewRequest();
-  if (reviewCoachPreview || isJournalPerformancePreviewRequest() || isStage3PreviewRequest() || isStage4PreviewRequest() || isStage5PreviewRequest() || isStage6PreviewRequest() || isStage7PreviewRequest()) {
+  if (reviewCoachPreview || isClosedLoopV2PreviewRequest() || isClosedLoopV2VerificationPreviewRequest() || isJournalPerformancePreviewRequest() || isStage3PreviewRequest() || isStage4PreviewRequest() || isStage5PreviewRequest() || isStage6PreviewRequest() || isStage7PreviewRequest()) {
     try {
-      if (isJournalPerformancePreviewRequest()) await seedJournalPerformancePreview();
+      if (isClosedLoopV2VerificationPreviewRequest()) await seedClosedLoopV2VerificationPreview();
+      else if (isClosedLoopV2PreviewRequest()) await seedClosedLoopV2Preview();
+      else if (isJournalPerformancePreviewRequest()) await seedJournalPerformancePreview();
       else if (reviewCoachPreview || isStage7PreviewRequest()) await seedStage7Preview();
       else if (isStage6PreviewRequest()) await seedStage6Preview();
       else if (isStage5PreviewRequest()) await seedStage5Preview();

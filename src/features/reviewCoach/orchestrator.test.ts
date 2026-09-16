@@ -25,7 +25,7 @@ describe("ReviewCoachOrchestrator", () => {
     snapshot.adaptiveQuizTurns[0] = { ...snapshot.adaptiveQuizTurns[0], status: "answered", answerText: "具体的错误回答", assessmentRationale: "遗漏了关键顺序" };
     const generateTurn = vi.fn(async (_input: unknown) => ({ status: "ok" as const, practiceType: "variation" as const, answerMode: "open" as const, question: "下一题", answerCriteria: ["before enqueue"], sourceEvidence: snapshot.sessionBlueprints[0].evidence, hints: [] }));
     const repository = { getFormalSnapshot: vi.fn(async () => snapshot), addQuizTurn: vi.fn(async (turn: any) => turn) } as unknown as ReviewCoachRepository;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "next" }, clock: { now: () => stamp }, aiGateway: { generateTurn, planSession: vi.fn(), interpretFeedback: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "next" }, clock: { now: () => stamp }, aiGateway: { generateTurn, planSession: vi.fn(), interpretFeedback: vi.fn(), reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn() } });
     await orchestrator.generateQuizTurn({ taskId: snapshot.adaptiveReviewTasks[0].id, decisionBlockContent: "source", provider: "test", model: "test", promptVersion: "quiz-turn-v2", qualityPromptVersion: "question-quality-v1", policyVersion: "review-coach-policy-v1", operationId: "next-operation" });
     expect(generateTurn.mock.calls[0][0]).toMatchObject({ previousTurns: [{ answerText: "具体的错误回答", assessmentRationale: "遗漏了关键顺序" }] });
   });
@@ -406,22 +406,16 @@ describe("ReviewCoachOrchestrator", () => {
     return planSession;
   };
 
-  it("hands usable objective effect evidence to the deep planner (B-2)", async () => {
-    const planSession = await analyzeWithEffects(3);
-    const payload = planSession.mock.calls[0][0] as { interventionEffects: Array<Record<string, unknown>> };
-
-    expect(payload.interventionEffects).toHaveLength(1);
-    expect(payload.interventionEffects[0]).toMatchObject({ problemType: "procedure", actualPracticeType: "variation", objectiveAnswerCount: 3, objectiveCorrectRate: 1 });
-    // D-1 contract: the planner must never see the subjective figure, in any form.
-    expect(JSON.stringify(payload.interventionEffects)).not.toContain("retentionRate");
-    expect(JSON.stringify(payload.interventionEffects)).not.toContain("selfReported");
-  });
-
-  it("withholds effect evidence that has too few objective samples (B-2)", async () => {
-    const planSession = await analyzeWithEffects(2);
-    const payload = planSession.mock.calls[0][0] as { interventionEffects: unknown[] };
-
-    expect(payload.interventionEffects).toEqual([]);
+  it("never hands historical effect summaries to the deep planner, however many samples exist (planning decontamination)", async () => {
+    for (const objectiveAnswers of [2, 3, 9]) {
+      const planSession = await analyzeWithEffects(objectiveAnswers);
+      const payload = planSession.mock.calls[0][0] as Record<string, unknown>;
+      // The old contract passed "usable objective" rows here. Every one of those
+      // rows was AI graded, so the field itself is gone rather than merely filtered.
+      expect(payload).not.toHaveProperty("interventionEffects");
+      expect(JSON.stringify(payload)).not.toContain("objectiveCorrectRate");
+      expect(JSON.stringify(payload)).not.toContain("strategyKey");
+    }
   });
 
   /** C-5: the gate must survive a candidate that anchors itself in another block's evidence. */

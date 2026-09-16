@@ -10,7 +10,8 @@ test("shows and exercises the isolated AI coach preview", async ({ page }, testI
   await page.goto("/?preview=coach");
   await expect(page.getByRole("heading", { name: "AI 驾驶舱" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "复习助教" })).toBeVisible();
-  await expect(page.getByText("训练效果", { exact: true })).toBeVisible();
+  await expect(page.getByText("训练效果", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/次样本/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("coach-dashboard.png"), fullPage: true });
 
   await page.getByRole("button", { name: "自适应训练" }).click();

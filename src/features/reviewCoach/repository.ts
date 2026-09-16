@@ -45,6 +45,10 @@ import {
   openTargetKeyFor,
   validateReviewCoachFormalSnapshot,
 } from "./validation";
+import { independenceForTurn } from "./interventionPolicy";
+import { lockedVerificationTurn } from "./variantPolicy";
+import { conclusionOutcomeForEvidence, continuesVerificationChain, verificationEvidenceStatusFor } from "./evidencePolicy";
+import { calculateVerificationFollowUpSchedule } from "./verificationPolicy";
 import type { PreparedDecisionBlockContent } from "./decisionBlockContent";
 
 export interface ReviewCoachRepository {
@@ -60,6 +64,7 @@ export interface ReviewCoachRepository {
   updateQueueItemAnalysisNote(id: string, analysisNote: string, updatedAt: string): Promise<AnalysisQueueItem>;
   saveFeedbackInterpretation(interpretation: FeedbackInterpretation): Promise<FeedbackInterpretation>;
   transitionQueueItem(id: string, status: AnalysisQueueStatus, updatedAt: string, batchId?: string): Promise<AnalysisQueueItem>;
+  requeueAnalysisQueueItem(id: string, updatedAt: string): Promise<AnalysisQueueItem>;
   createAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch>;
   transitionAnalysisBatch(id: string, status: AnalysisBatchStatus, updatedAt: string): Promise<AnalysisBatch>;
   updateAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch>;
@@ -72,6 +77,31 @@ export interface ReviewCoachRepository {
   recordQuizHint(id: string, level: number, requestedAt: string): Promise<AdaptiveQuizTurn>;
   commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal): Promise<AdaptiveQuizTurn>;
   invalidateQuizTurn(turnId: string, event: TaskOutcomeEvent, updatedAt: string): Promise<AdaptiveReviewTask>;
+  supersedeEvidence(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent>;
+  requeueV2Attempt(input: {
+    deferredTaskId: string;
+    blueprint: SessionBlueprint;
+    reason: string;
+    operationId: string;
+    now: string;
+  }): Promise<AdaptiveReviewTask>;
+  /**
+   * Defers a v2 attempt and creates its replacement as one atomic fact.
+   *
+   * Callers must prefer this over calling `commitTaskOutcome` and
+   * `requeueV2Attempt` back to back: those are two independent transactions, and
+   * a failure between them leaves a deferred task with no replacement holding
+   * its target.
+   */
+  deferAndRequeue(input: {
+    deferredTaskId: string;
+    deferredEvents: TaskOutcomeEvent[];
+    notBeforeAt: string;
+    blueprint: SessionBlueprint;
+    reason: string;
+    operationId: string;
+    now: string;
+  }): Promise<{ deferred: AdaptiveReviewTask; replacement: AdaptiveReviewTask }>;
   addOutcome(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent>;
   commitTaskOutcome(
     taskId: string,
@@ -84,7 +114,9 @@ export interface ReviewCoachRepository {
   scheduleVerification(verification: DelayedVerification): Promise<DelayedVerification>;
   transitionVerification(id: string, status: DelayedVerificationStatus, updatedAt: string, outcome?: DelayedVerification["verificationOutcome"]): Promise<DelayedVerification>;
   queueVerification(verificationId: string, task: AdaptiveReviewTask, updatedAt: string): Promise<{ verification: DelayedVerification; task: AdaptiveReviewTask }>;
+  detachVerificationTask(verificationId: string, updatedAt: string): Promise<DelayedVerification>;
   completeVerification(taskId: string, events: TaskOutcomeEvent[], outcome: "retained" | "decayed", updatedAt: string): Promise<AdaptiveReviewTask>;
+  completeV2Verification(taskId: string, updatedAt: string): Promise<AdaptiveReviewTask>;
   saveAiRoleConfig(config: AiRoleConfig): Promise<AiRoleConfig>;
   rebuildProjections(): Promise<{ states: DecisionBlockState[]; effects: InterventionEffectSummary[] }>;
   areProjectionsCurrent?(): Promise<boolean>;
@@ -476,6 +508,28 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     await this.database.cloudSyncMutation.put({ id: "local", epoch: (current?.epoch ?? 0) + 1 });
   }
 
+  /**
+   * Runs a write either inside the caller's formal transaction or a new one.
+   *
+   * Composing repository methods used to be impossible: each one opened its own
+   * `database.transaction`, and Dexie runs inner transactions as independent
+   * units. That is how `deferAndRequeueV2Attempt` could defer a task and then
+   * fail to create its replacement, leaving an orphaned deferral behind. With
+   * this guard, a caller that has already opened a formal transaction gets plain
+   * composition and one atomic commit; everyone else keeps the old behaviour.
+   *
+   * Note Dexie's `transaction()` *returns* the callback's promise; it does not
+   * re-enter, so this must be awaited, never fire-and-forget.
+   */
+  private inFormalTransaction<T>(work: () => Promise<T>): Promise<T> {
+    if (Dexie.currentTransaction !== null) return work();
+    return this.database.transaction(
+      "rw",
+      [this.database.cloudSyncMutation, ...formalTables(this.database)],
+      work,
+    );
+  }
+
   private async staleDerivedWork(decisionBlockId: string, contentVersion: number, stamp: string, reason: string) {
     const [queueItems, batches, blueprints, tasks, verifications] = await Promise.all([
       this.database.analysisQueueItems.where("decisionBlockId").equals(decisionBlockId).toArray(),
@@ -763,6 +817,29 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
+  async requeueAnalysisQueueItem(id: string, updatedAt: string): Promise<AnalysisQueueItem> {
+    return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
+      const current = await this.database.analysisQueueItems.get(id);
+      if (!current || ["deleted", "stale"].includes(current.status)) {
+        throw new ReviewCoachValidationError("inactive-queue-item", `Queue item ${id} cannot be requeued.`);
+      }
+      transitionAnalysisQueueItem(current.status, "eligible");
+      const next: AnalysisQueueItem = {
+        ...current,
+        status: "eligible",
+        batchId: undefined,
+        excludedAt: undefined,
+        consumedAt: undefined,
+        deletedAt: undefined,
+        updatedAt,
+      };
+      await this.database.analysisQueueItems.put(next);
+      await this.rebuildProjectionsInTransaction();
+      await this.bumpMutation();
+      return next;
+    });
+  }
+
   async createAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const existing = await ensureIdempotentInsert(this.database.analysisBatches, batch);
@@ -958,6 +1035,9 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw new ReviewCoachValidationError("inactive-task", "Only a waiting or deferred task can become current.");
       }
       if (target.status === "current") return target;
+      if (target.status === "deferred" && target.notBeforeAt && target.notBeforeAt > updatedAt) {
+        throw new ReviewCoachValidationError("not-due", "Deferred task is not due yet.");
+      }
       assertCurrentDecisionBlockRef(await this.database.decisionBlocks.get(target.decisionBlockId), target);
       const tasks = await this.database.adaptiveReviewTasks.toArray();
       const current = tasks.find((item) => item.status === "current" || item.status === "in-progress");
@@ -1032,7 +1112,17 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       if (!Number.isSafeInteger(level) || level < 1 || level > (current.availableHints?.length ?? 0)) throw new ReviewCoachValidationError("invalid-hint", "Hint level is outside the available range.");
       const existing = current.hintsUsed.find((item) => item.level === level);
       if (existing) return current;
-      const next = { ...current, hintsUsed: [...current.hintsUsed, { level, requestedAt }], updatedAt: requestedAt };
+      const next = {
+        ...current,
+        hintsUsed: [...current.hintsUsed, { level, requestedAt }],
+        // Using any hint makes the retrieval assisted. The turn keeps its
+        // record of what was used, but it can no longer count as independent
+        // recall - that is what stops a hinted answer becoming evidence.
+        ...(current.phase
+          ? { independenceStatus: independenceForTurn(current.hintsUsed.length + 1) }
+          : {}),
+        updatedAt: requestedAt,
+      };
       await this.database.adaptiveQuizTurns.put(next);
       await this.bumpMutation();
       return next;
@@ -1074,24 +1164,86 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw new ReviewCoachValidationError("invalid-question-report", "Question report does not match its turn and task.");
       }
       transitionAdaptiveQuizTurn(turn.status, "invalid");
-      transitionAdaptiveReviewTask(task.status, "invalid");
       await this.database.adaptiveQuizTurns.put({ ...turn, status: "invalid", updatedAt });
       const existing = await ensureIdempotentInsert(this.database.taskOutcomeEvents, event);
       if (!existing) await this.database.taskOutcomeEvents.add(event);
-      const next = { ...task, status: "invalid" as const, activeSlotKey: undefined, openTargetKey: undefined, endedAt: updatedAt, terminalReason: event.reason, updatedAt };
-      await this.database.adaptiveReviewTasks.put(next);
-      const verification = await findVerificationForTask(this.database, task.id);
-      if (verification && ["queued", "in-progress"].includes(verification.status)) {
-        const eligibleStatus = verification.status === "queued"
-          ? transitionDelayedVerification("queued", "eligible")
-          : transitionDelayedVerification("in-progress", "eligible");
-        await this.database.delayedVerifications.put({ ...verification, taskId: undefined, status: eligibleStatus, updatedAt });
+
+      // A bad question used to end the whole task, which punished the learner for
+      // the generator's mistake (dev plan section 2.2 item 7). The task now stays
+      // open so a replacement question can be generated for the same target. A
+      // v1 task keeps the historical behaviour, because a v1 task has no phase
+      // budget to fall back on and its record must stay readable as written.
+      const isV2 = task.loopVersion === "closed-loop-v2";
+      if (!isV2) {
+        transitionAdaptiveReviewTask(task.status, "invalid");
+        const terminal = { ...task, status: "invalid" as const, activeSlotKey: undefined, openTargetKey: undefined, endedAt: updatedAt, terminalReason: event.reason, updatedAt };
+        await this.database.adaptiveReviewTasks.put(terminal);
+        const verification = await findVerificationForTask(this.database, task.id);
+        if (verification && ["queued", "in-progress"].includes(verification.status)) {
+          const eligibleStatus = verification.status === "queued"
+            ? transitionDelayedVerification("queued", "eligible")
+            : transitionDelayedVerification("in-progress", "eligible");
+          await this.database.delayedVerifications.put({ ...verification, taskId: undefined, status: eligibleStatus, updatedAt });
+        }
+        await this.rebuildProjectionsInTransaction();
+        await this.bumpMutation();
+        return terminal;
       }
+
+      const surviving = { ...task, updatedAt };
+      await this.database.adaptiveReviewTasks.put(surviving);
       await this.rebuildProjectionsInTransaction();
       await this.bumpMutation();
-      return next;
+      return surviving;
     });
   }
+
+  /**
+   * Retires an earlier judgment without deleting it.
+   *
+   * Append-only by design: the original `answer-assessment` stays in the event
+   * log for audit, and `effectiveTurns` stops counting it because of the
+   * supersede event. Order-independent, so replay stays deterministic.
+   *
+   * A correction may only retire evidence belonging to the *same* task. Without
+   * that check, any task could erase another task's evidence - and because
+   * `supersededTurnIds` is a global set, one task could quietly un-close a loop
+   * it never participated in.
+   */
+  async supersedeEvidence(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent> {
+    assertTaskOutcomeShape(event);
+    if (event.kind !== "evidence-superseded" || (!event.supersededEventId && !event.supersededTurnId)) {
+      throw new ReviewCoachValidationError("invalid-supersede", "Supersede event must name the evidence it retires.");
+    }
+    return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
+      const task = await this.database.adaptiveReviewTasks.get(event.taskId);
+      if (!task) throw new ReviewCoachValidationError("invalid-supersede", "Supersede event must belong to an existing task.");
+      if (event.supersededEventId) {
+        const superseded = await this.database.taskOutcomeEvents.get(event.supersededEventId);
+        if (!superseded) {
+          throw new ReviewCoachValidationError("invalid-supersede", "The superseded event does not exist.");
+        }
+        if (superseded.taskId !== event.taskId) {
+          throw new ReviewCoachValidationError("cross-task-supersede", "The superseded event belongs to a different task.");
+        }
+      }
+      if (event.supersededTurnId) {
+        const supersededTurn = await this.database.adaptiveQuizTurns.get(event.supersededTurnId);
+        if (!supersededTurn) {
+          throw new ReviewCoachValidationError("invalid-supersede", "The superseded turn does not exist.");
+        }
+        if (supersededTurn.taskId !== event.taskId) {
+          throw new ReviewCoachValidationError("cross-task-supersede", "The superseded turn belongs to a different task.");
+        }
+      }
+      const existing = await ensureIdempotentInsert(this.database.taskOutcomeEvents, event);
+      if (!existing) await this.database.taskOutcomeEvents.add(event);
+      await this.rebuildProjectionsInTransaction();
+      await this.bumpMutation();
+      return existing ?? event;
+    });
+  }
+
 
   async addOutcome(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent> {
     assertTaskOutcomeShape(event);
@@ -1111,6 +1263,144 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
+  /**
+   * Re-opens the same learning target after a v2 attempt ran out of budget.
+   *
+   * The exhausted task was already moved to `deferred` by `commitTaskOutcome`.
+   * This method completes the requeue half, in a single transaction:
+   *
+   *   - link the deferred task forward (`replacedByTaskId`) so its audit trail
+   *     shows the attempt was continued rather than abandoned;
+   *   - copy the frozen blueprint (new id, new idempotency key, same evidence)
+   *     so the retry covers the identical target instead of silently re-planning;
+   *   - create a `waiting` v2 task pointing back at the attempt it replaces;
+   *   - restore exactly one open target key for the decision block, but only if
+   *     no other live task still holds it.
+   *
+   * Idempotent by `operationId`: the replacement is found through `retryOfTaskId`
+   * on replay, and the fixed idempotency keys make every insert a no-op.
+   *
+   * Refuses unless the source task is actually `deferred`. The requeue is the
+   * second half of a deferral, so accepting any other status would let a caller
+   * clone a live or already-completed attempt and leave two open targets for one
+   * decision block behind.
+   */
+  async requeueV2Attempt(input: {
+    deferredTaskId: string;
+    blueprint: SessionBlueprint;
+    reason: string;
+    operationId: string;
+    now: string;
+  }): Promise<AdaptiveReviewTask> {
+    return this.inFormalTransaction(async () => {
+      const deferred = await this.database.adaptiveReviewTasks.get(input.deferredTaskId);
+      if (!deferred) throw new ReviewCoachValidationError("missing-task", `Task ${input.deferredTaskId} does not exist.`);
+      if (deferred.loopVersion !== "closed-loop-v2") {
+        throw new ReviewCoachValidationError("invalid-requeue", "Only a closed-loop-v2 attempt can be requeued.");
+      }
+
+      const existing = await this.database.adaptiveReviewTasks.where("retryOfTaskId").equals(deferred.id).first();
+      if (existing) return existing;
+
+      // Checked after the idempotent replay shortcut, so re-running a completed
+      // deferral still returns the same replacement instead of throwing.
+      if (deferred.status !== "deferred") {
+        throw new ReviewCoachValidationError("invalid-requeue", "Only a deferred attempt can be requeued.");
+      }
+
+      const blueprintId = `requeue:${input.operationId}:${input.blueprint.id}`;
+      const replacementId = `requeue-task:${input.operationId}`;
+      const clonedBlueprint: SessionBlueprint = {
+        ...structuredClone(input.blueprint),
+        id: blueprintId,
+        idempotencyKey: `requeue-blueprint:${input.operationId}`,
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      const replacement: AdaptiveReviewTask = {
+        id: replacementId,
+        blueprintId,
+        decisionBlockId: deferred.decisionBlockId,
+        recordId: deferred.recordId,
+        contentVersion: deferred.contentVersion,
+        status: "waiting",
+        priorityTier: deferred.priorityTier,
+        queuedAt: input.now,
+        retryOfTaskId: deferred.id,
+        loopVersion: "closed-loop-v2",
+        idempotencyKey: `requeue-task:${input.operationId}`,
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+
+      await this.database.sessionBlueprints.put(clonedBlueprint);
+      await this.database.adaptiveReviewTasks.put(replacement);
+      // The deferred attempt hands the target over. Without an explicit clear
+      // here a v2 deferral would collide with its own replacement, because
+      // `openTargetKeyFor` derives the key purely from the block reference and
+      // `deferred` counts as an open status. A v1 deferral keeps its key: it is
+      // waiting to be resumed, not replaced.
+      await this.database.adaptiveReviewTasks.put({
+        ...deferred,
+        openTargetKey: undefined,
+        replacedByTaskId: replacementId,
+        terminalReason: deferred.terminalReason ?? input.reason,
+        updatedAt: input.now,
+      });
+
+      // Exactly one live task may hold a decision-block target.
+      const targetKey = openTargetKeyFor(replacement);
+      const holders = await this.database.adaptiveReviewTasks
+        .where("openTargetKey").equals(targetKey).toArray();
+      const blocked = holders.some((task) => (
+        task.id !== replacementId && isOpenTaskStatus(task.status)
+      ));
+      const stored = blocked
+        ? replacement
+        : { ...replacement, openTargetKey: targetKey, updatedAt: input.now };
+      if (!blocked) await this.database.adaptiveReviewTasks.put(stored);
+
+      await this.rebuildProjectionsInTransaction();
+      await this.bumpMutation();
+      return stored;
+    });
+  }
+
+  /**
+   * The deferral and its replacement, committed together.
+   *
+   * Both halves run inside one formal transaction, so a failure in either rolls
+   * the other back. `requeueV2Attempt` reads the deferred task's status, so the
+   * order matters: defer first, then requeue against the `deferred` row.
+   */
+  async deferAndRequeue(input: {
+    deferredTaskId: string;
+    deferredEvents: TaskOutcomeEvent[];
+    notBeforeAt: string;
+    blueprint: SessionBlueprint;
+    reason: string;
+    operationId: string;
+    now: string;
+  }): Promise<{ deferred: AdaptiveReviewTask; replacement: AdaptiveReviewTask }> {
+    return this.inFormalTransaction(async () => {
+      const deferred = await this.commitTaskOutcome(
+        input.deferredTaskId,
+        input.deferredEvents,
+        "deferred",
+        input.now,
+        input.notBeforeAt,
+      );
+      const replacement = await this.requeueV2Attempt({
+        deferredTaskId: input.deferredTaskId,
+        blueprint: input.blueprint,
+        reason: input.reason,
+        operationId: input.operationId,
+        now: input.now,
+      });
+      return { deferred, replacement };
+    });
+  }
+
   async commitTaskOutcome(
     taskId: string,
     events: TaskOutcomeEvent[],
@@ -1121,7 +1411,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
   ): Promise<AdaptiveReviewTask> {
     if (events.length === 0) throw new ReviewCoachValidationError("missing-outcome-events", "A task outcome commit requires formal events.");
     events.forEach(assertTaskOutcomeShape);
-    return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
+    return this.inFormalTransaction(async () => {
       const current = await this.database.adaptiveReviewTasks.get(taskId);
       if (!current) throw new ReviewCoachValidationError("missing-task", `Task ${taskId} does not exist.`);
       if (current.status === status) {
@@ -1159,8 +1449,21 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       await this.database.adaptiveReviewTasks.put(next);
       if (verification) {
         const source = await this.database.taskOutcomeEvents.get(verification.sourceOutcomeEventId);
-        if (!source || source.kind !== "self-assessment" || !["mastered", "needs-consolidation"].includes(source.subjectiveOutcome ?? "") || source.decisionBlockId !== verification.decisionBlockId || source.contentVersion !== verification.contentVersion) {
-          throw new ReviewCoachValidationError("invalid-verification-source", "Delayed verification requires a matching completed self-assessment.");
+        // v2 opens a verification from the retrieval that actually closed the
+        // loop (dev plan section 6.3). v1 opened it from the learner's
+        // self-assessment. Both are accepted here so legacy records keep
+        // loading; the stricter v2 rule is enforced on load by
+        // `validateReviewCoachFormalSnapshot`, keyed off `loopVersion`.
+        const isV2Source = verification.loopVersion === "closed-loop-v2"
+          && source?.kind === "answer-assessment"
+          && source.decisionBlockId === verification.decisionBlockId
+          && source.contentVersion === verification.contentVersion;
+        const isV1Source = source?.kind === "self-assessment"
+          && ["mastered", "needs-consolidation"].includes(source.subjectiveOutcome ?? "")
+          && source.decisionBlockId === verification.decisionBlockId
+          && source.contentVersion === verification.contentVersion;
+        if (!isV2Source && !isV1Source) {
+          throw new ReviewCoachValidationError("invalid-verification-source", "Delayed verification requires matching completion evidence.");
         }
         if (verification.status !== "scheduled") throw new ReviewCoachValidationError("invalid-verification-status", "A new delayed verification must be scheduled.");
         const existingVerification = await ensureIdempotentInsert(this.database.delayedVerifications, verification);
@@ -1216,6 +1519,30 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
+  /**
+   * Clears the task link on an unsettled verification so it can be re-queued.
+   *
+   * `queueVerification` short-circuits when `taskId` is set, returning the
+   * previous (now completed) task. A re-check needs a fresh task, so the link is
+   * cleared first. The verification stays `completed`: the *action* did finish,
+   * and the state machine keeps `completed` terminal - that a conclusion is still
+   * missing is carried by `concludedAt`, not by moving the status backwards.
+   */
+  async detachVerificationTask(verificationId: string, updatedAt: string): Promise<DelayedVerification> {
+    return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
+      const current = await this.database.delayedVerifications.get(verificationId);
+      if (!current) throw new ReviewCoachValidationError("missing-verification", `Verification ${verificationId} does not exist.`);
+      if (current.concludedAt !== undefined) {
+        throw new ReviewCoachValidationError("verification-settled", `Verification ${verificationId} already has a settled conclusion.`);
+      }
+      const next: DelayedVerification = { ...current, taskId: undefined, updatedAt };
+      await this.database.delayedVerifications.put(next);
+      await this.rebuildProjectionsInTransaction();
+      await this.bumpMutation();
+      return next;
+    });
+  }
+
   async queueVerification(verificationId: string, task: AdaptiveReviewTask, updatedAt: string): Promise<{ verification: DelayedVerification; task: AdaptiveReviewTask }> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const verification = await this.database.delayedVerifications.get(verificationId);
@@ -1225,7 +1552,14 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         if (!existingTask) throw new ReviewCoachValidationError("dangling-task", "Queued verification task is missing.");
         return { verification, task: existingTask };
       }
-      if (!["eligible", "missed"].includes(verification.status) || verification.verificationDueAt > updatedAt) {
+      // A re-check of an unsettled verification is already past its window, and
+      // it arrives as `completed` (the action finished) rather than `eligible`.
+      // Its due-ness is carried by `nextVerificationDueAt`.
+      const isRecheck = verification.status === "completed"
+        && verification.concludedAt === undefined
+        && verification.nextVerificationDueAt !== undefined
+        && verification.nextVerificationDueAt <= updatedAt;
+      if (!isRecheck && (!["eligible", "missed"].includes(verification.status) || verification.verificationDueAt > updatedAt)) {
         throw new ReviewCoachValidationError("verification-not-due", "Only a due eligible verification can enter the task queue.");
       }
       const source = await this.database.taskOutcomeEvents.get(verification.sourceOutcomeEventId);
@@ -1241,9 +1575,11 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         if (error instanceof Dexie.ConstraintError) throw new ReviewCoachValidationError("task-uniqueness", "Another open task already targets this block version.");
         throw error;
       }
+      // A re-check keeps `completed`: the previous action really did complete and
+      // the state machine keeps that terminal. Only the link moves.
       let nextStatus = verification.status;
       if (nextStatus === "missed") nextStatus = transitionDelayedVerification(nextStatus, "eligible");
-      nextStatus = transitionDelayedVerification(nextStatus, "queued");
+      if (!isRecheck) nextStatus = transitionDelayedVerification(nextStatus, "queued");
       const nextVerification = { ...verification, taskId: normalized.id, status: nextStatus, updatedAt };
       await this.database.delayedVerifications.put(nextVerification);
       await this.rebuildProjectionsInTransaction();
@@ -1284,6 +1620,109 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       await this.database.adaptiveReviewTasks.put(nextTask);
       transitionDelayedVerification(verification.status, "completed");
       await this.database.delayedVerifications.put({ ...verification, status: "completed", verificationOutcome: outcome, lastVerifiedAt: updatedAt, updatedAt });
+      await this.rebuildProjectionsInTransaction();
+      await this.bumpMutation();
+      return nextTask;
+    });
+  }
+
+  /**
+   * Closes a v2 delayed verification from its locked first attempt.
+   *
+   * The v1 path above takes a `retained` / `decayed` verdict from the caller -
+   * the learner decides whether they still remember it (dev plan section 6.3).
+   * v2 does not accept a verdict at all. It locks the first independent answer
+   * to the delayed question, derives the evidence status from that answer's
+   * authority, and writes the outcome from the derivation.
+   *
+   * The lock is the point. A later remedial attempt is practice; it cannot
+   * overwrite what the first unaided attempt showed, which is what stops
+   * "retry until right" from being recorded as retention.
+   */
+  async completeV2Verification(taskId: string, updatedAt: string): Promise<AdaptiveReviewTask> {
+    return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
+      const task = await this.database.adaptiveReviewTasks.get(taskId);
+      const verification = await findVerificationForTask(this.database, taskId);
+      if (!task || task.status !== "in-progress" || !verification || verification.status !== "in-progress") {
+        throw new ReviewCoachValidationError("inactive-verification", "Verification task is not in progress.");
+      }
+      if (verification.loopVersion !== "closed-loop-v2") {
+        throw new ReviewCoachValidationError("invalid-verification-outcome", "completeV2Verification requires a closed-loop-v2 verification.");
+      }
+      const turns = await this.database.adaptiveQuizTurns.where("taskId").equals(taskId).toArray();
+      const locked = lockedVerificationTurn(turns);
+      const evidenceStatus = verificationEvidenceStatusFor(locked);
+      if (evidenceStatus === "ineligible" || !locked) {
+        throw new ReviewCoachValidationError("missing-verification-outcome", "The locked first attempt is not usable verification evidence.");
+      }
+      const answerEvent = await this.database.taskOutcomeEvents
+        .where("taskId").equals(taskId)
+        .filter((event) => event.kind === "answer-assessment" && event.turnId === locked.id)
+        .first();
+      if (!answerEvent) {
+        throw new ReviewCoachValidationError("missing-verification-outcome", "The locked attempt has no assessment event.");
+      }
+
+      // Constitution art. 9: an AI-only judgment never becomes an irreversible
+      // "retained" fact. Only objective evidence may write a durable outcome;
+      // a provisional result records its `evidenceStatus` and leaves the block
+      // awaiting further verification.
+      // Constitution art. 9: an AI-only judgment never becomes an irreversible
+      // "retained" fact. Only objective evidence may write a durable outcome;
+      // a provisional result records its `evidenceStatus` and leaves the block
+      // awaiting further verification.
+      const outcome = conclusionOutcomeForEvidence(evidenceStatus);
+      const events: TaskOutcomeEvent[] = [{
+        id: `verification-completed:${taskId}`,
+        taskId: task.id,
+        decisionBlockId: task.decisionBlockId,
+        recordId: task.recordId,
+        contentVersion: task.contentVersion,
+        kind: "task-disposition",
+        disposition: "completed",
+        reason: `evidenceStatus=${evidenceStatus}`,
+        occurredAt: updatedAt,
+        idempotencyKey: `verification-completed:v2:${taskId}`,
+        createdAt: updatedAt,
+        updatedAt,
+      }];
+      events.forEach(assertTaskOutcomeShape);
+      transitionAdaptiveReviewTask(task.status, "completed");
+      for (const event of events) {
+        const existing = await ensureIdempotentInsert(this.database.taskOutcomeEvents, event);
+        if (!existing) await this.database.taskOutcomeEvents.add(event);
+      }
+      const nextTask = { ...task, status: "completed" as const, activeSlotKey: undefined, openTargetKey: undefined, endedAt: updatedAt, updatedAt };
+      await this.database.adaptiveReviewTasks.put(nextTask);
+      // The row closes because the learner did submit an attempt, but a
+      // provisional result settles nothing: the judge was a model reading its
+      // own criteria. So `status: "completed"` records the *action* while
+      // `nextVerificationDueAt` records that the *conclusion* is still open.
+      //
+      // The successor is a new window on the same verification row rather than
+      // a new row: `sourceOutcomeEventId` is uniquely indexed, so one opening
+      // event owns exactly one verification. Re-running the check is the same
+      // verification happening again, not a different verification.
+      const completesChain = continuesVerificationChain({ ...verification, status: "completed", evidenceStatus, lastVerifiedAt: updatedAt, updatedAt });
+      const nextVerificationDueAt = completesChain
+        ? calculateVerificationFollowUpSchedule({
+          completedAt: updatedAt,
+          priorVerifications: await this.database.delayedVerifications.toArray(),
+        }).verificationDueAt
+        : undefined;
+      transitionDelayedVerification(verification.status, "completed");
+      await this.database.delayedVerifications.put({
+        ...verification,
+        status: "completed",
+        verificationOutcome: outcome,
+        evidenceTurnId: locked.id,
+        evidenceStatus,
+        lastVerifiedAt: updatedAt,
+        // A settled result ends the chain; an open one keeps a window alive.
+        concludedAt: completesChain ? undefined : updatedAt,
+        nextVerificationDueAt,
+        updatedAt,
+      });
       await this.rebuildProjectionsInTransaction();
       await this.bumpMutation();
       return nextTask;

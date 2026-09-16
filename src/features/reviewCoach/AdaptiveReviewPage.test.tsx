@@ -1,12 +1,14 @@
 import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdaptiveReviewPage } from "./AdaptiveReviewPage";
-import { coachTestBlock, coachTestBlueprint, coachTestTask, coachTestTurn, completeCoachTestSnapshot } from "./reviewCoachTestFixtures";
+import * as traceModule from "../../hooks/useInteractionTrace";
+import { coachTestBlock, coachTestBlueprint, coachTestStamp, coachTestTask, coachTestTurn, completeCoachTestSnapshot } from "./reviewCoachTestFixtures";
+import { closedLoopV2Fixtures } from "./learningLoopFixtures";
 
 const record = { id: "record-1", type: "record" as const, date: "2026-09-07", order: 0, subject: "数据结构", title: "BFS", contentHtml: `<record-decision-block data-decision-block-id="${coachTestBlock.id}" data-content-version="1"><p>Mark visited before enqueue.</p></record-decision-block>`, assets: [], formulas: [], mistakeRefs: [], tags: [], createdAt: "2026-09-07T08:00:00.000Z", updatedAt: "2026-09-07T08:00:00.000Z" };
-const props = { taskId: coachTestTask.id, records: [record], onBack: vi.fn(), onGenerateTurn: vi.fn(), onRequestHint: vi.fn(), onSubmitAnswer: vi.fn(), onSkipTurn: vi.fn(), onReportInvalid: vi.fn(), onFinish: vi.fn(), onFinishVerification: vi.fn(), onDefer: vi.fn(), onAbandon: vi.fn() };
+const props = { taskId: coachTestTask.id, records: [record], onBack: vi.fn(), onGenerateTurn: vi.fn(), onRequestHint: vi.fn(), onSubmitAnswer: vi.fn(), onSkipTurn: vi.fn(), onReportInvalid: vi.fn(), onFinish: vi.fn(), onFinishVerification: vi.fn(), onCompleteLoop: vi.fn(), onCompleteV2Verification: vi.fn(), onSelectIntervention: vi.fn(), onDeferAttempt: vi.fn(), onDefer: vi.fn(), onAbandon: vi.fn() };
 
 describe("AdaptiveReviewPage", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -93,4 +95,184 @@ it("provides a fresh signal after StrictMode remount and aborts it on unmount", 
   expect(signal?.aborted).toBe(false);
   view.unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+describe("AdaptiveReviewPage closed-loop v2", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** A v2 attempt holding only the initial retrieval. */
+  const v2SnapshotWithInitialOnly = (assessment: "correct" | "partial" | "incorrect" = "incorrect") => {
+    const snapshot = completeCoachTestSnapshot();
+    const { blueprint, task, turns } = closedLoopV2Fixtures({ blueprintId: snapshot.sessionBlueprints[0].id, taskId: coachTestTask.id });
+    snapshot.sessionBlueprints[0] = { ...blueprint, status: "accepted" };
+    snapshot.adaptiveReviewTasks[0] = task;
+    // The intervention choice is a *remedy*, so the default here is a retrieval
+    // that actually fell short. Passing "correct" exercises the other branch.
+    snapshot.adaptiveQuizTurns = [{ ...turns[0], assessment }];
+    return snapshot;
+  };
+
+  /** A v2 attempt that already produced both qualifying retrievals. */
+  const v2SnapshotWithFullLoop = () => {
+    const snapshot = completeCoachTestSnapshot();
+    const { blueprint, task, turns } = closedLoopV2Fixtures({ blueprintId: snapshot.sessionBlueprints[0].id, taskId: coachTestTask.id, loop: "closed" });
+    snapshot.sessionBlueprints[0] = { ...blueprint, status: "accepted" };
+    snapshot.adaptiveReviewTasks[0] = task;
+    snapshot.adaptiveQuizTurns = turns;
+    snapshot.taskOutcomeEvents.push(
+      ...turns.map((turn, index) => ({
+        id: `v2-answer-${index + 1}`,
+        taskId: task.id,
+        turnId: turn.id,
+        decisionBlockId: task.decisionBlockId,
+        recordId: task.recordId,
+        contentVersion: task.contentVersion,
+        kind: "answer-assessment" as const,
+        answerAssessment: turn.assessment,
+        occurredAt: coachTestStamp,
+        idempotencyKey: `v2-answer-${index + 1}`,
+        createdAt: coachTestStamp,
+        updatedAt: coachTestStamp,
+      })),
+    );
+    return snapshot;
+  };
+
+  it("never offers a mastery verdict on a closed-loop-v2 task", () => {
+    const snapshot = v2SnapshotWithInitialOnly();
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    // The v1 verdict panel must not be reachable at all.
+    expect(screen.queryByRole("button", { name: "结束本次训练" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "已掌握" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "仍需巩固" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "未掌握" })).not.toBeInTheDocument();
+  });
+
+  it("blocks closure after a first correct answer and pushes the post-judgment retrieval", () => {
+    const snapshot = v2SnapshotWithInitialOnly();
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    // Getting it right first time is not completion: the page still asks for
+    // the retrieval that follows feedback.
+    expect(screen.getByText("提取 1/2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "按这个方式再提取一次" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "完成本次闭环" })).not.toBeInTheDocument();
+  });
+
+  it("offers closure and no verdict once both qualifying retrievals exist", () => {
+    const snapshot = v2SnapshotWithFullLoop();
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    expect(screen.getByText("提取 2/2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "完成本次闭环" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "已掌握" })).not.toBeInTheDocument();
+  });
+
+  it("sends a v2 task to defer-and-requeue instead of asking for a result", async () => {
+    const snapshot = v2SnapshotWithInitialOnly();
+    snapshot.sessionBlueprints[0] = { ...snapshot.sessionBlueprints[0], maxTurns: 1 };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    fireEvent.click(screen.getByRole("button", { name: "稍后再练" }));
+
+    await waitFor(() => expect(props.onDeferAttempt).toHaveBeenCalledWith(coachTestTask.id));
+    expect(props.onFinish).not.toHaveBeenCalled();
+    expect(props.onDefer).not.toHaveBeenCalled();
+  });
+
+  it("asks which action to take next, never what went wrong", () => {
+    const snapshot = v2SnapshotWithInitialOnly("incorrect");
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    expect(screen.getByText("下一步做什么")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我没有想出来" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我记混了" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我会，但没写出来" })).toBeInTheDocument();
+    // No diagnosis, cause or self-rated mastery question may appear.
+    expect(screen.queryByText(/你掌握了吗|为什么|能力|基础/)).not.toBeInTheDocument();
+  });
+
+  it("does not force a remedy choice when the retrieval was correct", () => {
+    // The bug: a correct first answer still had to pick from "I could not form
+    // it / I mixed it up / I could but did not produce it", which made the
+    // learner misdescribe their own performance before they could continue.
+    const snapshot = v2SnapshotWithInitialOnly("correct");
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    expect(screen.queryByText("下一步做什么")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "我没有想出来" })).not.toBeInTheDocument();
+    // The loop still has to be closed by retrieving again, so the way forward
+    // exists and is not gated behind a fabricated self-report.
+    const next = screen.getByRole("button", { name: "按这个方式再提取一次" });
+    expect(next).toBeEnabled();
+  });
+
+  it("still requires a choice when the retrieval fell short", () => {
+    const snapshot = v2SnapshotWithInitialOnly("incorrect");
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    expect(screen.getByRole("button", { name: "按这个方式再提取一次" })).toBeDisabled();
+  });
+
+  it("records the chosen action before requesting the next retrieval", async () => {
+    const snapshot = v2SnapshotWithInitialOnly("incorrect");
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    const next = screen.getByRole("button", { name: "按这个方式再提取一次" });
+    expect(next).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "我记混了" }));
+    expect(next).toBeEnabled();
+    fireEvent.click(next);
+
+    await waitFor(() => expect(props.onSelectIntervention).toHaveBeenCalledWith(coachTestTask.id, "confused", expect.any(String)));
+    expect(props.onGenerateTurn).toHaveBeenCalled();
+  });
+});
+
+describe("AdaptiveReviewPage friction measurement", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /**
+   * The trace hook is mocked so the assertion is about *whether the page feeds
+   * it at all*. Before this fix nothing in the product called the hook, so every
+   * session produced zero segments and the M5 operation budget could never be
+   * evaluated on real data.
+   */
+  const traceEnter = vi.fn();
+  beforeEach(() => {
+    traceEnter.mockClear();
+    vi.spyOn(traceModule, "useInteractionTrace").mockReturnValue({
+      enter: traceEnter,
+      touch: vi.fn(),
+      flush: vi.fn(),
+    } as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const displayedSnapshot = () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };
+    return snapshot;
+  };
+
+  it("records answering time as cognitive time rather than leaving it unmeasured", () => {
+    render(<AdaptiveReviewPage {...props} snapshot={displayedSnapshot()} />);
+    expect(traceEnter).toHaveBeenCalledWith(expect.objectContaining({
+      screen: "task",
+      category: "cognitive",
+      phase: "initial-retrieval",
+      taskId: coachTestTask.id,
+      recordId: record.id,
+    }));
+  });
+
+  it("records reading feedback as feedback time rather than more retrieval", () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, assessment: "incorrect", assessmentRationale: "Wrong order", answerText: "After dequeue" };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    expect(traceEnter).toHaveBeenLastCalledWith(expect.objectContaining({ category: "feedback", phase: "feedback" }));
+    // The phase label is a duration bucket, never a place to store the answer.
+    expect(JSON.stringify(traceEnter.mock.calls)).not.toContain("After dequeue");
+  });
 });

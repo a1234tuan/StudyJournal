@@ -200,6 +200,10 @@ export const ReviewCoachPreviewApp = () => {
             onReportInvalid={async () => { setNotice("演示题目已标记为无效"); setView("dashboard"); }}
             onFinish={finishPreview}
             onFinishVerification={async () => undefined}
+            onCompleteLoop={async () => { setNotice("演示闭环已完成"); setView("dashboard"); }}
+            onCompleteV2Verification={async () => { setNotice("演示验证已按作答证据记录"); setView("dashboard"); }}
+            onSelectIntervention={async (_taskId, path) => setNotice(`演示下一步：${path}`)}
+            onDeferAttempt={async () => { setNotice("演示本次训练已延期，稍后继续同一目标"); setView("dashboard"); }}
             onDefer={async () => { setNotice("演示任务已延期一天"); setView("dashboard"); }}
             onAbandon={async () => { setNotice("演示任务已放弃"); setView("dashboard"); }}
           />
@@ -218,6 +222,10 @@ export const ReviewCoachPreviewApp = () => {
             onReportInvalid={async () => { setNotice("演示验证题已标记为无效"); setView("dashboard"); }}
             onFinish={async () => undefined}
             onFinishVerification={async (taskId, outcome) => { updateTask(taskId, outcome === "retained" ? "completed" : "not-achieved"); setNotice(`延迟验证演示结果：${outcome === "retained" ? "仍然掌握" : "已经衰退"}`); setView("dashboard"); }}
+            onCompleteLoop={async () => { setNotice("演示闭环已完成"); setView("dashboard"); }}
+            onCompleteV2Verification={async () => { setNotice("演示验证已按作答证据记录"); setView("dashboard"); }}
+            onSelectIntervention={async (_taskId, path) => setNotice(`演示下一步：${path}`)}
+            onDeferAttempt={async () => { setNotice("演示验证已延期，稍后继续"); setView("dashboard"); }}
             onDefer={async () => { setNotice("演示验证已延期一天"); setView("dashboard"); }}
             onAbandon={async () => { setNotice("演示验证已放弃"); setView("dashboard"); }}
           />

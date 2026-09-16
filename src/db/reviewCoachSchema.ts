@@ -91,6 +91,44 @@ export const VOICE_RECALL_SCHEMA_21_STORES = {
   voiceRecallLocalHistory: "id, savedAt, sourceKind",
 } as const;
 
+/**
+ * Schema 22 adds the device-local Review Coach interaction trace.
+ *
+ * This table is measurement scaffolding, not a learning fact. It must never be
+ * added to `reviewCoachFormalTables` in repository.ts, and must stay out of ZIP
+ * backups, streaming backup, native repository, record transfer, Firebase sync
+ * and knowledge export. It stores phase labels and durations only - never
+ * answers, page text, prompts or provider responses.
+ */
+export const REVIEW_COACH_SCHEMA_22_STORES = {
+  ...VOICE_RECALL_SCHEMA_21_STORES,
+  reviewCoachInteractionSegments: "id, taskId, recordId, screen, category, endedAt, [taskId+endedAt]",
+} as const;
+
+/**
+ * Schema 23 indexes the v2 retry chain.
+ *
+ * `retryOfTaskId` / `replacedByTaskId` were already written by the v2
+ * defer-and-requeue path, but they were not indexed, so looking up "does this
+ * attempt already have a replacement?" meant loading every task. That lookup is
+ * what makes requeue idempotent, so it needs an index. Both are plain
+ * (non-unique) indexes: a task has at most one predecessor and at most one
+ * successor, but Dexie cannot express that without breaking tasks that have
+ * neither.
+ */
+export const REVIEW_COACH_SCHEMA_23_STORES = {
+  ...REVIEW_COACH_SCHEMA_22_STORES,
+  adaptiveReviewTasks: "id, blueprintId, decisionBlockId, contentVersion, status, &activeSlotKey, &openTargetKey, &idempotencyKey, retryOfTaskId, replacedByTaskId, updatedAt, deletedAt",
+} as const;
+
+/**
+ * The current Dexie schema version.
+ *
+ * Tests assert against this rather than a literal, so adding a migration does
+ * not require editing every "reopen and check the version" test.
+ */
+export const REVIEW_COACH_SCHEMA_VERSION = 23;
+
 const tableRows = async <T>(transaction: Transaction, name: string): Promise<T[]> => {
   if (!transaction.db.tables.some((table) => table.name === name)) return [];
   return transaction.table<T, string>(name).toArray();

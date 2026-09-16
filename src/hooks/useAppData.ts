@@ -45,6 +45,7 @@ import { cleanupCloudRecoverySnapshotsIfDue, getCurrentCloudUser } from "../serv
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT, type AnalysisQueueStatus, type ReviewCoachFormalSnapshot } from "../features/reviewCoach/domain";
 import type { FeedbackInterpretation } from "../features/reviewCoach/domain";
 import { ReviewCoachOrchestrator } from "../features/reviewCoach/orchestrator";
+import { CLOSED_LOOP_V2_LOOP_VERSION } from "../features/reviewCoach/learningLoopPolicy";
 import { reviewCoachRepository } from "../features/reviewCoach/repository";
 import { voiceRecallRepository } from "../features/voiceRecall/repository";
 import { createFeedbackInterpretationGateway, defaultFeedbackInterpretationMetadata } from "../features/reviewCoach/aiGateway";
@@ -55,7 +56,7 @@ import { assertTurnContextBudget } from "../features/reviewCoach/contextBudget";
 import { createSessionPlanningGateway, defaultSessionPlanningMetadata } from "../features/reviewCoach/sessionPlanningGateway";
 import { createQuizExecutionGateway, defaultQuizExecutionMetadata } from "../features/reviewCoach/quizExecutionGateway";
 import { buildDecisionBlockAiContextPack } from "../services/aiContextService";
-import type { SubjectiveOutcome } from "../features/reviewCoach/domain";
+import type { InterventionPath, SubjectiveOutcome } from "../features/reviewCoach/domain";
 
 const reviewCoachOrchestrator = new ReviewCoachOrchestrator({
   repository: reviewCoachRepository,
@@ -190,6 +191,7 @@ export const useAppData = () => {
       if (reviewCoachRepository.areProjectionsCurrent && !(await reviewCoachRepository.areProjectionsCurrent())) await reviewCoachRepository.rebuildProjections();
       const refreshedVerifications = await reviewCoachOrchestrator.refreshDueVerifications();
       if (refreshedVerifications > 0) await markAutoBackupDirty("review-coach-delayed-verification-refresh");
+      await reviewCoachOrchestrator.selectNextTask();
       await refresh();
       setInitialized(true);
       await storage.purgeExpiredDeletedBlocks(30);
@@ -619,10 +621,72 @@ export const useAppData = () => {
     return result;
   }, [refresh]);
 
+  /**
+   * v2 loop closure. Deliberately takes no outcome, no reason and no
+   * confirmation flag: the loop closes because the evidence says it closed.
+   */
+  const completeAdaptiveQuizLoop = useCallback(async (taskId: string) => {
+    const result = await reviewCoachOrchestrator.completeLearningLoop(taskId, newId());
+    await refresh();
+    await markAutoBackupDirty("review-coach-quiz-complete-loop");
+    return result;
+  }, [refresh]);
+
+  /**
+   * v2 action path. Records which action the learner asked for next - never a
+   * diagnosis, a cause or a mastery claim.
+   */
+  const selectAdaptiveQuizIntervention = useCallback(async (taskId: string, path: InterventionPath, turnId?: string) => {
+    const result = await reviewCoachOrchestrator.selectInterventionPath({ taskId, path, turnId, operationId: newId() });
+    await refresh();
+    await markAutoBackupDirty("review-coach-intervention");
+    return result;
+  }, [refresh]);
+
+  /**
+   * v2 defer-and-requeue. Used when the display budget or the time box ends
+   * before the loop closed; never fabricates a result.
+   */
+  const deferAdaptiveQuizAttempt = useCallback(async (taskId: string) => {
+    const result = await reviewCoachOrchestrator.deferAndRequeueV2Attempt({ taskId, operationId: newId() });
+    await refresh();
+    await markAutoBackupDirty("review-coach-quiz-defer-requeue");
+    return result;
+  }, [refresh]);
+
+  /**
+   * Submits a delayed-verification result.
+   *
+   * v1 asks the learner for a verdict; v2 does not, because the locked first
+   * attempt already decided it. The caller stays the same so the page does not
+   * need to know which regime it is in - the orchestrator routes on the
+   * verification's own `loopVersion`.
+   */
   const finishDelayedVerification = useCallback(async (taskId: string, outcome: "retained" | "decayed", confirmedConflict?: boolean) => {
-    const result = await reviewCoachOrchestrator.completeDelayedVerification({ taskId, outcome, confirmedConflict, operationId: newId() });
+    const snapshot = await reviewCoachRepository.getFormalSnapshot();
+    const task = snapshot.adaptiveReviewTasks.find((item) => item.id === taskId);
+    const verification = snapshot.delayedVerifications.find((item) => (
+      item.taskId === taskId && ["in-progress", "queued", "eligible"].includes(item.status)
+    ));
+    const isV2 = task?.loopVersion === CLOSED_LOOP_V2_LOOP_VERSION
+      || verification?.loopVersion === CLOSED_LOOP_V2_LOOP_VERSION;
+
+    const result = isV2
+      ? await reviewCoachOrchestrator.completeV2DelayedVerification(taskId)
+      : await reviewCoachOrchestrator.completeDelayedVerification({ taskId, outcome, confirmedConflict, operationId: newId() });
     await refresh();
     await markAutoBackupDirty("review-coach-delayed-verification");
+    return result;
+  }, [refresh]);
+
+  /**
+   * v2 delayed verification. Takes no verdict: the locked first attempt is read
+   * and its authority decides the conclusion (constitution art. 9).
+   */
+  const completeV2DelayedVerification = useCallback(async (taskId: string) => {
+    const result = await reviewCoachOrchestrator.completeV2DelayedVerification(taskId);
+    await refresh();
+    await markAutoBackupDirty("review-coach-v2-delayed-verification");
     return result;
   }, [refresh]);
 
@@ -640,30 +704,20 @@ export const useAppData = () => {
     return deleted;
   }, [refresh]);
 
-  /**
-   * B-3 (F-03): turn a decayed block back into a plan. The note is the *user's own* comment —
-   * it is recorded through the ordinary user-authored feedback path, so nothing system-authored
-   * ever enters the formal, synchronised fact set. Recording it makes the block eligible again
-   * and un-lists it from "需要重新规划"; the user then runs the usual analysis flow.
-   */
   const replanDecayedDecisionBlock = useCallback(async (input: {
     decisionBlockId: string;
     recordId: string;
     contentVersion: number;
-    note: string;
   }) => {
-    const feedback = await reviewCoachOrchestrator.recordFeedback({
-      decisionBlockId: input.decisionBlockId,
-      recordId: input.recordId,
-      contentVersion: input.contentVersion,
-      comment: input.note,
-      includeInAnalysis: true,
-      source: "manual",
-      operationId: newId(),
-    });
+    const feedback = await reviewCoachOrchestrator.requeueDecayedBlock(input);
     await refresh();
     await markAutoBackupDirty("review-coach-replan-after-decay");
     return feedback;
+  }, [refresh]);
+
+  const ensureAdaptiveCurrentTask = useCallback(async () => {
+    await reviewCoachOrchestrator.selectNextTask();
+    await refresh();
   }, [refresh]);
 
   const confirmFeedbackInterpretation = useCallback(async (
@@ -1075,6 +1129,7 @@ export const useAppData = () => {
     undoRecordReview,
     deleteDecisionBlockFeedback,
     replanDecayedDecisionBlock,
+    ensureAdaptiveCurrentTask,
     confirmFeedbackInterpretation,
     retryFeedbackInterpretation,
     runDeepAnalysis,
@@ -1087,7 +1142,11 @@ export const useAppData = () => {
     skipAdaptiveQuizTurn,
     reportAdaptiveQuizInvalid,
     finishAdaptiveQuizTask,
+    completeAdaptiveQuizLoop,
+    selectAdaptiveQuizIntervention,
+    deferAdaptiveQuizAttempt,
     finishDelayedVerification,
+    completeV2DelayedVerification,
     abandonAdaptiveQuizTask,
     transitionAnalysisQueueItem,
     updateAnalysisQueueItemNote,

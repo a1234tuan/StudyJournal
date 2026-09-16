@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
+// The closed-loop suite must run with the explicit Review Coach v2 mode.
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "test-results/playwright",
@@ -20,9 +21,9 @@ export default defineConfig({
     { name: "android-narrow", use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 } } },
   ],
   webServer: {
-    command: "npm run dev -- --port 4190 --strictPort",
+    command: "npm run dev:review-coach-v2 -- --port 4190 --strictPort",
     url: "http://127.0.0.1:4190",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

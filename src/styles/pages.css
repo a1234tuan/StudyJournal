@@ -2940,6 +2940,7 @@
 .review-coach-resume,
 .review-coach-latest-batch,
 .review-coach-task-list article,
+.review-coach-current-task,
 .review-coach-task-actions,
 .review-coach-confirmation > div {
   display: flex;
@@ -2983,6 +2984,7 @@
 
 .review-coach-analysis,
 .review-coach-task-list,
+.review-coach-current-task,
 .review-coach-verification-list,
 .review-coach-effect-list {
   display: grid;
@@ -3253,8 +3255,47 @@
   font-size: 0.76rem;
 }
 
+/*
+  M5: the single current action. The border carries the emphasis so the block
+  reads as "this is the one thing to do" without a competing heading or list.
+*/
+.review-coach-current-task {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-primary-soft) 55%, var(--color-surface));
+}
+
+.review-coach-current-task > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.review-coach-current-task > div:first-child > span {
+  width: max-content;
+  color: var(--color-primary-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.review-coach-current-task p {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.review-coach-task-remaining {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.74rem;
+}
+
 @media (max-width: 620px) {
   .review-coach-workbench > header,
+  .review-coach-current-task,
   .review-coach-task-list article {
     align-items: flex-start;
     flex-direction: column;

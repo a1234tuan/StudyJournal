@@ -57,6 +57,7 @@ import { exportRecordTransferPackage } from "./services/recordTransferService";
 import { storage } from "./services/storageAdapter";
 import { getFavoriteRecords } from "./lib/journalSelectors";
 import { todayISO } from "./lib/date";
+import { newId } from "./lib/entity";
 import { createReviewSessionRuntime } from "./features/reviewSession/runtime";
 import { isDesktopPlatform } from "./lib/platform";
 import { isKeyboardViewportVisible, nextKeyboardBaselineHeight, resolveViewportHeight } from "./lib/viewport";
@@ -261,6 +262,7 @@ export const App = () => {
   const [backToast, setBackToast] = useState("");
   const [reviewToast, setReviewToast] = useState("");
   const [reviewCoachOpen, setReviewCoachOpen] = useState(false);
+  const [reviewCoachSessionId, setReviewCoachSessionId] = useState<string | null>(null);
   const [reviewRuntime, setReviewRuntime] = useState(() => createReviewSessionRuntime(todayISO()));
   const [desktopMigrationOpen, setDesktopMigrationOpen] = useState(false);
   const [visualTheme, setVisualTheme] = useState<VisualTheme>(() => readVisualTheme());
@@ -275,6 +277,11 @@ export const App = () => {
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
   const keyboardVisible = useKeyboardVisible();
+
+  const handleReviewCoachOpenChange = useCallback((open: boolean) => {
+    setReviewCoachOpen(open);
+    setReviewCoachSessionId(open ? (current => current ?? newId()) : null);
+  }, []);
 
   navigationStateRef.current = { activeTab, tabMemory, activeAiSessionId };
 
@@ -501,6 +508,7 @@ export const App = () => {
   const openAdaptiveTask = useCallback((taskId: string) => {
     const current = navigationStateRef.current;
     setReviewCoachOpen(true);
+    setReviewCoachSessionId((current) => current ?? newId());
     commitNavigation({
       ...current,
       activeTab: "today",
@@ -1332,6 +1340,11 @@ export const App = () => {
             onReportInvalid={app.reportAdaptiveQuizInvalid}
             onFinish={app.finishAdaptiveQuizTask}
             onFinishVerification={app.finishDelayedVerification}
+            onCompleteLoop={app.completeAdaptiveQuizLoop}
+            onCompleteV2Verification={app.completeV2DelayedVerification}
+            sessionId={reviewCoachSessionId ?? `review-coach-recovered:${tabMemory.today.adaptiveTaskId}`}
+            onSelectIntervention={app.selectAdaptiveQuizIntervention}
+            onDeferAttempt={app.deferAdaptiveQuizAttempt}
             onDefer={app.deferAdaptiveTask}
             onAbandon={app.abandonAdaptiveQuizTask}
           />
@@ -1653,8 +1666,10 @@ export const App = () => {
             onDeferAdaptiveTask={app.deferAdaptiveTask}
             onOpenAdaptiveTask={openAdaptiveTask}
             onReplanDecayedBlock={app.replanDecayedDecisionBlock}
+            reviewCoachSessionId={reviewCoachSessionId ?? undefined}
+            onEnsureAdaptiveCurrentTask={app.ensureAdaptiveCurrentTask}
             coachOpen={reviewCoachOpen}
-            onCoachOpenChange={setReviewCoachOpen}
+            onCoachOpenChange={handleReviewCoachOpenChange}
           />
         );
       case "more":

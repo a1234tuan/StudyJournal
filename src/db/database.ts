@@ -53,12 +53,15 @@ import {
   REVIEW_COACH_SCHEMA_18_STORES,
   REVIEW_COACH_SCHEMA_19_STORES,
   REVIEW_ANNOTATION_SCHEMA_20_STORES,
+  REVIEW_COACH_SCHEMA_22_STORES,
+  REVIEW_COACH_SCHEMA_23_STORES,
   VOICE_RECALL_SCHEMA_21_STORES,
   finalizeReviewCoachMigration,
   migrateToReviewCoachSchema17,
 } from "./reviewCoachSchema";
 import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain";
 import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "../features/voiceRecall/localTypes";
+import type { ReviewCoachInteractionSegmentLocal } from "../features/reviewCoach/interactionTrace";
 
 export interface RestoreStagingAsset {
   stagingId: string;
@@ -114,6 +117,12 @@ export class StudyJournalDatabase extends Dexie {
   voiceRecallSessions!: Table<VoiceRecallSessionLocal, string>;
   voiceRecallTurns!: Table<VoiceRecallTurnLocal, string>;
   voiceRecallLocalHistory!: Table<VoiceRecallLocalHistory, string>;
+  /**
+   * Device-local Review Coach interaction trace. Measurement scaffolding only:
+   * never a formal learning fact, never exported, never synced. See
+   * src/features/reviewCoach/interactionTrace.ts.
+   */
+  reviewCoachInteractionSegments!: Table<ReviewCoachInteractionSegmentLocal, string>;
 
   constructor(name = "study-journal-408") {
     super(name);
@@ -330,6 +339,8 @@ export class StudyJournalDatabase extends Dexie {
       .upgrade(finalizeReviewCoachMigration);
     this.version(20).stores(REVIEW_ANNOTATION_SCHEMA_20_STORES);
     this.version(21).stores(VOICE_RECALL_SCHEMA_21_STORES);
+    this.version(22).stores(REVIEW_COACH_SCHEMA_22_STORES);
+    this.version(23).stores(REVIEW_COACH_SCHEMA_23_STORES);
   }
 }
 

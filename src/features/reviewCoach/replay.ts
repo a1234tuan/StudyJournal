@@ -15,6 +15,7 @@ import type {
   SessionBlueprint,
   TaskOutcomeEvent,
 } from "./domain";
+import { durableConclusionOf, hasDurableConclusion } from "./evidencePolicy";
 
 export const REVIEW_COACH_REPLAY_VERSION = "review-coach-replay-v3";
 
@@ -42,7 +43,7 @@ const NO_ACTUAL_PRACTICE_TYPE = "none" as const;
 /** Hint level 1 is the weakest hint; level >= 2 is an explanation or a worked example. */
 const HINT_LEVEL_STRONGER_THRESHOLD = 2;
 /** `skipQuizTurn` writes this literal into `answerText`; such a turn carries no retrieval evidence. */
-const SKIPPED_ANSWER_TEXT = "[skipped]";
+export const SKIPPED_ANSWER_TEXT = "[skipped]";
 
 /**
  * The practice type that dominated a task's turns. Ties resolve to the lexicographically
@@ -139,10 +140,13 @@ export const replayDecisionBlockState = (input: DecisionBlockReplayInput): Decis
         if (outcome.subjectiveOutcome === "not-mastered") status = "not-mastered";
       } })),
     ...verifications
-      .filter((verification) => verification.status === "completed" && verification.verificationOutcome)
+      // Only objective evidence concludes anything (constitution art. 9). A
+      // provisional result leaves the block where it was, pending verification.
+      .filter(hasDurableConclusion)
       .map((verification) => ({ time: verification.lastVerifiedAt ?? verification.updatedAt, kind: 1, id: verification.id, apply: () => {
-        if (verification.verificationOutcome === "retained") status = "retained";
-        if (verification.verificationOutcome === "decayed") status = "needs-consolidation";
+        const conclusion = durableConclusionOf(verification);
+        if (conclusion === "retained") status = "retained";
+        if (conclusion === "decayed") status = "needs-consolidation";
       } })),
   ].sort((left, right) => left.time.localeCompare(right.time) || left.kind - right.kind || left.id.localeCompare(right.id));
 
@@ -240,10 +244,12 @@ export const listDecayedBlocksNeedingReplan = (snapshot: ReviewCoachFormalSnapsh
       items.filter((item) => item.decisionBlockId === block.id && item.contentVersion === version && !item.deletedAt);
 
     const latestCompleted = inBlock(snapshot.delayedVerifications)
-      .filter((item) => item.status === "completed" && item.verificationOutcome)
+      // A provisional result never concludes, so it can never make a block
+      // "decayed" either (constitution art. 9 - the same rule cuts both ways).
+      .filter(hasDurableConclusion)
       .sort(compareVerifications)
       .at(-1);
-    if (!latestCompleted || latestCompleted.verificationOutcome !== "decayed") continue;
+    if (!latestCompleted || durableConclusionOf(latestCompleted) !== "decayed") continue;
     const decayedAt = verificationTime(latestCompleted);
 
     // Any of these means someone (the user or the planner) already moved past the decay.
@@ -383,8 +389,13 @@ export const replayInterventionEffectSummaries = (input: InterventionReplayInput
     const recentSampleCount = sampleTasks.filter((task) => (task.endedAt ?? task.updatedAt) >= recentCutoff).length;
     const recencyWeight = sampleCount ? recentSampleCount / sampleCount : 0;
     const confidence = Math.min(1, sampleCount / 10) * (0.5 + recencyWeight * 0.5);
-    const retainedCount = completedVerifications.filter((item) => item.verificationOutcome === "retained").length;
-    const decayedCount = completedVerifications.filter((item) => item.verificationOutcome === "decayed").length;
+    // Retention and decay rates are pass/fail metrics, so they may only count
+    // verifications that actually concluded something (constitution art. 9).
+    // A provisional result is deliberately excluded rather than counted as a
+    // miss: it is "not yet known", not "failed".
+    const conclusionVerifications = completedVerifications.filter(hasDurableConclusion);
+    const retainedCount = conclusionVerifications.filter((item) => durableConclusionOf(item) === "retained").length;
+    const decayedCount = conclusionVerifications.filter((item) => durableConclusionOf(item) === "decayed").length;
     const completedVerificationCount = retainedCount + decayedCount;
     return {
       id: strategyKey,

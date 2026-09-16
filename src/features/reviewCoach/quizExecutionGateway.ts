@@ -58,6 +58,9 @@ export const createQuizExecutionGateway = (options: QuizExecutionGatewayOptions)
       [
         "生成下一轮中文自适应练习。题目中不得泄露答案或判据；hints 要由弱到强。",
         "题型必须从 initialPracticeType 开始；仅当提供了 requestedStrategy 时，按该策略调整本轮出题方式（requestedStrategy 只取策略枚举，绝不代表题型）。",
+        // M3: the learner's chosen next action must actually change the question.
+        // Without this the three paths were labels only - the generator never saw them.
+        "当提供了 input.interventionAction 时，它代表学习者刚选择的下一步，必须真实改变本轮出题：rebuild=本轮先给出材料依据并要求据此重建规则，再提取（不要直接考独立回忆）；discriminate=本轮必须把两条易混规则并列，要求辨析差异；produce=本轮必须要求写出完整表述而非识别。interventionAction 只决定出题方式，不代表题型，也不代表对错。",
         // F-04: generated from the parser's own enum, so the instruction can never drift again.
         `正常结果必须严格为：{"status":"ok","practiceType":"${quizPracticeTypes.join("|")}","answerMode":"${answerModes.join("|")}","question":"...","answerCriteria":["..."],"sourceEvidence":[{"decisionBlockId":"...","recordId":"...","contentVersion":1,"excerptHash":"...","purpose":"..."}],"hints":["..."]}。`,
         "answerCriteria 和 hints 必须是字符串数组；sourceEvidence 必须是对象数组，并且每个对象必须从 input.blueprint.evidence 原样复制，不得改写或用文字摘要代替。不得增加其他字段。",

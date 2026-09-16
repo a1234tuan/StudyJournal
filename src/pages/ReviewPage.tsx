@@ -125,7 +125,9 @@ interface ReviewPageProps {
   onSwitchAdaptiveTask?: (taskId: string) => Promise<unknown>;
   onDeferAdaptiveTask?: (taskId: string) => Promise<unknown>;
   onOpenAdaptiveTask?: (taskId: string) => void;
-  onReplanDecayedBlock?: (input: { decisionBlockId: string; recordId: string; contentVersion: number; note: string }) => Promise<unknown>;
+  onReplanDecayedBlock?: (input: { decisionBlockId: string; recordId: string; contentVersion: number }) => Promise<unknown>;
+  reviewCoachSessionId?: string;
+  onEnsureAdaptiveCurrentTask?: () => Promise<void>;
   coachOpen?: boolean;
   onCoachOpenChange?: (open: boolean) => void;
 }
@@ -321,6 +323,8 @@ export const ReviewPage = ({
   onDeferAdaptiveTask,
   onOpenAdaptiveTask,
   onReplanDecayedBlock,
+  reviewCoachSessionId,
+  onEnsureAdaptiveCurrentTask,
   coachOpen: controlledCoachOpen,
   onCoachOpenChange,
 }: ReviewPageProps) => {
@@ -333,6 +337,10 @@ export const ReviewPage = ({
   const [localCoachOpen, setLocalCoachOpen] = useState(false);
   const coachOpen = controlledCoachOpen ?? localCoachOpen;
   const setCoachOpen = onCoachOpenChange ?? setLocalCoachOpen;
+
+  useEffect(() => {
+    if (coachOpen) void onEnsureAdaptiveCurrentTask?.();
+  }, [coachOpen, onEnsureAdaptiveCurrentTask]);
   const [localReviewRuntime, setLocalReviewRuntime] = useState<ReviewSessionRuntimeState>(() => ({ day: todayISO(), ratedRecordIds: [], undoHistory: [] }));
   const reviewRuntime = controlledReviewRuntime ?? localReviewRuntime;
   const onReviewRuntimeChange = controlledReviewRuntimeChange ?? setLocalReviewRuntime;
@@ -951,6 +959,7 @@ export const ReviewPage = ({
           onDeferTask={onDeferAdaptiveTask}
           onOpenTask={onOpenAdaptiveTask}
           onReplanDecayedBlock={onReplanDecayedBlock}
+          sessionId={reviewCoachSessionId}
         />
       )}
 

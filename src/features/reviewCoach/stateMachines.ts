@@ -44,7 +44,7 @@ const queueTransitions: Readonly<Record<AnalysisQueueStatus, readonly AnalysisQu
   eligible: ["excluded", "batched", "stale", "deleted"],
   excluded: ["eligible", "stale", "deleted"],
   batched: ["eligible", "consumed", "stale", "deleted"],
-  consumed: ["stale", "deleted"],
+  consumed: ["eligible", "stale", "deleted"],
   stale: ["deleted"],
   deleted: [],
 };
@@ -84,6 +84,11 @@ const verificationTransitions: Readonly<Record<DelayedVerificationStatus, readon
   eligible: ["queued", "cancelled", "missed", "stale"],
   queued: ["in-progress", "eligible", "cancelled", "missed", "stale"],
   "in-progress": ["completed", "eligible", "cancelled", "missed", "stale"],
+  // Terminal on purpose. A verification whose evidence stayed provisional is
+  // still "completed" as an *action*; that it must be checked again is recorded
+  // on the row (`nextVerificationDueAt` / `concludedAt`) and expressed as a new
+  // task, never by moving this status backwards. Re-opening it through the state
+  // machine would also let a v1 completed verification be un-completed.
   completed: [],
   missed: ["eligible", "cancelled", "stale"],
   cancelled: [],

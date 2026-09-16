@@ -6,6 +6,12 @@ import { createBaseEntity } from "../lib/entity";
 import { isDesktopPlatform, isNativePlatform } from "../lib/platform";
 import type { AdaptiveQuizTurn, AdaptiveReviewTask, AnalysisBatch, AnalysisInputRef, AnalysisQueueItem, DecisionBlockFeedback, DelayedVerification, SessionBlueprint, TaskOutcomeEvent } from "../features/reviewCoach/domain";
 import { reviewCoachRepository } from "../features/reviewCoach/repository";
+import {
+  CLOSED_LOOP_V2_LOOP_VERSION,
+  TURN_BUDGET_POLICY_VERSION,
+  normalizeTurnBudgetForV2,
+} from "../features/reviewCoach/learningLoopPolicy";
+import { DELAYED_VERIFICATION_STRATEGY_VERSION_V2 } from "../features/reviewCoach/verificationPolicy";
 
 const PREVIEW_RECORD_ID = "stage3-preview-record";
 const PREVIEW_DECISION_BLOCK_ID = "stage3-preview-decision-block";
@@ -594,6 +600,419 @@ export const seedStage7Preview = async (): Promise<void> => {
   await reviewCoachRepository.rebuildProjections();
 };
 
+const V2_PREVIEW_TASK_ID = "loop-v2-preview-task";
+const V2_PREVIEW_BLUEPRINT_ID = "loop-v2-preview-blueprint";
+
+/**
+ * Seeds a closed-loop v2 task at the start of its first retrieval.
+ *
+ * This exists so the v2 chain can be exercised end to end in a browser without a
+ * paid provider: the E2E drives the real page, the real orchestrator and the
+ * real repository, and only the AI provider is stubbed. Seeding v2 through the
+ * repository rather than by writing rows is deliberate - the thing under test is
+ * the write path, so the fixture must not bypass it.
+ *
+ * The task starts with **no turns**. A pre-answered turn would let the test pass
+ * without ever going through generation, which is exactly the gap this covers.
+ */
+export const seedClosedLoopV2Preview = async (): Promise<void> => {
+  await seedStage3Preview();
+  const stamp = nowISO();
+  // Localhost-only placeholder credential, same as the other preview seeds: it
+  // lets the browser interception run without exposing a real key, and never
+  // overwrites one the developer already stored.
+  const existingSecret = await storage.getAiSecret?.("default");
+  if (!existingSecret?.apiKey?.trim()) {
+    await storage.saveAiSecret("stage9-preview-placeholder", "default");
+  }
+  const record = previewRecord();
+  await storage.saveBlock(record);
+  await db.decisionBlockFeedback.put({
+    id: "loop-v2-preview-feedback",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    comment: "我标记访问的时机总是偏晚，导致同一节点被重复入队。",
+    includeInAnalysis: true,
+    source: "review",
+    occurredAt: stamp,
+    idempotencyKey: "feedback:loop-v2-preview",
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+
+  // `acceptBlueprint` validates against the frozen analysis input, so the batch
+  // and its input refs have to exist for real. Seeding them by hand here would
+  // make this fixture the only writer that skips those checks - and the checks
+  // are part of what the E2E is supposed to cover.
+  const batchId = "loop-v2-preview-batch";
+  const inputRef: AnalysisInputRef = {
+    queueItemId: "loop-v2-preview-queue",
+    feedbackId: "loop-v2-preview-feedback",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+  };
+  await db.analysisQueueItems.put({
+    id: inputRef.queueItemId,
+    feedbackId: inputRef.feedbackId,
+    decisionBlockId: inputRef.decisionBlockId,
+    recordId: inputRef.recordId,
+    contentVersion: 1,
+    status: "consumed",
+    eligibilityReason: "user-feedback",
+    batchId,
+    consumedAt: stamp,
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+  await db.analysisBatches.put({
+    id: batchId,
+    status: "succeeded",
+    inputRefs: [inputRef],
+    subBatches: [{ id: "loop-v2-preview-sub-batch", inputRefs: [inputRef], status: "succeeded" }],
+    requestedAt: stamp,
+    completedAt: stamp,
+    model: "deterministic-preview",
+    provider: "deterministic-preview",
+    promptVersion: "session-blueprint-v1",
+    policyVersion: "review-coach-policy-v1",
+    schemaVersion: 1,
+    inputFingerprint: "loop-v2-preview-fingerprint",
+    idempotencyKey: `analysis:${batchId}`,
+    allowCrossBlockSupport: false,
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+
+  // Built through the repository so the fixture exercises the same validation
+  // and slot rules the product uses. Ids are supplied rather than generated
+  // because the E2E addresses this task directly.
+  await reviewCoachRepository.acceptBlueprint({
+    id: V2_PREVIEW_BLUEPRINT_ID,
+    createdAt: stamp,
+    updatedAt: stamp,
+    batchId: "loop-v2-preview-batch",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "accepted",
+    supportingDecisionBlockIds: [],
+    feedbackIds: ["loop-v2-preview-feedback"],
+    interpretationIds: [],
+    problemHypothesis: "标记时机与入队顺序之间的条件映射尚未稳定。",
+    hypothesisConfidence: 0.8,
+    objective: "独立说明 BFS 首次发现节点时的标记顺序",
+    completionCriteria: ["能独立说明标记时机", "能说明重复入队是如何被避免的"],
+    initialPracticeType: "variation",
+    initialDifficulty: 2,
+    expectedKeyPoints: ["先标记后入队", "避免重复入队"],
+    branches: [
+      { when: "correct", nextStrategy: "finish" },
+      { when: "partial", nextStrategy: "hint" },
+      { when: "incorrect", nextStrategy: "explain" },
+      { when: "skipped", nextStrategy: "prerequisite-check" },
+    ],
+    allowedStrategies: ["finish", "hint", "explain", "prerequisite-check"],
+    forbiddenScope: ["未提供来源的扩展知识"],
+    evidence: [{
+      decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+      recordId: PREVIEW_RECORD_ID,
+      contentVersion: 1,
+      excerptHash: "loop-v2-preview-hash",
+      purpose: "主来源",
+    }],
+    // v2 needs a turn budget the loop can close inside. The legacy default
+    // predates the two-retrieval requirement, so a v2 blueprint must say so
+    // explicitly rather than inherit a v1 budget.
+    maxTurns: normalizeTurnBudgetForV2(4),
+    maxRetriesPerTurn: 1,
+    maxEstimatedTokens: 4000,
+    model: "deterministic-preview",
+    provider: "deterministic-preview",
+    promptVersion: "session-blueprint-v1",
+    policyVersion: "review-coach-policy-v1",
+    schemaVersion: 1,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    turnBudgetPolicyVersion: TURN_BUDGET_POLICY_VERSION,
+    idempotencyKey: `blueprint:${V2_PREVIEW_BLUEPRINT_ID}`,
+  });
+
+  await reviewCoachRepository.createTask({
+    id: V2_PREVIEW_TASK_ID,
+    blueprintId: V2_PREVIEW_BLUEPRINT_ID,
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "current",
+    priorityTier: "first-difficulty",
+    queuedAt: stamp,
+    startedAt: stamp,
+    activeSlotKey: "global-current",
+    openTargetKey: `${PREVIEW_DECISION_BLOCK_ID}:1`,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    idempotencyKey: `task:${V2_PREVIEW_TASK_ID}`,
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+  await reviewCoachRepository.rebuildProjections();
+};
+
+const V2_VERIFICATION_TASK_ID = "loop-v2-verification-task";
+
+/**
+ * Seeds a closed-loop v2 verification task that is already due.
+ *
+ * The v2 P0 rule lives in the verification write path (`completeV2Verification`):
+ * an AI-graded attempt is provisional evidence and must never be written as a
+ * durable `retained` fact. Reaching that path through the UI in a test would
+ * need 6+ hours of wall-clock time for the verification window to open, so the
+ * *precondition* is seeded and everything after it - generation, the answer, the
+ * judgment, the write - is the real code path.
+ *
+ * The seeded attempts are `ai-evaluation` / `ai-generated`, which is exactly the
+ * authority the rule is about.
+ */
+export const seedClosedLoopV2VerificationPreview = async (): Promise<void> => {
+  await seedStage3Preview();
+  const stamp = nowISO();
+  const existingSecret = await storage.getAiSecret?.("default");
+  if (!existingSecret?.apiKey?.trim()) {
+    await storage.saveAiSecret("stage9-preview-placeholder", "default");
+  }
+
+  const sourceCompletedAt = `${addDaysISO(todayISO(), -1)}T09:00:00.000Z`;
+  const dueAt = `${addDaysISO(todayISO(), -1)}T21:00:00.000Z`;
+  // `seedStage3Preview` leaves a fresh eligible feedback item, which makes the
+  // workbench the landing view instead of the verification. This preview is
+  // about the verification path, so that unrelated pending item is retired here
+  // rather than left to intercept the test.
+  await db.analysisQueueItems.where("id").equals("stage3-preview-queue-item").modify({ status: "consumed", consumedAt: stamp, updatedAt: stamp });
+  await db.decisionBlockFeedback.where("id").equals("stage3-preview-feedback").modify({ includeInAnalysis: false, updatedAt: stamp });
+
+  // `acceptBlueprint` checks the blueprint against the frozen analysis input, so
+  // the batch and its refs have to exist. Seeding them here keeps the fixture on
+  // the same validated path the product uses.
+  const verificationBatchId = "loop-v2-verification-batch";
+  const verificationRef: AnalysisInputRef = {
+    queueItemId: "stage3-preview-queue-item",
+    feedbackId: "stage3-preview-feedback",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+  };
+  await db.analysisBatches.put({
+    id: verificationBatchId,
+    status: "succeeded",
+    inputRefs: [verificationRef],
+    subBatches: [{ id: "loop-v2-verification-sub-batch", inputRefs: [verificationRef], status: "succeeded" }],
+    requestedAt: stamp,
+    completedAt: stamp,
+    model: "deterministic-preview",
+    provider: "deterministic-preview",
+    promptVersion: "session-blueprint-v1",
+    policyVersion: "review-coach-policy-v1",
+    schemaVersion: 1,
+    inputFingerprint: "loop-v2-verification-fingerprint",
+    idempotencyKey: `analysis:${verificationBatchId}`,
+    allowCrossBlockSupport: false,
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+  const postJudgmentTurn: AdaptiveQuizTurn = {
+    id: "loop-v2-verification-source-turn",
+    taskId: "loop-v2-verification-source-task",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    sequence: 2,
+    status: "answered",
+    practiceType: "variation",
+    answerMode: "open",
+    question: "反馈后再提取：说明标记时机如何避免重复入队。",
+    displayedAt: sourceCompletedAt,
+    sourceEvidence: [{
+      decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+      recordId: PREVIEW_RECORD_ID,
+      contentVersion: 1,
+      excerptHash: "loop-v2-preview-hash",
+      purpose: "主来源",
+    }],
+    answerCriteria: ["先标记后入队"],
+    hintsUsed: [],
+    answerText: "先标记再加入队列。",
+    answeredAt: sourceCompletedAt,
+    assessment: "correct",
+    assessmentRationale: "AI 评价：覆盖判据。",
+    qualityChecked: true,
+    qualityModel: "deterministic-preview",
+    generationModel: "deterministic-preview",
+    promptVersion: "quiz-turn-v2",
+    policyVersion: "review-coach-policy-v2",
+    idempotencyKey: "quiz-turn:loop-v2-verification-source",
+    phase: "post-judgment",
+    independenceStatus: "independent",
+    variantEligibility: "eligible",
+    targetFormStatus: "target-form",
+    judgmentMechanism: "ai-evaluation",
+    referenceOrigin: "ai-generated",
+    questionFingerprint: "loop-v2-verification-source-fingerprint",
+    createdAt: sourceCompletedAt,
+    updatedAt: sourceCompletedAt,
+  };
+  // The turn must belong to a real task row, so the earlier loop's task is
+  // seeded first - it is the source the verification points back at.
+  await db.adaptiveReviewTasks.put({
+    id: postJudgmentTurn.taskId,
+    blueprintId: "loop-v2-verification-blueprint",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "completed",
+    priorityTier: "first-difficulty",
+    queuedAt: sourceCompletedAt,
+    startedAt: sourceCompletedAt,
+    endedAt: sourceCompletedAt,
+    openTargetKey: undefined,
+    activeSlotKey: undefined,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    idempotencyKey: "task:loop-v2-verification-source-task",
+    createdAt: sourceCompletedAt,
+    updatedAt: sourceCompletedAt,
+  });
+  // A v2 completion is a *pair* of qualifying retrievals: one at `initial`,
+  // one at `post-judgment`, in this task, with the second after the first.
+  // Seeding only the post-judgment half would leave `loopClosureEvidence`
+  // returning null, which the snapshot validator rejects on load - so the
+  // earlier half of the same loop is seeded too.
+  const initialTurn: AdaptiveQuizTurn = {
+    ...postJudgmentTurn,
+    id: "loop-v2-verification-source-initial-turn",
+    sequence: 1,
+    question: "先提取一次：说明标记时机如何避免重复入队。",
+    questionFingerprint: "loop-v2-verification-source-initial-fingerprint",
+    idempotencyKey: "quiz-turn:loop-v2-verification-source-initial",
+    phase: "initial",
+  };
+  await db.adaptiveQuizTurns.bulkPut([initialTurn, postJudgmentTurn]);
+  await db.taskOutcomeEvents.bulkPut([
+    {
+      id: "loop-v2-verification-source-event",
+      taskId: postJudgmentTurn.taskId,
+      decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+      recordId: PREVIEW_RECORD_ID,
+      contentVersion: 1,
+      kind: "answer-assessment",
+      turnId: postJudgmentTurn.id,
+      answerAssessment: "correct",
+      occurredAt: sourceCompletedAt,
+      idempotencyKey: "outcome:loop-v2-verification-source",
+      createdAt: sourceCompletedAt,
+      updatedAt: sourceCompletedAt,
+    },
+    // A `completed` v2 task must carry the disposition that completed it; the
+    // snapshot validator re-checks this on load.
+    {
+      id: "loop-v2-verification-source-disposition",
+      taskId: postJudgmentTurn.taskId,
+      decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+      recordId: PREVIEW_RECORD_ID,
+      contentVersion: 1,
+      kind: "task-disposition",
+      disposition: "completed",
+      occurredAt: sourceCompletedAt,
+      idempotencyKey: "disposition:loop-v2-verification-source",
+      createdAt: sourceCompletedAt,
+      updatedAt: sourceCompletedAt,
+    },
+  ]);
+
+  // The verification task is already open and points at the AI-generated
+  // attempt that closed the earlier loop.
+  await reviewCoachRepository.acceptBlueprint({
+    id: "loop-v2-verification-blueprint",
+    createdAt: stamp,
+    updatedAt: stamp,
+    batchId: verificationBatchId,
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "accepted",
+    supportingDecisionBlockIds: [],
+    feedbackIds: ["stage3-preview-feedback"],
+    interpretationIds: [],
+    problemHypothesis: "标记时机与入队顺序之间的条件映射尚未稳定。",
+    hypothesisConfidence: 0.8,
+    objective: "独立说明 BFS 首次发现节点时的标记顺序",
+    completionCriteria: ["能独立说明标记时机"],
+    initialPracticeType: "variation",
+    initialDifficulty: 2,
+    expectedKeyPoints: ["先标记后入队"],
+    branches: [
+      { when: "correct", nextStrategy: "finish" },
+      { when: "partial", nextStrategy: "hint" },
+      { when: "incorrect", nextStrategy: "explain" },
+      { when: "skipped", nextStrategy: "prerequisite-check" },
+    ],
+    allowedStrategies: ["finish", "hint", "explain", "prerequisite-check"],
+    forbiddenScope: [],
+    evidence: [{
+      decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+      recordId: PREVIEW_RECORD_ID,
+      contentVersion: 1,
+      excerptHash: "loop-v2-preview-hash",
+      purpose: "主来源",
+    }],
+    maxTurns: normalizeTurnBudgetForV2(4),
+    maxRetriesPerTurn: 1,
+    maxEstimatedTokens: 4000,
+    model: "deterministic-preview",
+    provider: "deterministic-preview",
+    promptVersion: "session-blueprint-v1",
+    policyVersion: "review-coach-policy-v1",
+    schemaVersion: 1,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    turnBudgetPolicyVersion: TURN_BUDGET_POLICY_VERSION,
+    idempotencyKey: "blueprint:loop-v2-verification",
+  });
+
+  await reviewCoachRepository.createTask({
+    id: V2_VERIFICATION_TASK_ID,
+    blueprintId: "loop-v2-verification-blueprint",
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "in-progress",
+    priorityTier: "due-verification",
+    queuedAt: stamp,
+    startedAt: stamp,
+    activeSlotKey: "global-current",
+    openTargetKey: `${PREVIEW_DECISION_BLOCK_ID}:1`,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    retryOfTaskId: postJudgmentTurn.taskId,
+    idempotencyKey: `task:${V2_VERIFICATION_TASK_ID}`,
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+  await db.delayedVerifications.put({
+    id: "loop-v2-verification",
+    sourceOutcomeEventId: "loop-v2-verification-source-event",
+    taskId: V2_VERIFICATION_TASK_ID,
+    decisionBlockId: PREVIEW_DECISION_BLOCK_ID,
+    recordId: PREVIEW_RECORD_ID,
+    contentVersion: 1,
+    status: "in-progress",
+    verificationEligibleAt: dueAt,
+    verificationDueAt: dueAt,
+    strategyVersion: DELAYED_VERIFICATION_STRATEGY_VERSION_V2,
+    loopVersion: CLOSED_LOOP_V2_LOOP_VERSION,
+    idempotencyKey: "verification:loop-v2-verification",
+    createdAt: stamp,
+    updatedAt: stamp,
+  });
+  await reviewCoachRepository.rebuildProjections();
+};
+
 export const isStage3PreviewRequest = (): boolean => {
   if (typeof window === "undefined") return false;
   if (isNativePlatform() || isDesktopPlatform()) return false;
@@ -648,4 +1067,20 @@ export const isReviewCoachPreviewRequest = (): boolean => {
   const host = window.location.hostname;
   return (host === "127.0.0.1" || host === "localhost")
     && new URLSearchParams(window.location.search).get("preview") === "coach";
+};
+
+export const isClosedLoopV2PreviewRequest = (): boolean => {
+  if (typeof window === "undefined") return false;
+  if (isNativePlatform() || isDesktopPlatform()) return false;
+  const host = window.location.hostname;
+  return (host === "127.0.0.1" || host === "localhost")
+    && new URLSearchParams(window.location.search).get("preview") === "loop-v2";
+};
+
+export const isClosedLoopV2VerificationPreviewRequest = (): boolean => {
+  if (typeof window === "undefined") return false;
+  if (isNativePlatform() || isDesktopPlatform()) return false;
+  const host = window.location.hostname;
+  return (host === "127.0.0.1" || host === "localhost")
+    && new URLSearchParams(window.location.search).get("preview") === "loop-v2-verify";
 };

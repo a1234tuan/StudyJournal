@@ -26,7 +26,7 @@ describe("review coach state machines", () => {
 
   it("rejects transitions that would rewrite terminal facts", () => {
     expect(() => transitionFeedbackInterpretation("succeeded", "running")).toThrow(ReviewCoachTransitionError);
-    expect(() => transitionAnalysisQueueItem("consumed", "eligible")).toThrow(ReviewCoachTransitionError);
+    expect(transitionAnalysisQueueItem("consumed", "eligible")).toBe("eligible");
     expect(() => transitionAnalysisBatch("succeeded", "running")).toThrow(ReviewCoachTransitionError);
     expect(() => transitionAdaptiveReviewTask("completed", "in-progress")).toThrow(ReviewCoachTransitionError);
     expect(() => transitionAdaptiveQuizTurn("answered", "displayed")).toThrow(ReviewCoachTransitionError);

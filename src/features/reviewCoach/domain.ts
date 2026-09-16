@@ -201,6 +201,14 @@ export interface SessionBlueprint extends CoachBaseEntity, VersionedDecisionBloc
   policyVersion: string;
   schemaVersion: number;
   idempotencyKey: string;
+  /**
+   * v2: stamped on blueprints created for the closed loop. A v2 blueprint must
+   * budget at least `requiredQualifyingRetrievalsV2` display turns before it is
+   * persisted; v1 blueprints keep their historical `maxTurns` untouched.
+   */
+  loopVersion?: LearningLoopVersion;
+  /** v2: the normalizer that raised `maxTurns`, recorded so the change is auditable. */
+  turnBudgetPolicyVersion?: string;
 }
 
 export type AdaptiveReviewTaskStatus =
@@ -232,10 +240,70 @@ export interface AdaptiveReviewTask extends CoachBaseEntity, VersionedDecisionBl
   openTargetKey?: string;
   idempotencyKey: string;
   terminalReason?: string;
+  /**
+   * v2: marks a closed-loop attempt. A `deferred` v2 task that has been replaced
+   * by a fresh attempt sets `replacedByTaskId`; such a task keeps its audit trail
+   * but stops occupying the target's open slot.
+   */
+  loopVersion?: LearningLoopVersion;
+  /** v2: the attempt this task was created to replace. */
+  retryOfTaskId?: CoachEntityId;
+  /** v2: the replacement attempt that superseded this task. */
+  replacedByTaskId?: CoachEntityId;
 }
 
 export type AdaptiveQuizTurnStatus = "displayed" | "answered" | "invalid";
 export type ImmediateAnswerAssessment = "correct" | "partial" | "incorrect" | "unreliable";
+
+/**
+ * Closed-loop v2 vocabulary.
+ *
+ * These fields are optional everywhere so that v1 records and old backups keep
+ * loading unchanged. A record with no `loopVersion` is v1 history and is read by
+ * the legacy rules; only records explicitly stamped `closed-loop-v2` are subject
+ * to the v2 completion and authority contracts.
+ *
+ * `JudgmentMechanism` records which mechanism actually produced the conclusion.
+ * `ReferenceOrigin` records where the criteria came from. They must be read
+ * together: a deterministic string comparison against an AI-generated expected
+ * answer is still only provisional evidence, because the reference itself is AI
+ * generated. Field names must never be used to launder authority.
+ */
+export type LearningLoopVersion = "closed-loop-v2";
+
+export type RetrievalPhase = "initial" | "post-judgment" | "delayed-first" | "delayed-remediation";
+
+export type IndependenceStatus = "independent" | "assisted" | "unknown";
+
+export type VariantEligibility = "eligible" | "duplicate" | "uncertain" | "not-applicable";
+
+export type TargetFormStatus = "target-form" | "training-form" | "unknown";
+
+export type JudgmentMechanism =
+  | "reference-lookup"
+  | "deterministic-check"
+  | "human-review"
+  | "ai-evaluation"
+  | "self-report";
+
+export type ReferenceOrigin =
+  | "official"
+  | "source-material"
+  | "user-authored"
+  | "ai-generated"
+  | "none";
+
+/** The three learner-chosen actions after a non-correct judgment (constitution art. 6). */
+export type InterventionPath = "not-formed" | "confused" | "execution-failed";
+
+/** Evidence class of a delayed verification, derived from authority - never from self-report. */
+export type VerificationEvidenceStatus =
+  | "objective-pass"
+  | "objective-fail"
+  | "provisional-pass"
+  | "provisional-fail"
+  | "ineligible";
+
 
 /** Strongest hint level used inside an intervention group. Derived locally from `hintsUsed`
  *  (`QuizHintUsage.level` is 1-based and ordered weak → strong); never inferred from the model. */
@@ -268,11 +336,37 @@ export interface AdaptiveQuizTurn extends CoachBaseEntity, VersionedDecisionBloc
   promptVersion: string;
   policyVersion: string;
   idempotencyKey: string;
+  /**
+   * Closed-loop v2 fields. Absent on v1 turns, which are read by legacy rules.
+   * `viewedMaterialIds` and `hintLevelUsed` feed independence, not scoring.
+   */
+  phase?: RetrievalPhase;
+  independenceStatus?: IndependenceStatus;
+  variantEligibility?: VariantEligibility;
+  targetFormStatus?: TargetFormStatus;
+  judgmentMechanism?: JudgmentMechanism;
+  referenceOrigin?: ReferenceOrigin;
+  /** Locally computed normalized-question fingerprint used for duplicate checks. */
+  questionFingerprint?: string;
+  /** Ids of the already-seen turns this question was found to duplicate. */
+  duplicateOfTurnIds?: string[];
+  /** Why this variant failed eligibility, when `variantEligibility !== "eligible"`. */
+  variantIneligibility?: string[];
+  /** The learner-selected action that produced this turn, when it is a re-retrieval. */
+  interventionPath?: InterventionPath;
 }
 
 export type SubjectiveOutcome = "mastered" | "needs-consolidation" | "not-mastered";
 export type TaskDisposition = "completed" | "deferred" | "abandoned" | "question-invalid";
-export type TaskOutcomeEventKind = "answer-assessment" | "self-assessment" | "task-disposition";
+export type TaskOutcomeEventKind =
+  | "answer-assessment"
+  | "self-assessment"
+  | "task-disposition"
+  | "intervention-selected"
+  | "evidence-superseded";
+
+/** Kinds of correction that can retire an earlier judgment without deleting it. */
+export type EvidenceSupersedeReason = "misjudged" | "invalid-question" | "replaced" | "corrected";
 
 export interface TaskOutcomeEvent extends CoachBaseEntity, VersionedDecisionBlockRef {
   taskId: CoachEntityId;
@@ -285,6 +379,14 @@ export interface TaskOutcomeEvent extends CoachBaseEntity, VersionedDecisionBloc
   confirmedConflict?: boolean;
   occurredAt: CoachIsoDateTime;
   idempotencyKey: string;
+  /** v2: the learner action recorded by an `intervention-selected` event. */
+  interventionPath?: InterventionPath;
+  /** v2: the earlier event this `evidence-superseded` event retires. */
+  supersededEventId?: CoachEntityId;
+  /** v2: the turn whose evidence this `evidence-superseded` event retires. */
+  supersededTurnId?: CoachEntityId;
+  /** v2: why the earlier evidence stopped counting. */
+  supersedeReason?: EvidenceSupersedeReason;
 }
 
 export type DelayedVerificationStatus =
@@ -308,6 +410,29 @@ export interface DelayedVerification extends CoachBaseEntity, VersionedDecisionB
   verificationOutcome?: DelayedVerificationOutcome;
   strategyVersion: string;
   idempotencyKey: string;
+  /**
+   * v2 fields. `sourceOutcomeEventId` still points at the event that opened the
+   * verification, but for v2 that event must be a qualifying post-judgment
+   * `answer-assessment` - never a self-assessment.
+   */
+  loopVersion?: LearningLoopVersion;
+  /** The locked delayed-first turn whose first independent attempt is the result. */
+  evidenceTurnId?: CoachEntityId;
+  /** Derived from `evidenceTurnId` authority; never supplied by the caller. */
+  evidenceStatus?: VerificationEvidenceStatus;
+  /**
+   * When the *evidence conclusion* was settled, as opposed to the verification
+   * action being submitted.
+   *
+   * `status: "completed"` records that the learner submitted an attempt. A
+   * provisional result settles nothing - the judge was a model reading its own
+   * criteria - so this stays unset and the verification remains open, with
+   * `nextVerificationDueAt` holding the window for the next check. Only
+   * objective evidence sets it.
+   */
+  concludedAt?: CoachIsoDateTime;
+  /** When an unsettled verification should be checked again. Unset once concluded. */
+  nextVerificationDueAt?: CoachIsoDateTime;
 }
 
 export type DecisionBlockLearningStatus =

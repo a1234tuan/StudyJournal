@@ -123,15 +123,18 @@ export const buildAnalysisPlanningBlocks = (input: {
     left.feedback.at(-1)!.occurredAt.localeCompare(right.feedback.at(-1)!.occurredAt) || left.decisionBlockId.localeCompare(right.decisionBlockId));
 };
 
+/**
+ * Plans analysis sub-batches.
+ *
+ * The fingerprint deliberately covers only the decision-block inputs. It used to
+ * also fold in `InterventionEffectSummary` rows, which meant the "objective"
+ * strategy-effect table silently shaped which evidence a batch was planned
+ * against (dev plan section 1.5). Those rows are AI-evaluation statistics, not
+ * objective evidence, so they no longer enter planning at all.
+ */
 export const planAnalysisBatches = (
   blocks: readonly AnalysisPlanningBlock[],
   maxInputTokens: number,
-  /**
-   * B-2 (F-01): the objective effect rows that `analyzeFeedback` hands to the planner. They are
-   * folded into the frozen `inputFingerprint` so "which evidence was this batch planned against"
-   * is auditable from the existing immutable batch record, with no new synced field.
-   */
-  effectSummaries: readonly { strategyKey: string; replayFingerprint: string }[] = [],
 ): AnalysisBatchPlan => {
   const oversized = blocks.filter((item) => item.estimatedTokens > maxInputTokens);
   const eligible = blocks.filter((item) => item.estimatedTokens <= maxInputTokens);
@@ -156,9 +159,6 @@ export const planAnalysisBatches = (
         inputRefs: item.inputRefs,
         excerptHash: item.excerptHash,
       })),
-      effects: [...effectSummaries]
-        .map((item) => `${item.strategyKey}:${item.replayFingerprint}`)
-        .sort(),
     })),
     maxInputTokens,
   };

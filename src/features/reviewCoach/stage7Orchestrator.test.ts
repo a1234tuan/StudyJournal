@@ -82,14 +82,20 @@ describe("Stage 7 delayed verification orchestrator", () => {
       repository,
       ids: createIds(),
       clock: { now: () => now },
-      aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+      aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn() },
     });
 
     const result = await orchestrator.generateQuizTurn({ taskId: verificationTask.id, decisionBlockContent: "source", provider: "test", model: "fast", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy-v1", operationId: "verify" });
 
     expect(result.question).toBe("Explain why duplicate enqueueing happens when a node is marked late.");
     expect(generateTurn).toHaveBeenCalledTimes(2);
-    expect(generateTurn.mock.calls[1][0]).toMatchObject({ verificationMode: { verificationId: coachTestVerification.id, requireFreshRetrieval: true }, priorQualityFailure: "延迟验证题与历史题目重复" });
+    // The rejection reason now names which previous question it matched, so the
+    // record distinguishes an exact repeat from a near-repeat.
+    expect(generateTurn.mock.calls[1][0]).toMatchObject({
+      verificationMode: { verificationId: coachTestVerification.id, requireFreshRetrieval: true },
+    });
+    expect((generateTurn.mock.calls[1][0] as { priorQualityFailure?: string }).priorQualityFailure)
+      .toMatch(/延迟验证题与历史题目重复/);
   });
 
   it("completes a decayed verification as a separate not-mastered fact", async () => {
@@ -157,6 +163,72 @@ describe("Stage 7 delayed verification orchestrator", () => {
       createdAt: "2026-09-07T07:00:00.000Z",
     });
     expect(secondDevice).toEqual({ ...firstDevice, updatedAt: "2026-09-07T09:00:00.000Z" });
+  });
+
+  it("re-queues a completed but unsettled verification instead of letting the chain end", async () => {
+    // `status: "completed"` records that the learner submitted an attempt. When
+    // only provisional evidence came back, nothing has been concluded, so the
+    // chain must continue: refreshDueVerifications has to clear the stale task
+    // link and queue a fresh task for the same target.
+    const refresh = async (verification: Partial<ReviewCoachFormalSnapshot["delayedVerifications"][number]>) => {
+      const snapshot = completeCoachTestSnapshot();
+      snapshot.adaptiveReviewTasks[0] = { ...snapshot.adaptiveReviewTasks[0], status: "completed", endedAt: coachTestStamp };
+      snapshot.delayedVerifications[0] = {
+        ...snapshot.delayedVerifications[0],
+        status: "completed",
+        taskId: coachTestTask.id,
+        lastVerifiedAt: "2026-09-07T06:00:00.000Z",
+        verificationOutcome: undefined,
+        ...verification,
+      };
+      const detachVerificationTask = vi.fn(async (_id: string, updatedAt: string) => {
+        snapshot.delayedVerifications[0] = { ...snapshot.delayedVerifications[0], taskId: undefined, updatedAt };
+        return snapshot.delayedVerifications[0];
+      });
+      const queueVerification = vi.fn(async (_id: string, task: AdaptiveReviewTask) => ({ verification: snapshot.delayedVerifications[0], task }));
+      const repository = { getFormalSnapshot: vi.fn(async () => snapshot), detachVerificationTask, queueVerification } as unknown as ReviewCoachRepository;
+      const orchestrator = new ReviewCoachOrchestrator({ repository, ids: createIds(), clock: { now: () => now } });
+
+      const queuedCount = await orchestrator.refreshDueVerifications();
+      return { detachVerificationTask, queueVerification, queuedCount };
+    };
+
+    const unsettled = await refresh({ concludedAt: undefined, nextVerificationDueAt: "2026-09-07T07:00:00.000Z" });
+
+    expect(unsettled.detachVerificationTask).toHaveBeenCalledWith(coachTestVerification.id, now);
+    expect(unsettled.queueVerification).toHaveBeenCalledTimes(1);
+    expect(unsettled.queueVerification.mock.calls[0][1]).toMatchObject({
+      id: `verification-task:${coachTestVerification.id}`,
+      priorityTier: "due-verification",
+      status: "waiting",
+    });
+    expect(unsettled.queuedCount).toBe(1);
+  });
+
+  it("leaves a verification that reached an objective conclusion alone", async () => {
+    // The counterpart to the test above: once the evidence settled the target,
+    // there is nothing left to re-check, so the same refresh must not queue it.
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...snapshot.adaptiveReviewTasks[0], status: "completed", endedAt: coachTestStamp };
+    snapshot.delayedVerifications[0] = {
+      ...snapshot.delayedVerifications[0],
+      status: "completed",
+      taskId: coachTestTask.id,
+      concludedAt: "2026-09-07T06:00:00.000Z",
+      nextVerificationDueAt: undefined,
+      evidenceStatus: "objective-pass",
+      verificationOutcome: "retained",
+    };
+    const detachVerificationTask = vi.fn(async () => snapshot.delayedVerifications[0]);
+    const queueVerification = vi.fn(async (_id: string, task: AdaptiveReviewTask) => ({ verification: snapshot.delayedVerifications[0], task }));
+    const repository = { getFormalSnapshot: vi.fn(async () => snapshot), detachVerificationTask, queueVerification } as unknown as ReviewCoachRepository;
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: createIds(), clock: { now: () => now } });
+
+    const queuedCount = await orchestrator.refreshDueVerifications();
+
+    expect(detachVerificationTask).not.toHaveBeenCalled();
+    expect(queueVerification).not.toHaveBeenCalled();
+    expect(queuedCount).toBe(0);
   });
 
   it("ages a long-waiting consolidation task into an earlier scheduling tier", () => {

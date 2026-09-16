@@ -94,7 +94,7 @@ describe("Second audit: host protocol and coach cancellation", () => {
     const onGenerateTurn = vi.fn(async (_taskId: string, _signal?: AbortSignal) => undefined);
     const noop = async () => undefined;
     const record = { id: coachTestTask.recordId, type: "record" as const, date: "2026-09-09", order: 0, subject: "数据结构", title: "BFS", contentHtml: "<p>BFS</p>", assets: [], formulas: [], mistakeRefs: [], tags: [], createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:00Z" };
-    const view = render(<AdaptiveReviewPage taskId={coachTestTask.id} snapshot={snapshot} records={[record]} onBack={() => undefined} onGenerateTurn={onGenerateTurn} onRequestHint={noop} onSubmitAnswer={noop} onSkipTurn={noop} onReportInvalid={noop} onFinish={noop} onFinishVerification={noop} onDefer={noop} onAbandon={noop} />);
+    const view = render(<AdaptiveReviewPage taskId={coachTestTask.id} snapshot={snapshot} records={[record]} onBack={() => undefined} onGenerateTurn={onGenerateTurn} onRequestHint={noop} onSubmitAnswer={noop} onSkipTurn={noop} onReportInvalid={noop} onFinish={noop} onFinishVerification={noop} onCompleteLoop={noop} onCompleteV2Verification={noop} onSelectIntervention={noop} onDeferAttempt={noop} onDefer={noop} onAbandon={noop} />);
     fireEvent.click(screen.getByRole("button", { name: "开始训练" }));
     await waitFor(() => expect(onGenerateTurn).toHaveBeenCalledOnce());
     const signal = onGenerateTurn.mock.calls[0][1];

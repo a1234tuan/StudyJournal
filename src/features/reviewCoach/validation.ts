@@ -7,6 +7,7 @@ import type {
   TaskOutcomeEvent,
   VersionedDecisionBlockRef,
 } from "./domain";
+import { isLoopClosed } from "./evidencePolicy";
 
 export class ReviewCoachValidationError extends Error {
   readonly code: string;
@@ -82,8 +83,20 @@ export const openTargetKeyFor = (ref: VersionedDecisionBlockRef) =>
   `${ref.decisionBlockId}:${ref.contentVersion}`;
 
 export const assertTaskOutcomeShape = (event: TaskOutcomeEvent) => {
+  /**
+   * v2 adds two event kinds that carry no result category by design:
+   *
+   * - `intervention-selected` records a learner *action*, not a judgment;
+   * - `evidence-superseded` records a *correction* to earlier evidence.
+   *
+   * Neither may carry an assessment, a disposition or a subjective outcome:
+   * that is exactly the confusion the constitution forbids.
+   */
+  const carriesResultCategory = event.kind === "answer-assessment"
+    || event.kind === "self-assessment"
+    || event.kind === "task-disposition";
   const populated = [event.answerAssessment, event.subjectiveOutcome, event.disposition].filter((value) => value !== undefined);
-  if (populated.length !== 1) {
+  if (carriesResultCategory && populated.length !== 1) {
     throw new ReviewCoachValidationError("invalid-outcome-shape", "An outcome event must contain exactly one result category.");
   }
   if (event.kind === "answer-assessment" && !event.answerAssessment) {
@@ -94,6 +107,25 @@ export const assertTaskOutcomeShape = (event: TaskOutcomeEvent) => {
   }
   if (event.kind === "task-disposition" && !event.disposition) {
     throw new ReviewCoachValidationError("invalid-outcome-shape", "Task disposition event is missing disposition.");
+  }
+  if (event.kind === "intervention-selected") {
+    if (!event.interventionPath) {
+      throw new ReviewCoachValidationError("invalid-outcome-shape", "Intervention selection is missing its path.");
+    }
+    if (populated.length > 0) {
+      throw new ReviewCoachValidationError("invalid-outcome-shape", "An intervention selection must not carry a result category.");
+    }
+  }
+  if (event.kind === "evidence-superseded") {
+    if (!event.supersededEventId && !event.supersededTurnId) {
+      throw new ReviewCoachValidationError("invalid-outcome-shape", "A supersede event must name what it retires.");
+    }
+    if (!event.supersedeReason) {
+      throw new ReviewCoachValidationError("invalid-outcome-shape", "A supersede event must state why evidence stopped counting.");
+    }
+    if (populated.length > 0) {
+      throw new ReviewCoachValidationError("invalid-outcome-shape", "A supersede event must not carry a result category.");
+    }
   }
 };
 
@@ -222,7 +254,12 @@ export const validateReviewCoachFormalSnapshot = (
     }
     if (task.status !== "stale" && task.status !== "deleted") assertCurrentDecisionBlockRef(blocks.get(task.decisionBlockId), task);
     if (task.status === "current" || task.status === "in-progress") currentTasks += 1;
-    if (isOpenTaskStatus(task.status)) {
+    // A deferred attempt that has been replaced has handed its target over to
+    // the replacement. It stays `deferred` for its own audit trail, but it no
+    // longer occupies the decision block - otherwise the requeue it created
+    // would be rejected as a duplicate target.
+    const supersededByReplacement = task.status === "deferred" && Boolean(task.replacedByTaskId);
+    if (isOpenTaskStatus(task.status) && !supersededByReplacement) {
       const key = openTargetKeyFor(task);
       if (openTargets.has(key)) throw new ReviewCoachValidationError("duplicate-open-task", `More than one open task targets ${key}.`);
       openTargets.add(key);
@@ -258,15 +295,56 @@ export const validateReviewCoachFormalSnapshot = (
       }
     }
   }
+  const verificationTaskIds = new Set(snapshot.delayedVerifications.map((item) => item.taskId).filter(Boolean));
+  // A verification task is durably marked by its `priorityTier` as well as by
+  // the `taskId` link. A verification that stays open after a provisional result
+  // gets a *fresh* task for each re-check, and only the newest one is linked, so
+  // keying solely off the link would make the earlier completed rounds look like
+  // ordinary v2 loops that never closed.
+  const isVerificationTaskRecord = (task: { id: string; priorityTier: string }) => (
+    task.priorityTier === "due-verification" || verificationTaskIds.has(task.id)
+  );
   for (const task of snapshot.adaptiveReviewTasks) {
     const events = snapshot.taskOutcomeEvents.filter((item) => item.taskId === task.id && !item.deletedAt);
     const dispositions = new Set(events.map((item) => item.disposition).filter(Boolean));
     const subjective = new Set(events.map((item) => item.subjectiveOutcome).filter(Boolean));
-    if (task.status === "completed" && (!dispositions.has("completed") || subjective.size === 0)) {
-      throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Completed task ${task.id} has no completed disposition and self-assessment.`);
-    }
-    if (task.status === "not-achieved" && (!dispositions.has("completed") || !subjective.has("not-mastered"))) {
-      throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Not-achieved task ${task.id} has no matching outcome.`);
+    // v1 tasks were completed by a self-assessment, so their history must keep
+    // validating exactly as it was written. v2 tasks are the opposite: a
+    // completion may never rest on a self-report, and must instead have two
+    // qualifying retrievals (one before the judgment, one after).
+    const isV2 = task.loopVersion === "closed-loop-v2";
+    // A delayed verification runs on its own task, and its turns are
+    // `delayed-first`, not `initial` / `post-judgment` - so the immediate-loop
+    // rule below does not describe it. It is validated through its
+    // DelayedVerification row instead; there the requirement is the opposite
+    // one: the completion must rest on the locked first independent attempt.
+    const isVerificationTask = isVerificationTaskRecord(task);
+    if (isV2 && isVerificationTask) {
+      // Still a v2 completion, so it may never rest on a self-report - that
+      // part of the contract is shared and is checked here.
+      if (subjective.size > 0) {
+        throw new ReviewCoachValidationError("self-report-drives-completion", `Completed v2 verification task ${task.id} still carries a subjective outcome.`);
+      }
+    } else if (isV2) {
+      if (task.status === "completed") {
+        if (!dispositions.has("completed")) {
+          throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Completed v2 task ${task.id} has no completed disposition.`);
+        }
+        const turns = snapshot.adaptiveQuizTurns.filter((item) => item.taskId === task.id && !item.deletedAt);
+        if (!isLoopClosed({ turns, events })) {
+          throw new ReviewCoachValidationError("loop-not-closed", `Completed v2 task ${task.id} lacks a post-judgment retrieval.`);
+        }
+        if (subjective.size > 0) {
+          throw new ReviewCoachValidationError("self-report-drives-completion", `Completed v2 task ${task.id} still carries a subjective outcome.`);
+        }
+      }
+    } else {
+      if (task.status === "completed" && (!dispositions.has("completed") || subjective.size === 0)) {
+        throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Completed task ${task.id} has no completed disposition and self-assessment.`);
+      }
+      if (task.status === "not-achieved" && (!dispositions.has("completed") || !subjective.has("not-mastered"))) {
+        throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Not-achieved task ${task.id} has no matching outcome.`);
+      }
     }
     if (task.status === "invalid" && !dispositions.has("question-invalid")) {
       throw new ReviewCoachValidationError("unsupported-task-terminal-state", `Invalid task ${task.id} has no question-invalid disposition.`);
@@ -281,8 +359,22 @@ export const validateReviewCoachFormalSnapshot = (
   const outcomeById = new Map(snapshot.taskOutcomeEvents.map((item) => [item.id, item]));
   for (const verification of snapshot.delayedVerifications) {
     const outcome = outcomeById.get(verification.sourceOutcomeEventId);
-    if (!outcome || outcome.kind !== "self-assessment" || !["mastered", "needs-consolidation"].includes(outcome.subjectiveOutcome ?? "")) {
+    const isV2Verification = verification.loopVersion === "closed-loop-v2";
+    if (isV2Verification) {
+      // v2 verification is opened by the qualifying post-judgment retrieval, not
+      // by the learner declaring how well they think they did.
+      if (!outcome || outcome.kind !== "answer-assessment") {
+        throw new ReviewCoachValidationError("invalid-verification-source", `v2 verification ${verification.id} requires a post-judgment answer event.`);
+      }
+      const sourceTurn = outcome.turnId ? snapshot.adaptiveQuizTurns.find((item) => item.id === outcome.turnId) : undefined;
+      if (!sourceTurn || sourceTurn.phase !== "post-judgment") {
+        throw new ReviewCoachValidationError("invalid-verification-source", `v2 verification ${verification.id} must originate from a post-judgment turn.`);
+      }
+    } else if (!outcome || outcome.kind !== "self-assessment" || !["mastered", "needs-consolidation"].includes(outcome.subjectiveOutcome ?? "")) {
       throw new ReviewCoachValidationError("invalid-verification-source", `Verification ${verification.id} requires a completed self-assessment.`);
+    }
+    if (!outcome) {
+      throw new ReviewCoachValidationError("invalid-verification-source", `Verification ${verification.id} has no source event.`);
     }
     if (outcome.decisionBlockId !== verification.decisionBlockId || outcome.contentVersion !== verification.contentVersion) {
       throw new ReviewCoachValidationError("invalid-verification-source", `Verification ${verification.id} targets another block version.`);
@@ -293,8 +385,18 @@ export const validateReviewCoachFormalSnapshot = (
         throw new ReviewCoachValidationError("invalid-verification-task", `Verification ${verification.id} has a mismatched task.`);
       }
     }
-    if (verification.status === "completed" && (!verification.verificationOutcome || !verification.lastVerifiedAt)) {
-      throw new ReviewCoachValidationError("missing-verification-outcome", `Verification ${verification.id} is completed without an outcome.`);
+    if (verification.status === "completed") {
+      if (isV2Verification) {
+        // v2 records the evidence class, not a self-reported retained/decayed.
+        if (!verification.evidenceStatus || !verification.lastVerifiedAt) {
+          throw new ReviewCoachValidationError("missing-verification-outcome", `v2 verification ${verification.id} is completed without derived evidence.`);
+        }
+        if (verification.evidenceStatus === "ineligible") {
+          throw new ReviewCoachValidationError("missing-verification-outcome", `v2 verification ${verification.id} completed on ineligible evidence.`);
+        }
+      } else if (!verification.verificationOutcome || !verification.lastVerifiedAt) {
+        throw new ReviewCoachValidationError("missing-verification-outcome", `Verification ${verification.id} is completed without an outcome.`);
+      }
     }
   }
 };

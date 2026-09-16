@@ -3,6 +3,7 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { StudyJournalDatabase } from "../../db/database";
+import { REVIEW_COACH_SCHEMA_VERSION } from "../../db/reviewCoachSchema";
 import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "./localTypes";
 import { VOICE_RECALL_LIMITS, VoiceRecallRepository } from "./repository";
 
@@ -63,9 +64,11 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallRepository", () => {
-  it("uses schema 21 local-only tables without marking a cloud mutation", async () => {
+  it("keeps voice tables local-only without marking a cloud mutation", async () => {
     const { database, repository } = await openRepository();
-    expect(database.verno).toBe(21);
+    // Asserts the database opens at the current schema. The voice tables were
+    // added at schema 21 and every later version must inherit them.
+    expect(database.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
     await repository.putSession(session());
     await repository.putTurn(turn());
     await repository.saveHistory(history());

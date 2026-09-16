@@ -34,7 +34,7 @@ describe("Stage 6 quiz orchestrator", () => {
 
   it("rejects a finish without answer evidence and requires a reason for not-mastered", async () => {
     const repository = { getFormalSnapshot: vi.fn(async () => snapshot()) } as unknown as ReviewCoachRepository;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn() } });
     await expect(orchestrator.finishQuizTask({ taskId: task.id, outcome: "not-mastered", operationId: "op" })).rejects.toThrow("至少完成一轮有效作答");
   });
 
@@ -60,7 +60,7 @@ describe("Stage 6 quiz orchestrator", () => {
       addFeedback,
     } as unknown as ReviewCoachRepository;
     let id = 0;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${++id}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "incorrect", matchedCriteria: [], missingCriteria: ["states invariant"], rationale: "missing invariant" }) } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${++id}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "incorrect", matchedCriteria: [], missingCriteria: ["states invariant"], rationale: "missing invariant" }) } });
 
     await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "I am unsure", decisionBlockContent: "决策块材料：B 树所有叶节点深度相同。", provider: "test", model: "mock", promptVersion: "answer-v1", policyVersion: "policy", operationId: "answer-op" });
     await orchestrator.finishQuizTask({ taskId: task.id, outcome: "not-mastered", reason: "I cannot state the invariant", operationId: "finish-op" });
@@ -72,7 +72,7 @@ describe("Stage 6 quiz orchestrator", () => {
   it("rejects an answer evaluation that invents criteria", async () => {
     const displayed: AdaptiveQuizTurn = { id: "turn-1", taskId: task.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: 1, sequence: 1, status: "displayed", practiceType: "variation", question: "Explain", displayedAt: stamp, sourceEvidence: blueprint.evidence, answerCriteria: ["states invariant"], hintsUsed: [], qualityChecked: false, generationModel: "mock", promptVersion: "p", policyVersion: "policy", idempotencyKey: "turn-key", createdAt: stamp, updatedAt: stamp };
     const repository = { getFormalSnapshot: vi.fn(async () => snapshot([displayed], { ...task, status: "in-progress" })) } as unknown as ReviewCoachRepository;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "correct", matchedCriteria: ["invented"], missingCriteria: [], rationale: "wrong" }) } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "correct", matchedCriteria: ["invented"], missingCriteria: [], rationale: "wrong" }) } });
     await expect(orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "answer", decisionBlockContent: "决策块材料", provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "op" })).rejects.toThrow("题目之外的判据");
   });
 
@@ -81,7 +81,7 @@ describe("Stage 6 quiz orchestrator", () => {
     const commitQuizAnswer = vi.fn(async (next: AdaptiveQuizTurn) => next);
     const repository = { getFormalSnapshot: vi.fn(async () => snapshot([displayed], { ...task, status: "in-progress" })), commitQuizAnswer } as unknown as ReviewCoachRepository;
     const evaluateAnswer = vi.fn().mockResolvedValue({ status: "ok", assessment: "partial", matchedCriteria: ["states invariant"], missingCriteria: [], rationale: "partly right" });
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "id" }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer } });
     const material = "决策块材料：B 树的叶节点深度相同，插入时沿路径分裂。";
     await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "answer", decisionBlockContent: material, provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "op" });
     expect(evaluateAnswer).toHaveBeenCalledWith(expect.objectContaining({ decisionBlockContent: material }), undefined);
@@ -106,7 +106,7 @@ describe("Stage 6 quiz orchestrator", () => {
       addQuizTurn,
     } as unknown as ReviewCoachRepository;
     let id = 0;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${++id}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${++id}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn() } });
 
     await orchestrator.skipQuizTurn(displayed.id, "skip-op");
     await orchestrator.generateQuizTurn({ taskId: task.id, decisionBlockContent: "source", provider: "test", model: "mock", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy", operationId: "next-op" });
@@ -136,7 +136,7 @@ describe("Stage 6 quiz orchestrator", () => {
       addQuizTurn,
       commitTaskOutcome,
     } as unknown as ReviewCoachRepository;
-    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${turns.length}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "unreliable", matchedCriteria: [], missingCriteria: [], rationale: "材料不足以覆盖该判据" }) } });
+    const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => `id-${turns.length}` }, clock: { now: () => stamp }, aiGateway: { interpretFeedback: vi.fn(), planSession: vi.fn(), generateTurn, reviewQuestion: vi.fn(async () => ({ status: "ok" as const, verdict: "pass" as const, severeIssues: [], rationale: "ok" })), evaluateAnswer: vi.fn().mockResolvedValue({ status: "ok", assessment: "unreliable", matchedCriteria: [], missingCriteria: [], rationale: "材料不足以覆盖该判据" }) } });
 
     await orchestrator.submitQuizAnswer({ turnId: displayed.id, answerText: "我不太确定", decisionBlockContent: "决策块材料", provider: "test", model: "mock", promptVersion: "p", policyVersion: "policy", operationId: "answer-op" });
     await orchestrator.generateQuizTurn({ taskId: task.id, decisionBlockContent: "source", provider: "test", model: "mock", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy", operationId: "next-op" });
