@@ -69,6 +69,31 @@ interface RecordEditorPageProps {
   onOpenVoiceRecall?: (record: RecordBlock) => void;
   isNewRecord?: boolean;
   onListDecisionBlockArchives?: (recordId: string) => Promise<DecisionBlockArchive[]>;
+  /**
+   * Reports that a detached draft flush has started (`true`) or settled (`false`)
+   * for this record.
+   *
+   * Purely informational - it changes neither the return path nor flush
+   * behaviour. The caller uses it to know which records must be skipped while
+   * deciding whether an "empty" plan record may be reclaimed: "no draft on disk"
+   * during a flush means "not written yet", not "the user wrote nothing".
+   *
+   * Treat the two calls as acquire/release, not as a plain boolean: flushes for
+   * one record can overlap, so the caller must count rather than set.
+   */
+  onDraftFlushPendingChange?: (recordId: string, pending: boolean) => void;
+  /**
+   * Read-only attribution for a log that was started from a daily plan (D9).
+   *
+   * Present whenever the record declares `planId`, which is why the fields are
+   * optional rather than the prop: a record can name a plan whose row has since
+   * been deleted - it still must be labelled, and when the row is gone for good
+   * there is no subject or title left to show, only the fact of the origin.
+   *
+   * Rendering it changes nothing: no click handler, no save path, no review
+   * semantics.
+   */
+  planOrigin?: { deleted: boolean; text?: string };
 }
 
 const cloneRecord = (record: RecordBlock): RecordBlock =>
@@ -76,6 +101,22 @@ const cloneRecord = (record: RecordBlock): RecordBlock =>
 
 const syncEditableRecord = (record: RecordBlock): RecordBlock =>
   syncRecordRefsFromContent({ ...record, mistakeRefs: [] }, { preserveLegacyRefs: false });
+
+/**
+ * Read-only "came from a plan" attribution (D9).
+ *
+ * Deliberately not a button: there is nowhere better to send the user, and a
+ * dead-end link would be worse than a sentence. A deleted plan still names its
+ * subject and title - that is the whole reason the caller also loads soft-deleted
+ * plans - and only a plan that no longer exists anywhere degrades to the bare
+ * fact of the origin.
+ */
+const PlanOriginTag = ({ origin }: { origin: { deleted: boolean; text?: string } }) => (
+  <p className={`record-plan-origin${origin.deleted ? " record-plan-origin-deleted" : ""}`}>
+    {origin.deleted ? "[来自计划·已删除]" : "[来自计划]"}
+    {origin.text ? <span className="record-plan-origin-text"> {origin.text}</span> : null}
+  </p>
+);
 
 const escapeAttribute = (value: string): string =>
   value
@@ -164,6 +205,8 @@ export const RecordEditorPage = ({
   onOpenVoiceRecall,
   isNewRecord = false,
   onListDecisionBlockArchives,
+  onDraftFlushPendingChange,
+  planOrigin,
 }: RecordEditorPageProps) => {
   const native = isNativePlatform();
   const restoreLocked = useRestoreInProgress();
@@ -310,6 +353,32 @@ export const RecordEditorPage = ({
     [onSaveDraft, record, restoreLocked],
   );
 
+  /**
+   * Fire-and-forget wrapper around `flushDraft` that reports when the flush is
+   * in flight.
+   *
+   * Several flush paths are deliberately detached - the save debounce, tab
+   * hide, unmount, and the back handler - because returning must never wait on
+   * storage (see the comment in `back`). That is fine for persistence, but it
+   * means "is there a draft on disk yet?" is briefly a question without a
+   * truthful answer: during this window the correct reading of "no draft row" is
+   * "not saved yet", not "the user typed nothing". Publishing the window lets the
+   * caller withhold destructive decisions until it closes.
+   *
+   * `true`/`false` are acquire/release (overlapping flushes are possible), not a
+   * plain boolean flag.
+   */
+  const flushDraftDetached = useCallback(
+    (nextDraft?: RecordBlock, options: { force?: boolean } = {}) => {
+      const recordId = record.id;
+      onDraftFlushPendingChange?.(recordId, true);
+      return flushDraft(nextDraft, options)
+        .catch(() => undefined)
+        .finally(() => onDraftFlushPendingChange?.(recordId, false));
+    },
+    [flushDraft, onDraftFlushPendingChange, record.id],
+  );
+
   const scheduleDraftSave = useCallback(
     (nextDraft: RecordBlock) => {
       draftRef.current = nextDraft;
@@ -322,10 +391,10 @@ export const RecordEditorPage = ({
       setDraftSaveStatus("pending");
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null;
-        void flushDraft(nextDraft).catch(() => undefined);
+        void flushDraftDetached(nextDraft);
       }, 350);
     },
-    [flushDraft, record, restoreLocked],
+    [flushDraftDetached, record, restoreLocked],
   );
 
   const cancelScheduledDraftSave = useCallback(() => {
@@ -450,11 +519,11 @@ export const RecordEditorPage = ({
   useEffect(() => {
     const flushOnHide = () => {
       if (document.visibilityState === "hidden") {
-        void flushDraft().catch(() => undefined);
+        void flushDraftDetached();
       }
     };
     const flushOnPageHide = () => {
-      void flushDraft().catch(() => undefined);
+      void flushDraftDetached();
     };
     document.addEventListener("visibilitychange", flushOnHide);
     window.addEventListener("pagehide", flushOnPageHide);
@@ -463,10 +532,10 @@ export const RecordEditorPage = ({
       window.removeEventListener("pagehide", flushOnPageHide);
       cancelScheduledDraftSave();
       if (!draftLoadingRef.current) {
-        void flushDraft().catch(() => undefined);
+        void flushDraftDetached();
       }
     };
-  }, [cancelScheduledDraftSave, flushDraft]);
+  }, [cancelScheduledDraftSave, flushDraftDetached]);
 
   useEffect(() => {
     if (!isDesktopPlatform()) {
@@ -474,9 +543,9 @@ export const RecordEditorPage = ({
     }
     return registerDesktopFlushHandler(async () => {
       cancelScheduledDraftSave();
-      await flushDraft(draftRef.current, { force: true });
+      await flushDraftDetached(draftRef.current, { force: true });
     });
-  }, [cancelScheduledDraftSave, flushDraft]);
+  }, [cancelScheduledDraftSave, flushDraftDetached]);
 
   const update = (patch: Partial<RecordBlock>) => {
     if (draftLoadingRef.current || restoreLocked || ignoreEditorChangesRef.current) {
@@ -619,7 +688,7 @@ export const RecordEditorPage = ({
       const editor = editorRef.current;
       if (editor && !editor.isDestroyed) {
         await addAsset(editor, file, "audio", "录音");
-        await flushDraft();
+        await flushDraftDetached();
         return;
       }
 
@@ -628,7 +697,7 @@ export const RecordEditorPage = ({
         ...draftRef.current,
         contentHtml: `${draftRef.current.contentHtml || "<p></p>"}${recordAssetHtml(asset, "audio", "录音")}`,
       });
-      await flushDraft(nextDraft);
+      await flushDraftDetached(nextDraft);
     })();
 
     stoppingRecordingRef.current = task;
@@ -637,7 +706,7 @@ export const RecordEditorPage = ({
     } finally {
       stoppingRecordingRef.current = null;
     }
-  }, [addAsset, flushDraft, onAddAsset, setCurrentDraft]);
+  }, [addAsset, flushDraftDetached, onAddAsset, setCurrentDraft]);
 
   const back = () => {
     if (leavingRef.current) {
@@ -648,7 +717,7 @@ export const RecordEditorPage = ({
     void (async () => {
       try {
         await stopRecordingIntoDraft();
-        await flushDraft();
+        await flushDraftDetached();
       } catch {
         // Returning must not depend on a recorder or storage operation completing.
       } finally {
@@ -733,7 +802,7 @@ export const RecordEditorPage = ({
       const fallbackDraft = draftToSave ?? draftRef.current;
       draftRef.current = fallbackDraft;
       setDraft(fallbackDraft);
-      await flushDraft(fallbackDraft, { force: true }).catch(() => undefined);
+      await flushDraftDetached(fallbackDraft, { force: true });
       setSaveError(formatUiError(error, "record-save"));
     } finally {
       committingRef.current = false;
@@ -1044,6 +1113,7 @@ export const RecordEditorPage = ({
           {exportMessage && <p className="status-message draft-status">{exportMessage}</p>}
           <section className="record-editor-head">
             <textarea className="record-title-input" rows={1} value={draft.title} onChange={(event) => update({ title: event.target.value })} aria-label="记录标题" disabled={interactionLocked} />
+            {planOrigin && <PlanOriginTag origin={planOrigin} />}
             <div className="record-tag-editor">
               <span className="record-tag-label">标签</span>
               <div className="record-tag-input-wrap">
@@ -1188,6 +1258,7 @@ export const RecordEditorPage = ({
             <p className="eyebrow">{record.date}</p>
             <h1>{record.title}</h1>
             <span>{record.subject}</span>
+            {planOrigin && <PlanOriginTag origin={planOrigin} />}
             <RecordTagChips subject={record.subject} tags={record.tags} />
           </header>
           <RichTextEditor

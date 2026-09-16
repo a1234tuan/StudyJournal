@@ -62,8 +62,49 @@ describe("web navigation history snapshots", () => {
     expect(restoredStale?.tabMemory.more.subRoute).toBeNull();
   });
 
-  it("restores card-library scope, filters and sorting while accepting legacy snapshots", () => {
+  it("round-trips the daily-plan page and view through browser Back", () => {
     const memory = createInitialTabMemory();
+    memory.today.planOpen = true;
+    memory.today.planView = "history";
+
+    const snapshot = createWebNavigationSnapshot("session-1", "today", memory, null, 0);
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
+
+    expect(restored).not.toBeNull();
+    expect(restored?.tabMemory.today.planOpen).toBe(true);
+    expect(restored?.tabMemory.today.planView).toBe("history");
+  });
+
+  it("degrades an unknown plan view to the default instead of discarding the snapshot", () => {
+    const memory = createInitialTabMemory();
+    memory.today.planOpen = true;
+    memory.today.planView = "removed-view" as never;
+
+    const snapshot = createWebNavigationSnapshot("session-1", "today", memory, null, 0);
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
+
+    // Same treatment MORE_SUB_ROUTE_VALUES gets: one stale value must not swallow
+    // the Back button.
+    expect(restored).not.toBeNull();
+    expect(restored?.tabMemory.today.planView).toBe("today");
+    expect(restored?.tabMemory.today.planOpen).toBe(true);
+  });
+
+  it("defaults the plan fields when restoring a snapshot written before the feature", () => {
+    const memory = createInitialTabMemory();
+    const snapshot = createWebNavigationSnapshot("session-1", "today", memory, null, 0);
+    const serialised = JSON.parse(JSON.stringify(snapshot));
+    delete serialised.tabMemory.today.planOpen;
+    delete serialised.tabMemory.today.planView;
+
+    const restored = restoreWebNavigationSnapshot(serialised);
+
+    expect(restored).not.toBeNull();
+    expect(restored?.tabMemory.today.planOpen).toBe(false);
+    expect(restored?.tabMemory.today.planView).toBe("today");
+  });
+
+  it("restores card-library scope, filters and sorting while accepting legacy snapshots", () => {    const memory = createInitialTabMemory();
     memory.review.library = {
       scope: { kind: "tag", subject: "数据结构", tag: "图论" },
       filter: "due",

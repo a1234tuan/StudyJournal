@@ -5,6 +5,7 @@ import type {
   Block,
   CloudSyncEntityType,
   ContentTemplate,
+  DailyPlan,
   DayEntry,
   RecordDraft,
   RecordBlock,
@@ -325,6 +326,9 @@ export const exportCloudSync = async (snapshot: StorageSnapshot): Promise<CloudS
     mapEntities("entry", snapshot.payload.entries),
     mapEntities("block", snapshot.payload.blocks),
     mapEntities("template", snapshot.payload.templates ?? []),
+    // Plans carry `deletedAt` through the ordinary entity path, exactly like
+    // blocks: the tombstone is what lets a deletion reach the other devices.
+    mapEntities("daily-plan", snapshot.payload.dailyPlans ?? []),
     mapEntities("draft", snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []),
     mapEntities("tag", snapshot.payload.tags),
     mapEntities("study-session", snapshot.payload.studySessions),
@@ -394,6 +398,7 @@ const manifestFor = (entities: CloudSyncEntity[], reviewEvents: CloudReviewEvent
       recordReviews: count("review-state"),
       recordReviewLogs: reviewEvents.length,
       recordReviewDayStats: count("review-day-stat"),
+      dailyPlans: count("daily-plan"),
       reviewCoach: {
         decisionBlocks: count("decision-block"),
         decisionBlockArchives: count("decision-block-archive"),
@@ -464,6 +469,7 @@ export const materializeCloudSyncSnapshot = (
       recordReviewDayStats: values<RecordReviewDayStat>(entities, "review-day-stat"),
       studySessions: values<StudySession>(entities, "study-session"),
       settings,
+      dailyPlans: values<DailyPlan>(entities, "daily-plan"),
       reviewCoach,
     },
     assets: assetValues,

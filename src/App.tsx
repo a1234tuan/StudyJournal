@@ -17,6 +17,7 @@ import {
 
 import { useAppData } from "./hooks/useAppData";
 import { TodayPage } from "./pages/TodayPage";
+import { DailyPlanPage } from "./pages/DailyPlanPage";
 import { AdaptiveReviewPage } from "./features/reviewCoach/AdaptiveReviewPage";
 import { JournalPage } from "./pages/JournalPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
@@ -57,7 +58,9 @@ import { exportRecordTransferPackage } from "./services/recordTransferService";
 import { storage } from "./services/storageAdapter";
 import { getFavoriteRecords } from "./lib/journalSelectors";
 import { todayISO } from "./lib/date";
+import { buildPlanIndex } from "./lib/dailyPlan";
 import { newId } from "./lib/entity";
+import { createDraftFlushTracker } from "./lib/draftFlushTracker";
 import { createReviewSessionRuntime } from "./features/reviewSession/runtime";
 import { isDesktopPlatform } from "./lib/platform";
 import { isKeyboardViewportVisible, nextKeyboardBaselineHeight, resolveViewportHeight } from "./lib/viewport";
@@ -75,6 +78,7 @@ import {
   reviewQueueReferenceOpenError,
   type AiWorkspaceScreen,
   type MoreSubRoute,
+  type PlanView,
   type RecordingPlayerQueueSource,
   type TabKey,
   type TabMemory,
@@ -276,6 +280,9 @@ export const App = () => {
   const historyScrollRestoreRef = useRef(0);
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
+  // Pulled out by name so the plan-reclaim wiring below can depend on these
+  // stable callbacks instead of the freshly-built `app` object literal.
+  const { reclaimPlanRecords: reclaimPlanRecordsFromApp, initialized: appInitialized } = app;
   const keyboardVisible = useKeyboardVisible();
 
   const handleReviewCoachOpenChange = useCallback((open: boolean) => {
@@ -284,6 +291,84 @@ export const App = () => {
   }, []);
 
   navigationStateRef.current = { activeTab, tabMemory, activeAiSessionId };
+
+  /**
+   * Records whose draft flush has not settled yet, ref-counted per record.
+   *
+   * The editor persists drafts on deliberately detached paths - the autosave
+   * debounce, tab hide, unmount, and the back handler, because returning must not
+   * wait on storage. During any of those, "this record has no draft stored" is an
+   * artefact of timing rather than evidence that the user wrote nothing, so the
+   * plan reclaim job must treat those records as untouchable for the moment.
+   *
+   * The counting lives in `draftFlushTracker` because flushes for one record can
+   * overlap and a release from the first must not clear a still-pending second.
+   */
+  const draftFlushTrackerRef = useRef(createDraftFlushTracker());
+
+  /**
+   * Records the plan reclaim job must leave alone right now.
+   *
+   * Two sources, both about "the user may still be working on this": a flush
+   * still in flight (its emptiness verdict would be read too early), and a record
+   * the editor is currently showing - including one sitting behind an open
+   * reference. Without the second source, a reclaim triggered while a
+   * just-opened empty record was on screen would delete it out from under the
+   * user.
+   */
+  const collectPlanReclaimSkips = useCallback((): string[] => {
+    const skip = new Set<string>(draftFlushTrackerRef.current.pendingRecordIds());
+    const memory = navigationStateRef.current.tabMemory;
+    const states = [memory.today, memory.journal, memory.categories, memory.review, memory.more];
+    for (const state of states) {
+      if (state.recordId) {
+        skip.add(state.recordId);
+      }
+      for (const entry of state.referenceStack ?? []) {
+        skip.add(entry.kind === "record" ? entry.recordId : entry.sourceRecordId);
+      }
+    }
+    return [...skip];
+  }, []);
+
+  const runPlanReclaim = useCallback(async () => {
+    await reclaimPlanRecordsFromApp({ skipRecordIds: collectPlanReclaimSkips() });
+  }, [collectPlanReclaimSkips, reclaimPlanRecordsFromApp]);
+
+  const handleDraftFlushPendingChange = useCallback((recordId: string, pending: boolean) => {
+    const tracker = draftFlushTrackerRef.current;
+    if (pending) {
+      tracker.acquire(recordId);
+      return;
+    }
+    // Safe observation point: this was the record's last outstanding flush, so
+    // whatever is on disk now *is* the truth. Only here can "empty record, no
+    // draft" be believed without risking the user's typing.
+    if (tracker.release(recordId)) {
+      void runPlanReclaim();
+    }
+  }, [runPlanReclaim]);
+
+  // Startup is the other inherently safe moment: a process restart means every
+  // flush from the previous session has already settled, so this also catches up
+  // any record left half-written by a kill.
+  useEffect(() => {
+    if (!appInitialized) {
+      return;
+    }
+    void runPlanReclaim();
+  }, [appInitialized, runPlanReclaim]);
+
+  // Opening the daily-plan page is the third safe observation point: the page and
+  // the record editor are mutually exclusive in this tab, so nothing can be
+  // mid-edit, and any flush is filtered out by the skip set anyway.
+  const dailyPlanOpen = tabMemory.today.planOpen === true;
+  useEffect(() => {
+    if (!dailyPlanOpen) {
+      return;
+    }
+    void runPlanReclaim();
+  }, [dailyPlanOpen, runPlanReclaim]);
 
   const clearBackHint = useCallback(() => {
     lastBackPressRef.current = 0;
@@ -524,6 +609,48 @@ export const App = () => {
       tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, adaptiveTaskId: undefined } },
     }, { motion: "back" });
   }, [commitNavigation]);
+
+  /**
+   * Open the daily-plan page in the today tab.
+   *
+   * Entering is a real navigation (push + forward motion), so the browser back
+   * button and the Android back gesture both land where the user came from.
+   * Leaving goes through `popCurrentTabDepth`, which owns the "record editor ->
+   * plan page -> dashboard" unwind order.
+   */
+  const openDailyPlan = useCallback(() => {
+    clearBackHint();
+    const current = navigationStateRef.current;
+    commitNavigation({
+      ...current,
+      activeTab: "today",
+      tabMemory: {
+        ...current.tabMemory,
+        today: {
+          ...current.tabMemory.today,
+          recordId: undefined,
+          highlightAssetId: undefined,
+          recordEditing: undefined,
+          referenceStack: [],
+          restoreScrollY: undefined,
+          planOpen: true,
+        },
+      },
+    }, { motion: "forward", scrollToTop: true });
+  }, [clearBackHint, commitNavigation]);
+
+  /**
+   * Toggling today/history stays on the same page, so it replaces the history
+   * entry instead of stacking one: browser back leaves the plan page rather
+   * than walking through the user's view toggles.
+   */
+  const setDailyPlanView = useCallback((view: PlanView) => {
+    updateNavigationState((current) => (
+      current.tabMemory.today.planView === view
+        ? current
+        : { ...current, tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, planView: view } } }
+    ));
+  }, [updateNavigationState]);
 
   const openVoiceRecall = useCallback((record?: RecordBlock, sourceKind: "record" | "review-card" = "review-card") => {
     const current = navigationStateRef.current;
@@ -852,6 +979,21 @@ export const App = () => {
     }),
   ), [app.recordReviews, app.reviewCoachSnapshot, referenceRecords, reviewLogsByRecord]);
 
+  /**
+   * Plan lookup for the D9 attribution tag, spanning live *and* soft-deleted
+   * plans: deleting a plan deliberately leaves its log untouched, so without the
+   * deleted rows the log would lose the context that explains why it exists.
+   * This is the only place soft-deleted plans are read outside the plan page,
+   * and they are never listed or counted.
+   *
+   * Declared above the initialization guard below: it is a hook, and every hook
+   * must run on every render or React refuses to render the tree at all.
+   */
+  const planIndex = useMemo(
+    () => buildPlanIndex([...app.dailyPlans, ...app.deletedDailyPlans]),
+    [app.dailyPlans, app.deletedDailyPlans],
+  );
+
   if (!app.initialized || !app.settings) {
     return (
       <div className="loading-screen">
@@ -998,6 +1140,25 @@ export const App = () => {
     }
   };
 
+  /**
+   * Resolve the D9 attribution tag for a log that names a plan.
+   *
+   * Soft-deleted plans are part of the index, so a log whose plan was deleted
+   * still names it. This is the only place they are read outside the plan page.
+   */
+  const planOriginFor = (record: RecordBlock): { deleted: boolean; text?: string } | undefined => {
+    if (!record.planId) {
+      return undefined;
+    }
+    const plan = planIndex.get(record.planId);
+    if (!plan) {
+      // The row is gone for good (only reachable if a future purge ships), so
+      // there is nothing left to name - but the record still declares an origin.
+      return { deleted: true };
+    }
+    return { deleted: Boolean(plan.deletedAt), text: `${plan.subject} · ${plan.title}` };
+  };
+
   const renderRecordPage = (record: RecordBlock, highlightedAssetId?: string) => (
     <RecordEditorPage
       record={record}
@@ -1043,6 +1204,8 @@ export const App = () => {
       onOpenVoiceRecall={(sourceRecord) => openVoiceRecall(sourceRecord, "record")}
       isNewRecord={newlyCreatedRecordIdsRef.current.has(record.id)}
       onListDecisionBlockArchives={(recordId) => reviewCoachRepository.listRestorableDecisionBlockArchives(recordId)}
+      onDraftFlushPendingChange={handleDraftFlushPendingChange}
+      planOrigin={planOriginFor(record)}
     />
   );
 
@@ -1350,6 +1513,37 @@ export const App = () => {
           />
         ) : currentRecord ? (
           renderRecordPage(currentRecord, tabMemory.today.highlightAssetId)
+        ) : tabMemory.today.planOpen ? (
+          <DailyPlanPage
+            plans={app.dailyPlans}
+            blocks={app.blocks}
+            deletedRecords={app.deletedRecords}
+            recordDrafts={app.recordDrafts}
+            subjects={app.activeSubjects}
+            assets={app.assets}
+            reviewStates={app.recordReviews}
+            inFlightDraftRecordIds={new Set(draftFlushTrackerRef.current.pendingRecordIds())}
+            defaultSubject={app.activeSubjects[0]?.name}
+            view={tabMemory.today.planView ?? "today"}
+            onViewChange={setDailyPlanView}
+            onBack={popCurrentTabDepth}
+            onCreatePlan={app.createDailyPlan}
+            onDeletePlan={(plan) => app.deleteDailyPlan(plan.id)}
+            onOpenPlan={async (plan) => {
+              const alreadyLinked = app.blocks.some(
+                (block) => block.type === "record" && block.id === plan.linkedRecordId && !block.deletedAt,
+              );
+              const record = await app.openRecordFromPlan(plan);
+              if (record && !alreadyLinked) {
+                // Matches the home "新建记录" flow: a record this action just
+                // created is allowed to enroll in review without a confirm.
+                newlyCreatedRecordIdsRef.current.add(record.id);
+              }
+              return record;
+            }}
+            onOpenRecord={(record) => openRecordInTab(record, "today", undefined, true)}
+            onAddSubject={app.addSubject}
+          />
         ) : (
           <TodayPage
             entry={app.todayEntry}
@@ -1366,6 +1560,7 @@ export const App = () => {
             onOpenFavorites={() => openMoreSubRoute("favorites")}
             onOpenRecord={(record) => openRecordInTab(record, "today")}
             onOpenReview={() => switchTab("review")}
+            onOpenDailyPlan={openDailyPlan}
             onAskAi={(date) => void openAiForDate(date)}
             onToggleFavorite={(record, favorite) => void app.toggleRecordFavorite(record.id, favorite)}
             reviewStatesByRecord={recordReviewsByRecord}
@@ -1705,6 +1900,10 @@ export const App = () => {
     && !immersiveTaskActive
     && !currentRecord
     && !(activeTab === "today" && tabMemory.today.adaptiveTaskId)
+    // DailyPlanPage renders its own back control, so the global web back row must
+    // be suppressed or two competing back affordances appear (see the note on
+    // MORE_SUB_ROUTES_WITH_OWN_BACK below).
+    && !(activeTab === "today" && tabMemory.today.planOpen && !currentRecord)
     && !(activeTab === "journal" && tabMemory.journal.searchOpen)
     && !(activeTab === "journal" && tabMemory.journal.selectedSubject)
     && !(activeTab === "categories" && (tabMemory.categories.activeSubject || tabMemory.categories.managing))

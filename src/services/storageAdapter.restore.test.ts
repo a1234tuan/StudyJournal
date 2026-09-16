@@ -219,6 +219,9 @@ const createRestoreDb = (podcasts: KnowledgePodcast[] = [], assets: Asset[] = [p
   settings: new MemoryTable<StoredRow>([restorePayload.settings]),
   assets: new MemoryTable<StoredRow>(assets),
   knowledgePodcasts: new MemoryTable<StoredRow>(podcasts),
+  // The daily-plan restore path touches this table conditionally, so the fake db
+  // must expose it even when a given test carries no plans.
+  dailyPlans: new MemoryTable(),
   cloudSyncMutation: new MemoryTable<StoredRow>([{ id: "local", epoch: 0 }]),
   restoreStagingAssets: new MemoryTable<StoredRow>([], "stagingId"),
   reviewAnnotationDrafts: new MemoryTable(),
@@ -462,5 +465,73 @@ describe("DexieStorageAdapter cloud restore", () => {
     expect(await fakeDb.voiceRecallSessions.get("voice-session")).toMatchObject({ status: "paused" });
     expect(await fakeDb.voiceRecallTurns.get("voice-turn")).toMatchObject({ sessionId: "voice-session" });
     expect(await fakeDb.voiceRecallLocalHistory.get("voice-history")).toMatchObject({ title: "本机摘要" });
+  });
+
+  it("replaces local daily plans when the snapshot carries the field", async () => {
+    vi.resetModules();
+    const fakeDb = createRestoreDb();
+    await fakeDb.dailyPlans.put({ id: "local-plan", title: "本机计划" });
+    const incomingPlan = {
+      id: "snapshot-plan",
+      createdAt: stamp,
+      updatedAt: stamp,
+      date: "2026-06-21",
+      subject: "数学",
+      title: "备份里的计划",
+      order: 0,
+    };
+    vi.doMock("../db/database", () => ({ db: fakeDb }));
+    const { DexieStorageAdapter } = await import("./storageAdapter");
+    const adapter = new DexieStorageAdapter();
+
+    await adapter.restoreSnapshot({ payload: { ...restorePayload, dailyPlans: [incomingPlan] }, assets: [] } as StorageSnapshot);
+
+    expect(await fakeDb.dailyPlans.get("snapshot-plan")).toMatchObject({ title: "备份里的计划" });
+    expect(await fakeDb.dailyPlans.get("local-plan")).toBeUndefined();
+  });
+
+  it("keeps local daily plans when the snapshot predates the field", async () => {
+    vi.resetModules();
+    const fakeDb = createRestoreDb();
+    await fakeDb.dailyPlans.put({ id: "local-plan", title: "本机计划" });
+    const legacyPayload = { ...restorePayload };
+    delete (legacyPayload as { dailyPlans?: unknown }).dailyPlans;
+    vi.doMock("../db/database", () => ({ db: fakeDb }));
+    const { DexieStorageAdapter } = await import("./storageAdapter");
+    const adapter = new DexieStorageAdapter();
+
+    await adapter.restoreSnapshot({ payload: legacyPayload, assets: [] } as StorageSnapshot);
+
+    // The whole point of the absent-vs-empty distinction: importing an archive
+    // written before daily plans existed must not delete the plans on this
+    // device. `?? []` anywhere on this path would turn the restore into a wipe.
+    expect(await fakeDb.dailyPlans.get("local-plan")).toMatchObject({ title: "本机计划" });
+  });
+
+  it("applies the same absent-vs-empty rule to the streaming restore", async () => {
+    vi.resetModules();
+    const withField = createRestoreDb();
+    await withField.dailyPlans.put({ id: "local-plan", title: "本机计划" });
+    vi.doMock("../db/database", () => ({ db: withField }));
+    const fielded = await import("./storageAdapter");
+    await new fielded.DexieStorageAdapter().restoreStreamableSnapshot(
+      { payload: { ...restorePayload, dailyPlans: [] }, assets: [] } as StreamableBackupSnapshot,
+      async () => undefined,
+    );
+    // Field present and empty is a claim about the archive: the plans are gone.
+    expect(await withField.dailyPlans.get("local-plan")).toBeUndefined();
+
+    vi.resetModules();
+    const withoutField = createRestoreDb();
+    await withoutField.dailyPlans.put({ id: "local-plan", title: "本机计划" });
+    const legacyStream = { ...restorePayload };
+    delete (legacyStream as { dailyPlans?: unknown }).dailyPlans;
+    vi.doMock("../db/database", () => ({ db: withoutField }));
+    const { DexieStorageAdapter: LegacyAdapter } = await import("./storageAdapter");
+    await new LegacyAdapter().restoreStreamableSnapshot(
+      { payload: legacyStream, assets: [] } as StreamableBackupSnapshot,
+      async () => undefined,
+    );
+    expect(await withoutField.dailyPlans.get("local-plan")).toMatchObject({ title: "本机计划" });
   });
 });

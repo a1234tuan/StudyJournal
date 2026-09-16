@@ -36,6 +36,10 @@ export const daysUntil = (date: ISODate): number => {
 export const formatChineseDate = (date: ISODate): string =>
   format(parseISO(date), "yyyy 年 M 月 d 日");
 
+/** Month-and-day only, for grouping labels where the year is redundant. */
+export const formatChineseMonthDay = (date: ISODate): string =>
+  format(parseISO(date), "M 月 d 日");
+
 export const monthCalendarDays = (month: Date): ISODate[] => {
   const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });

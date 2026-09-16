@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { CloudSyncEntityType, RecordBlock, StorageSnapshot, Tag } from "../types";
+import type { CloudSyncEntityType, DailyPlan, RecordBlock, StorageSnapshot, Tag } from "../types";
 import { completeCoachTestSnapshot } from "../features/reviewCoach/reviewCoachTestFixtures";
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT } from "../features/reviewCoach/domain";
 import { DEFAULT_SETTINGS, DEFAULT_TAGS } from "../db/defaults";
@@ -86,6 +86,7 @@ const snapshot: StorageSnapshot = {
     recordReviewLogs: [],
     recordReviewDayStats: [],
     studySessions: [],
+    dailyPlans: [],
     settings: {
       id: "settings",
       examDate: "2026-12-27",
@@ -161,6 +162,50 @@ describe("cloud sync model", () => {
       ...coach,
       aiRoleConfigs: [expect.not.objectContaining({ apiKey: expect.anything(), systemPrompt: expect.anything(), rawResponse: expect.anything() })],
     });
+  });
+
+  it("round-trips daily plans as ordinary entities, tombstone included", async () => {
+    const plans: DailyPlan[] = [
+      {
+        id: "plan-1",
+        createdAt: stamp,
+        updatedAt: stamp,
+        date: "2026-08-05",
+        subject: "OS",
+        title: "进程调度 10 题",
+        order: 0,
+        linkedRecordId: "record-1",
+      },
+      {
+        id: "plan-deleted",
+        createdAt: stamp,
+        updatedAt: stamp,
+        date: "2026-08-04",
+        subject: "OS",
+        title: "删掉的计划",
+        order: 0,
+        deletedAt: stamp,
+      },
+    ];
+    const withPlans: StorageSnapshot = {
+      ...snapshot,
+      payload: { ...snapshot.payload, dailyPlans: plans },
+    };
+
+    const exported = await exportCloudSync(withPlans);
+    const planEntities = exported.entities.filter((entity) => entity.entityType === "daily-plan");
+
+    // Both rows travel, and the deleted one travels as a tombstone with no
+    // payload - that is what lets a deletion reach the other devices.
+    expect(planEntities.map((entity) => entity.key)).toEqual(["daily-plan:plan-1", "daily-plan:plan-deleted"]);
+    expect(planEntities[0].deleted).toBe(false);
+    expect(planEntities[0].payload).toMatchObject({ title: "进程调度 10 题", linkedRecordId: "record-1" });
+    expect(planEntities[1].deleted).toBe(true);
+
+    const restored = materializeCloudSyncSnapshot(exported.entities, exported.reviewEvents, exported.assetBlobs);
+    // The materialized table holds live rows only - the same rule blocks follow.
+    expect(restored.payload.dailyPlans).toEqual([plans[0]]);
+    expect(restored.payload.manifest.counts.dailyPlans).toBe(1);
   });
 
   it("maps every Stage 1-8 formal coach entity type and no derived projection type", async () => {

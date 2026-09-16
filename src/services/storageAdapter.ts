@@ -11,6 +11,7 @@ import type {
   BackupAssetMeta,
   Block,
   ContentTemplate,
+  DailyPlan,
   DayEntry,
   KnowledgePodcast,
   MistakeCard,
@@ -51,6 +52,7 @@ import {
   isLegacyDefaultAiPresetSet,
 } from "../db/defaults";
 import { addDaysISO, isoDateTimeToLocalDate, nowISO, todayISO } from "../lib/date";
+import { hasPlanRecordContent } from "../lib/dailyPlan";
 import { createBaseEntity, deepEqualIgnoring, newId, shallowEqual, touch } from "../lib/entity";
 import { migrateBlocksToRecords } from "../lib/recordMigration";
 import {
@@ -1616,31 +1618,80 @@ export class DexieStorageAdapter implements StorageAdapter {
     return saved;
   }
 
-  async permanentlyDeleteBlock(blockId: string): Promise<void> {
-    const block = await db.blocks.get(blockId);
-    if (!block) {
-      return;
-    }
-    const draft = await db.recordDrafts.get(blockId);
+  /**
+   * Store scope for physically purging blocks.
+   *
+   * `templates` and `knowledgePodcasts` are in scope because orphan cleanup has
+   * to check every store that can reference an asset before it deletes one.
+   */
+  private blockPurgeStores() {
+    return [
+      db.blocks,
+      db.recordDrafts,
+      db.assets,
+      db.templates,
+      db.knowledgePodcasts,
+      db.studySessions,
+      db.recordReviews,
+      db.recordReviewLogs,
+      db.reviewAnnotationDrafts,
+      ...reviewCoachFormalTables(db),
+    ];
+  }
 
-    await markCloudSyncMutation();
-    // `templates` and `knowledgePodcasts` are in scope because orphan cleanup has to check every
-    // store that can reference an asset before it deletes one.
-    await db.transaction("rw", [db.blocks, db.recordDrafts, db.assets, db.templates, db.knowledgePodcasts, db.studySessions, db.recordReviews, db.recordReviewLogs, db.reviewAnnotationDrafts, ...reviewCoachFormalTables(db)], async () => {
-      await db.blocks.delete(blockId);
-      await db.recordDrafts.delete(blockId);
-      await db.studySessions.where("blockId").equals(blockId).delete();
-      await db.recordReviews.delete(blockId);
-      await db.recordReviewLogs.where("recordId").equals(blockId).delete();
-      await db.reviewAnnotationDrafts.where("recordId").equals(blockId).delete();
+  /**
+   * The actual purge. Must be called from inside a transaction covering
+   * `blockPurgeStores()` - Dexie rejects touching a table that is outside the
+   * enclosing transaction's scope, so this is deliberately a body, not a method
+   * that opens its own transaction. That also lets `reclaimEmptyPlanRecords`
+   * widen the scope once instead of nesting transactions.
+   */
+  private async purgeBlockRows(blocks: Block[]): Promise<void> {
+    for (const block of blocks) {
+      const draft = await db.recordDrafts.get(block.id);
+      await db.blocks.delete(block.id);
+      await db.recordDrafts.delete(block.id);
+      await db.studySessions.where("blockId").equals(block.id).delete();
+      await db.recordReviews.delete(block.id);
+      await db.recordReviewLogs.where("recordId").equals(block.id).delete();
+      await db.reviewAnnotationDrafts.where("recordId").equals(block.id).delete();
       if (block.type === "record") {
-        await purgeReviewCoachFactsForRecord(db, blockId);
+        await purgeReviewCoachFactsForRecord(db, block.id);
         await this.cleanupOrphanAssetsForRecord(block, draft);
       }
+    }
+  }
+
+  /**
+   * Physically delete several blocks in one transaction.
+   *
+   * Behaviour is item-for-item identical to calling `permanentlyDeleteBlock`
+   * once per id, except for two batch properties that matter when the daily-plan
+   * reclaim job runs: the cross-store transaction is entered once, and
+   * `rebuildProjections()` (which replays every decision block) is invoked once
+   * for the whole batch. Reclaiming five empty records used to mean five full
+   * decision-block replays.
+   */
+  async permanentlyDeleteBlocks(blockIds: string[]): Promise<void> {
+    if (blockIds.length === 0) {
+      return;
+    }
+    const blocks = (await db.blocks.bulkGet(blockIds)).filter((block): block is Block => Boolean(block));
+    if (blocks.length === 0) {
+      return;
+    }
+
+    await markCloudSyncMutation();
+    await db.transaction("rw", this.blockPurgeStores(), async () => {
+      await this.purgeBlockRows(blocks);
     });
-    if (block.type === "record") {
+    if (blocks.some((block) => block.type === "record")) {
       await new DexieReviewCoachRepository(db).rebuildProjections();
     }
+  }
+
+  async permanentlyDeleteBlock(blockId: string): Promise<void> {
+    await this.permanentlyDeleteBlocks([blockId]);
   }
 
   async purgeExpiredDeletedBlocks(retentionDays: number): Promise<number> {
@@ -1654,8 +1705,8 @@ export class DexieStorageAdapter implements StorageAdapter {
       )
       .toArray();
 
-    for (const block of expired) {
-      await this.permanentlyDeleteBlock(block.id);
+    if (expired.length > 0) {
+      await this.permanentlyDeleteBlocks(expired.map((block) => block.id));
     }
     return expired.length;
   }
@@ -1684,6 +1735,163 @@ export class DexieStorageAdapter implements StorageAdapter {
         }
       }
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Daily plans
+  //
+  // Layering discipline (docs/daily-plan-final-plan-2026-09-16.md section 7.4):
+  // UI and the reclaim job read the filtered views below; snapshots, cloud sync
+  // and backups must read `db.dailyPlans.toArray()` raw, soft-deleted rows
+  // included, or deletions stop propagating.
+  // ---------------------------------------------------------------------------
+
+  async listDailyPlans(date?: string): Promise<DailyPlan[]> {
+    const plans = (await db.dailyPlans.toArray()).filter((plan) => !plan.deletedAt);
+    const scoped = date ? plans.filter((plan) => plan.date === date) : plans;
+    return scoped.sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
+  }
+
+  /**
+   * Soft-deleted plans only, most recently deleted first.
+   *
+   * Mirrors `listDeletedBlocks` deliberately, including the shape of the filter.
+   * The only legitimate consumer is `buildPlanIndex`, so a log whose plan row was
+   * deleted can still render its full "from plan" attribution. It must never feed
+   * a list, a statistic or a denominator.
+   */
+  async listDeletedDailyPlans(): Promise<DailyPlan[]> {
+    const plans = (await db.dailyPlans.toArray()).filter((plan) => Boolean(plan.deletedAt));
+    return plans.sort((a, b) => (b.deletedAt ?? "").localeCompare(a.deletedAt ?? ""));
+  }
+
+  /**
+   * Raw row lookup by id, soft-deleted rows included.
+   *
+   * Callers that need "live plans only" must use `listDailyPlans` - this one
+   * deliberately does not hide deleted rows, because attribution and repair both
+   * need to see them.
+   */
+  async getDailyPlan(id: string): Promise<DailyPlan | undefined> {
+    return db.dailyPlans.get(id);
+  }
+
+  async saveDailyPlan(plan: DailyPlan): Promise<DailyPlan> {
+    const saved = touch(plan);
+    await markCloudSyncMutation();
+    await db.dailyPlans.put(saved);
+    return saved;
+  }
+
+  /**
+   * Soft-delete a plan row.
+   *
+   * Intentionally does nothing else. Logs keep their `planId`, so their
+   * attribution label survives, and `DailyPlan.linkedRecordId` is untouched, so
+   * restoring the log later still reads as fulfilment. Deleting never cascades.
+   */
+  async deleteDailyPlan(id: string): Promise<void> {
+    const plan = await db.dailyPlans.get(id);
+    if (!plan || plan.deletedAt) {
+      return;
+    }
+    await markCloudSyncMutation();
+    await db.dailyPlans.put({ ...plan, deletedAt: nowISO(), updatedAt: nowISO() });
+  }
+
+  /**
+   * Atomically set (or clear) the plan's link to its log record.
+   *
+   * On purpose this is not wrapped in a cross-store transaction with the record
+   * write: the caller saves the record first and links second, so a failure in
+   * between leaves "record exists but unlinked" - which is just an ordinary log,
+   * never lost content.
+   */
+  async linkPlanRecord(planId: string, recordId?: string): Promise<void> {
+    const plan = await db.dailyPlans.get(planId);
+    if (!plan || plan.linkedRecordId === recordId) {
+      return;
+    }
+    await markCloudSyncMutation();
+    await db.dailyPlans.put({ ...plan, linkedRecordId: recordId, updatedAt: nowISO() });
+  }
+
+  /**
+   * Physically reclaim plan-linked records that were never actually written to.
+   *
+   * "Never written to" means: no readable content, no local draft, and not in the
+   * review queue. Any record with a draft flush still in flight must be listed in
+   * `skipRecordIds` - the editor commits navigation synchronously and persists
+   * the draft asynchronously, so "no draft yet" is timing, not evidence.
+   *
+   * The read-decide-delete sequence runs inside a single read-write transaction.
+   * Dexie serialises transactions over overlapping stores, so a `flushDraft`
+   * write cannot land between reading `recordDrafts` and deleting the record -
+   * that interleaving is exactly the bug this closes.
+   *
+   * Soft-deleted plans participate too: a plan that was deleted before its record
+   * was ever written leaves an empty shell that would otherwise linger in
+   * "recent logs" forever. Their rows are simply not written back.
+   *
+   * Returns the reclaimed record ids (logged by the caller for diagnosis).
+   */
+  async reclaimEmptyPlanRecords(options: { planIds?: string[]; skipRecordIds?: string[] } = {}): Promise<string[]> {
+    const { planIds, skipRecordIds = [] } = options;
+    const skip = new Set(skipRecordIds);
+    // Read the raw table, not `listDailyPlans`: soft-deleted plans are candidates too.
+    const plans = (await db.dailyPlans.toArray())
+      .filter((plan) => plan.linkedRecordId && (planIds ? planIds.includes(plan.id) : true));
+    const candidates = [...new Set(plans.map((plan) => plan.linkedRecordId!))]
+      .filter((recordId) => !skip.has(recordId));
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    await markCloudSyncMutation();
+    const reclaimed: string[] = [];
+    // One transaction covering the delete scope plus `dailyPlans`. Dexie
+    // serialises overlapping read-write transactions, so a `flushDraft` write
+    // cannot land between reading `recordDrafts` and deleting the record - that
+    // interleaving is exactly the bug this closes. Widening the scope here is
+    // what lets the purge body be reused instead of nested.
+    await db.transaction("rw", [...this.blockPurgeStores(), db.dailyPlans], async () => {
+      const assets = await db.assets.toArray();
+      const doomed: Block[] = [];
+      for (const recordId of candidates) {
+        const record = await db.blocks.get(recordId);
+        // Missing, not a record, or already soft-deleted: nothing to reclaim here.
+        if (!record || record.type !== "record" || record.deletedAt) {
+          continue;
+        }
+        // Re-read inside the transaction so the emptiness verdict cannot be stale.
+        const draft = await db.recordDrafts.get(recordId);
+        const review = await db.recordReviews.get(recordId);
+        const reclaimable = !hasPlanRecordContent(record, { assets })
+          && !draft
+          && review?.status !== "active";
+        if (reclaimable) {
+          reclaimed.push(recordId);
+          doomed.push(record);
+        }
+      }
+      if (doomed.length === 0) {
+        return;
+      }
+      await this.purgeBlockRows(doomed);
+      // Only live plans get written back; writing to a soft-deleted row would
+      // produce a pointless mutation and a pointless cloud-sync delta.
+      for (const plan of plans) {
+        if (plan.deletedAt || !plan.linkedRecordId || !reclaimed.includes(plan.linkedRecordId)) {
+          continue;
+        }
+        await db.dailyPlans.put({ ...plan, linkedRecordId: undefined, updatedAt: nowISO() });
+      }
+    });
+    // Every candidate is a live record, so the projection rebuild is always needed.
+    if (reclaimed.length > 0) {
+      await new DexieReviewCoachRepository(db).rebuildProjections();
+    }
+    return reclaimed;
   }
 
   async listMistakes(): Promise<MistakeCard[]> {
@@ -2070,9 +2278,9 @@ export class DexieStorageAdapter implements StorageAdapter {
   async createSnapshot(): Promise<StorageSnapshot> {
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, ...reviewCoachFormalTables(db)],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db)],
       async () => {
-        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach] = await Promise.all([
+        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
           db.entries.toArray(),
           db.blocks.toArray(),
           db.templates.toArray(),
@@ -2086,8 +2294,11 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.recordReviewDayStats.toArray(),
           db.knowledgePodcasts.toArray(),
           getReviewCoachFormalSnapshot(db),
+          // Raw table, soft-deleted rows included: tombstones have to travel or
+          // deletions stop propagating to other devices.
+          db.dailyPlans.toArray(),
         ]);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach };
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2113,6 +2324,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             recordReviewLogs: snapshot.recordReviewLogs.length,
             recordReviewDayStats: snapshot.recordReviewDayStats.length,
             templates: cleanedTemplates.length,
+            dailyPlans: snapshot.dailyPlans.length,
             reviewCoach: reviewCoachCounts(snapshot.reviewCoach),
           },
         },
@@ -2129,6 +2341,9 @@ export class DexieStorageAdapter implements StorageAdapter {
         studySessions: snapshot.studySessions,
         settings: sanitizeSettingsForExport(ensureSettingsSubjects({ ...snapshot.settings, schemaVersion: 4 }, cleanedBlocks.filter((block): block is RecordBlock => block.type === "record"))),
         podcasts: normalizeSnapshotPodcasts(snapshot.podcasts),
+        // Always written, even as an empty array, so every new snapshot carries
+        // the field and restore can tell "old snapshot" from "plans cleared".
+        dailyPlans: snapshot.dailyPlans,
         reviewCoach: stripPrivateExportFields(snapshot.reviewCoach),
       },
       assets: backupAssets,
@@ -2143,9 +2358,9 @@ export class DexieStorageAdapter implements StorageAdapter {
   async createStreamableSnapshot(): Promise<StreamableBackupSnapshot> {
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, ...reviewCoachFormalTables(db)],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db)],
       async () => {
-        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach] = await Promise.all([
+        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
           db.entries.toArray(),
           db.blocks.toArray(),
           db.templates.toArray(),
@@ -2159,8 +2374,9 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.recordReviewDayStats.toArray(),
           db.knowledgePodcasts.toArray(),
           getReviewCoachFormalSnapshot(db),
+          db.dailyPlans.toArray(),
         ]);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach };
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2187,6 +2403,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             recordReviewLogs: snapshot.recordReviewLogs.length,
             recordReviewDayStats: snapshot.recordReviewDayStats.length,
             templates: cleanedTemplates.length,
+            dailyPlans: snapshot.dailyPlans.length,
             reviewCoach: reviewCoachCounts(snapshot.reviewCoach),
           },
         },
@@ -2203,6 +2420,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         studySessions: snapshot.studySessions,
         settings: sanitizeSettingsForExport(ensureSettingsSubjects({ ...snapshot.settings, schemaVersion: 4 }, cleanedBlocks.filter((block): block is RecordBlock => block.type === "record"))),
         podcasts: normalizeSnapshotPodcasts(snapshot.podcasts),
+        dailyPlans: snapshot.dailyPlans,
         reviewCoach: stripPrivateExportFields(snapshot.reviewCoach),
       },
       assets,
@@ -2220,6 +2438,14 @@ export class DexieStorageAdapter implements StorageAdapter {
     const restoredTemplates = normalizeSnapshotTemplates(snapshot.payload.templates);
     const restoredPodcasts = normalizeSnapshotPodcasts(snapshot.payload.podcasts);
     const restoredReviewCoach = snapshot.payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT);
+    /**
+     * "Field absent" and "empty array" mean different things here, and getting
+     * it wrong destroys data: a snapshot taken before daily plans existed has no
+     * `dailyPlans` key at all, so an unconditional clear-then-write would wipe
+     * every plan on this device as a side effect of restoring an old backup.
+     * Absent therefore means "leave what is here alone".
+     */
+    const hasDailyPlansField = Array.isArray(snapshot.payload.dailyPlans);
     assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets);
     const restoredRecords = restoredBlocks.filter((block): block is RecordBlock => block.type === "record");
     validateReviewCoachFormalSnapshot(restoredReviewCoach, new Set(restoredRecords.map((record) => record.id)));
@@ -2244,6 +2470,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         db.reviewAnnotationDrafts,
         db.voiceRecallSessions,
         db.voiceRecallTurns,
+        db.dailyPlans,
         ...reviewCoachRestoreTables(db),
       ],
       async () => {
@@ -2284,6 +2511,7 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.settings.clear(),
           db.assets.clear(),
           db.knowledgePodcasts.clear(),
+          ...(hasDailyPlansField ? [db.dailyPlans.clear()] : []),
           ...(options.clearLocalAnnotationDrafts ? [db.reviewAnnotationDrafts.clear()] : []),
           ...(options.clearLocalVoiceRecallTransient ? [db.voiceRecallSessions.clear(), db.voiceRecallTurns.clear()] : []),
         ]);
@@ -2302,6 +2530,7 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.assets.bulkPut(assetsToRestore),
           db.knowledgePodcasts.bulkPut(podcastsToRestore),
           db.cloudSyncMutation.put({ id: "local", epoch: (currentEpoch?.epoch ?? 0) + 1 }),
+          ...(hasDailyPlansField ? [db.dailyPlans.bulkPut(snapshot.payload.dailyPlans!)] : []),
         ]);
       },
     );
@@ -2334,6 +2563,9 @@ export class DexieStorageAdapter implements StorageAdapter {
     const restoredRecords = restoredBlocks.filter((block): block is RecordBlock => block.type === "record");
     const restoredReviewCoach = snapshot.payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT);
     validateReviewCoachFormalSnapshot(restoredReviewCoach, new Set(restoredRecords.map((record) => record.id)));
+    // Same absent-vs-empty rule as `restoreSnapshotData`: an old stream has no
+    // `dailyPlans` key, and clearing on that basis would delete local plans.
+    const hasDailyPlansField = Array.isArray(snapshot.payload.dailyPlans);
     const sessionId = newId();
     const total = snapshot.assets.length;
     try {
@@ -2360,13 +2592,18 @@ export class DexieStorageAdapter implements StorageAdapter {
       await markCloudSyncMutation();
       await db.transaction(
         "rw",
-        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, ...reviewCoachRestoreTables(db)],
+        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, ...reviewCoachRestoreTables(db)],
         async () => {
           await Promise.all([
             db.entries.clear(), db.blocks.clear(), db.templates.clear(), db.recordDrafts.clear(), db.recordReviews.clear(), db.recordReviewLogs.clear(),
             db.recordReviewDayStats.clear(), db.mistakes.clear(), db.tags.clear(), db.reviews.clear(), db.studySessions.clear(),
             db.settings.clear(), db.assets.clear(), db.knowledgePodcasts.clear(), db.reviewAnnotationDrafts.clear(), db.voiceRecallSessions.clear(), db.voiceRecallTurns.clear(),
           ]);
+          if (hasDailyPlansField) {
+            // Kept off the list above: this one is conditional, and mixing it in
+            // would make the "old stream" case invisible at a glance.
+            await db.dailyPlans.clear();
+          }
           await restoreReviewCoachFormalSnapshot(db, restoredReviewCoach);
           await Promise.all([
             db.entries.bulkPut(snapshot.payload.entries),
@@ -2383,6 +2620,9 @@ export class DexieStorageAdapter implements StorageAdapter {
             db.knowledgePodcasts.bulkPut(normalizeSnapshotPodcasts(snapshot.payload.podcasts)),
             db.restoreStagingAssets.where("sessionId").equals(sessionId).delete(),
           ]);
+          if (hasDailyPlansField) {
+            await db.dailyPlans.bulkPut(snapshot.payload.dailyPlans!);
+          }
         },
       );
       await this.migrateRecordReviewsToMixedSystem();

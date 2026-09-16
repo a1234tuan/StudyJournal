@@ -2056,6 +2056,22 @@ const replaceCloudWithLocal = async (user: User, state: CloudSyncStateRecord, op
     const remote = await getRemoteState(user.uid);
     const allRemote = await getAllRemote(user.uid, remote.state);
     const localKeys = new Set(exported.entities.map((entity) => entity.key));
+    /**
+     * Reverse tombstones: anything the remote has that this device does not is
+     * written back as deleted.
+     *
+     * `daily-plan` deliberately runs this path rather than joining the exclusion
+     * list below. Plans are user data on the same footing as blocks, so a plan
+     * deleted on device A must disappear on device B; excluding them would make
+     * a deletion fail to propagate. The cost is the known hazard shared by every
+     * non-excluded table: restoring a backup taken *before* the plans existed and
+     * then syncing will delete the other devices' plans, because this device
+     * legitimately reports "I have none". Both mobile and desktop therefore run
+     * the reverse-tombstone drill in the P5 verification steps before release.
+     *
+     * Only the two derived projections are excluded - they are a function of the
+     * event log and must never be tombstoned from an entity diff.
+     */
     const tombstones = allRemote.entities
       .filter((entity) => !localKeys.has(entity.key) && !entity.deleted && entity.entityType !== "review-state" && entity.entityType !== "review-day-stat")
       .map((entity) => ({ ...entity, contentHash: `deleted:${entity.contentHash}`, payload: {}, deleted: true }));

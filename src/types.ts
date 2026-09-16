@@ -68,6 +68,41 @@ export interface RecordBlock extends BaseEntity {
   mistakeRefs: EntityId[];
   tags: string[];
   favorite?: boolean;
+  /**
+   * Attribution declaration: which daily plan this record fulfils.
+   *
+   * This is not the completion truth source - `DailyPlan.linkedRecordId` is.
+   * It survives the plan row being deleted (deleting a plan never cascades
+   * into its log), and it travels with the record through export, record
+   * transfer and the Exocortex migration. See docs/daily-plan-final-plan-2026-09-16.md D9.
+   */
+  planId?: EntityId;
+}
+
+/**
+ * A user-declared intention for one local calendar day.
+ *
+ * Deliberately thin: no `status`, no `completedAt`, no review flags. Completion
+ * is derived from whether a live record exists, never stored, so a soft-deleted
+ * log makes the plan read as unfulfilled again without any write.
+ * See docs/daily-plan-final-plan-2026-09-16.md section 2.1.
+ */
+export interface DailyPlan extends BaseEntity {
+  /** Local calendar day. Only ever built from todayISO()/addDaysISO(). */
+  date: ISODate;
+  /** Free-form string (not a foreign key); archived subjects still render as-is. */
+  subject: Subject;
+  /** The plan text. UI caps it at 40 chars; the data layer does not validate. */
+  title: string;
+  /** Ordering within a day. New plans get `max(order) + 1`. */
+  order: number;
+  /**
+   * Written when the plan is fulfilled. Cleared in exactly one place: when the
+   * linked record is physically purged. Soft-deleting the record must NOT clear
+   * it - that is what lets restoring the log from trash return the plan to
+   * "done" automatically.
+   */
+  linkedRecordId?: EntityId;
 }
 
 export interface RecordDraft {
@@ -774,6 +809,8 @@ export interface BackupManifest {
     recordReviewLogs?: number;
     recordReviewDayStats?: number;
     templates?: number;
+    /** Count of daily plan rows in the payload (including soft-deleted rows). */
+    dailyPlans?: number;
     reviewCoach?: Partial<Record<keyof ReviewCoachFormalSnapshot, number>>;
   };
 }
@@ -793,6 +830,15 @@ export interface BackupPayload {
   studySessions: StudySession[];
   settings: AppSettings;
   podcasts?: KnowledgePodcast[];
+  /**
+   * Daily plans, including soft-deleted rows (tombstones must travel).
+   *
+   * Optional on purpose: a snapshot written before this feature existed omits
+   * the field entirely, and restore must treat "field missing" differently from
+   * "empty array" - see docs/daily-plan-final-plan-2026-09-16.md section 7.3.
+   * Our own writers always emit it (even as `[]`).
+   */
+  dailyPlans?: DailyPlan[];
   reviewCoach?: ReviewCoachFormalSnapshot;
 }
 
@@ -825,6 +871,7 @@ export type CloudSyncEntityType =
   | "asset"
   | "review-state"
   | "review-day-stat"
+  | "daily-plan"
   | "decision-block"
   | "decision-block-archive"
   | "decision-block-feedback"
@@ -1038,7 +1085,37 @@ export interface StorageAdapter {
   listDeletedBlocks(): Promise<RecordBlock[]>;
   restoreBlock(blockId: EntityId): Promise<RecordBlock | undefined>;
   permanentlyDeleteBlock(blockId: EntityId): Promise<void>;
+  /**
+   * Batch physical delete. Equivalent to calling `permanentlyDeleteBlock` once
+   * per id, except that the whole batch shares one transaction and one
+   * `rebuildProjections()` pass instead of replaying every decision block N times.
+   */
+  permanentlyDeleteBlocks(blockIds: EntityId[]): Promise<void>;
   purgeExpiredDeletedBlocks(retentionDays: number): Promise<number>;
+  listDailyPlans(date?: ISODate): Promise<DailyPlan[]>;
+  /**
+   * Soft-deleted plans only, newest deletion first. Mirrors `listDeletedBlocks`.
+   *
+   * Its single consumer is `buildPlanIndex`, so a log whose plan was deleted can
+   * still render its full attribution label. Never feed this into lists, stats
+   * or any denominator.
+   */
+  listDeletedDailyPlans(): Promise<DailyPlan[]>;
+  getDailyPlan(id: EntityId): Promise<DailyPlan | undefined>;
+  saveDailyPlan(plan: DailyPlan): Promise<DailyPlan>;
+  /** Soft-delete the plan row. Never touches logs and never clears `RecordBlock.planId`. */
+  deleteDailyPlan(id: EntityId): Promise<void>;
+  /** Atomically set `linkedRecordId`. `undefined` detaches - only on physical record purge. */
+  linkPlanRecord(planId: EntityId, recordId?: EntityId): Promise<void>;
+  /**
+   * Physically reclaim plan-linked records that were never actually written to.
+   * Returns the reclaimed record ids. Callers must pass `skipRecordIds` for any
+   * record with a draft flush still in flight.
+   */
+  reclaimEmptyPlanRecords(options?: {
+    planIds?: EntityId[];
+    skipRecordIds?: EntityId[];
+  }): Promise<EntityId[]>;
   toggleRecordFavorite(blockId: EntityId, favorite: boolean): Promise<RecordBlock | undefined>;
   reorderBlocks(date: ISODate, blockIds: EntityId[]): Promise<void>;
   listMistakes(): Promise<MistakeCard[]>;

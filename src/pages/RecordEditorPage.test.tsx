@@ -437,6 +437,60 @@ describe("RecordEditorPage", () => {
     });
   });
 
+  // The plan-reclaim job deletes empty records, and "no draft row on disk" is only
+  // trustworthy once the detached flush has settled. These two tests pin the signal
+  // it relies on: it must open before the write lands, close after it settles, and
+  // close even when the write fails - a stuck signal would disable reclaim forever.
+  it("reports a draft flush as in flight until the write settles", async () => {
+    const draftSave = deferred<RecordDraft>();
+    let savedDraft!: RecordDraft;
+    const onSaveDraft = vi.fn((nextDraft: RecordDraft) => {
+      savedDraft = nextDraft;
+      return draftSave.promise;
+    });
+    const onDraftFlushPendingChange = vi.fn();
+    const { onGetDraft } = renderEditor({ onSaveDraft, onDraftFlushPendingChange });
+
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    act(() => {
+      richEditorMock.html = "<p>还没落盘</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(1));
+    expect(onDraftFlushPendingChange).toHaveBeenCalledWith(record.id, true);
+    // Still holding: the durability verdict is not safe to read yet.
+    expect(onDraftFlushPendingChange).not.toHaveBeenCalledWith(record.id, false);
+
+    await act(async () => {
+      draftSave.resolve(savedDraft);
+      await draftSave.promise;
+    });
+    await waitFor(() => expect(onDraftFlushPendingChange).toHaveBeenLastCalledWith(record.id, false));
+  });
+
+  it("closes the draft flush signal even when the write fails", async () => {
+    const failing = deferred<RecordDraft>();
+    const onSaveDraft = vi.fn(() => failing.promise);
+    const onDraftFlushPendingChange = vi.fn();
+    const { onGetDraft } = renderEditor({ onSaveDraft, onDraftFlushPendingChange });
+
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    act(() => {
+      richEditorMock.html = "<p>会失败</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(1));
+    expect(onDraftFlushPendingChange).toHaveBeenCalledWith(record.id, true);
+
+    await act(async () => {
+      failing.reject(new Error("draft write failed"));
+      await failing.promise.catch(() => undefined);
+    });
+    await waitFor(() => expect(onDraftFlushPendingChange).toHaveBeenLastCalledWith(record.id, false));
+  });
+
   // F-18: a failed draft save used to be swallowed (`.catch(() => undefined)`), so the
   // user only saw a status pill flip and had no way to report what went wrong.
   it("surfaces a diagnosable message when a draft save fails, and clears it on the next success", async () => {
@@ -756,5 +810,47 @@ describe("RecordEditorPage", () => {
     expect(onSaveDraft.mock.calls.at(-1)?.[0].draft.contentHtml).toBe("<p>must survive</p>");
     expect(onDeleteDraft).not.toHaveBeenCalled();
     expect(screen.getByTestId("rich-editor")).toBeInTheDocument();
+  });
+
+  it("labels a log that was started from a plan in both modes (D9)", async () => {
+    const origin = { deleted: false, text: "数学 · 三大计算 660 题第 50 到 60 题" };
+    const editing = renderEditor({ initialEditing: true, planOrigin: origin });
+    await waitFor(() => expect(editing.onGetDraft).toHaveBeenCalledWith(record.id));
+    expect(screen.getByText("[来自计划]")).toBeInTheDocument();
+    expect(screen.getByText("数学 · 三大计算 660 题第 50 到 60 题")).toBeInTheDocument();
+    editing.unmount();
+
+    const browsing = renderEditor({ initialEditing: false, planOrigin: origin });
+    await waitFor(() => expect(browsing.onGetDraft).toHaveBeenCalledWith(record.id));
+    const label = screen.getByText("[来自计划]");
+    expect(label.closest(".record-plan-origin")).not.toHaveClass("record-plan-origin-deleted");
+    expect(screen.getByText("数学 · 三大计算 660 题第 50 到 60 题")).toBeInTheDocument();
+  });
+
+  it("keeps the subject and plan title visible after the plan was deleted (D9)", async () => {
+    const { onGetDraft } = renderEditor({
+      initialEditing: false,
+      planOrigin: { deleted: true, text: "数学 · 三大计算 660 题第 50 到 60 题" },
+    });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    const label = screen.getByText("[来自计划·已删除]");
+    expect(label.closest(".record-plan-origin")).toHaveClass("record-plan-origin-deleted");
+    expect(screen.getByText("数学 · 三大计算 660 题第 50 到 60 题")).toBeInTheDocument();
+  });
+
+  it("degrades to a bare origin tag when the plan row is gone for good", async () => {
+    const { onGetDraft } = renderEditor({ initialEditing: false, planOrigin: { deleted: true } });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    expect(screen.getByText("[来自计划·已删除]")).toBeInTheDocument();
+    expect(document.querySelector(".record-plan-origin-text")).toBeNull();
+  });
+
+  it("renders no plan tag for an ordinary log", async () => {
+    const { onGetDraft } = renderEditor({ initialEditing: false });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    expect(document.querySelector(".record-plan-origin")).toBeNull();
   });
 });

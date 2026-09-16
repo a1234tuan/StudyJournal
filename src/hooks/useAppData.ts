@@ -8,9 +8,12 @@ import type {
   AutoBackupSettings,
   Block,
   ContentTemplate,
+  DailyPlan,
   DayEntry,
+  ISODate,
   KnowledgePodcast,
   RecordBlock,
+  RecordDraft,
   RecordReviewBulkResult,
   RecordReviewDayStat,
   RecordReviewDecisionBlockFeedbackInput,
@@ -74,6 +77,14 @@ export const useAppData = () => {
   const [autoBackupState, setAutoBackupState] = useState<AutoBackupSettings | null>(null);
   const [podcasts, setPodcasts] = useState<KnowledgePodcast[]>([]);
   const [deletedRecords, setDeletedRecords] = useState<RecordBlock[]>([]);
+  const [dailyPlans, setDailyPlans] = useState<DailyPlan[]>([]);
+  /**
+   * Soft-deleted plans. Loaded for exactly one purpose: building the plan index
+   * that lets a log keep showing its full "from plan" attribution after the plan
+   * row was deleted (D9). Never render a list from this, never count it.
+   */
+  const [deletedDailyPlans, setDeletedDailyPlans] = useState<DailyPlan[]>([]);
+  const [recordDrafts, setRecordDrafts] = useState<RecordDraft[]>([]);
   const [recordReviews, setRecordReviews] = useState<RecordReviewState[]>([]);
   const [dueRecordReviews, setDueRecordReviews] = useState<RecordReviewState[]>([]);
   const [recordReviewLogs, setRecordReviewLogs] = useState<RecordReviewLog[]>([]);
@@ -86,7 +97,7 @@ export const useAppData = () => {
   const interpretationAbortControllersRef = useRef(new Set<AbortController>());
 
   const refresh = useCallback(async () => {
-    const [entryList, blockList, templateList, currentSettings, assetList, deletedList, reviewList, dueReviews, reviewLogs, reviewStats, podcastList, currentAutoBackupState, coachSnapshot, allInterpretations] = await Promise.all([
+    const [entryList, blockList, templateList, currentSettings, assetList, deletedList, reviewList, dueReviews, reviewLogs, reviewStats, podcastList, currentAutoBackupState, coachSnapshot, allInterpretations, planList, deletedPlanList, draftList] = await Promise.all([
       storage.listEntries(),
       storage.listBlocks(),
       storage.listTemplates(),
@@ -101,6 +112,11 @@ export const useAppData = () => {
       storage.getAutoBackupState(),
       reviewCoachRepository.getFormalSnapshot(),
       reviewCoachRepository.listFeedbackInterpretations(),
+      storage.listDailyPlans(),
+      storage.listDeletedDailyPlans(),
+      // Drafts are loaded so a plan row can report "edited but not saved" rather
+      // than claiming the user wrote nothing.
+      storage.listRecordDrafts(),
     ]);
     setEntries(entryList);
     setBlocks(blockList);
@@ -114,6 +130,9 @@ export const useAppData = () => {
     setRecordReviewLogs(reviewLogs);
     setRecordReviewStats(reviewStats);
     setPodcasts(podcastList);
+    setDailyPlans(planList);
+    setDeletedDailyPlans(deletedPlanList);
+    setRecordDrafts(draftList);
     setReviewCoachSnapshot({ ...coachSnapshot, feedbackInterpretations: allInterpretations });
   }, []);
 
@@ -334,6 +353,67 @@ export const useAppData = () => {
     [refresh],
   );
 
+  const saveDailyPlan = useCallback(
+    async (plan: DailyPlan) => {
+      const saved = await storage.saveDailyPlan(plan);
+      await refresh();
+      await markAutoBackupDirty("daily-plan-save");
+      return saved;
+    },
+    [refresh],
+  );
+
+  /**
+   * Soft-delete a plan row. Logs are untouched and keep their attribution, by
+   * design - deleting a plan never cascades into the log it was fulfilled by.
+   */
+  const deleteDailyPlan = useCallback(
+    async (planId: string) => {
+      await storage.deleteDailyPlan(planId);
+      await refresh();
+      await markAutoBackupDirty("daily-plan-delete");
+    },
+    [refresh],
+  );
+
+  /**
+   * Append a plan to a day, ordering it after every plan already there.
+   *
+   * The order is computed here rather than in the page so the "max + 1" rule
+   * lives next to the write it belongs to: the page only ever describes what
+   * the user typed.
+   */
+  const createDailyPlan = useCallback(
+    async (input: { date: ISODate; subject: Subject; title: string }) => {
+      const existing = await storage.listDailyPlans(input.date);
+      const order = existing.reduce((max, plan) => Math.max(max, plan.order), -1) + 1;
+      return saveDailyPlan({ ...createBaseEntity(), ...input, order });
+    },
+    [saveDailyPlan],
+  );
+
+  /**
+   * Reclaim plan-linked records the user opened but never wrote to.
+   *
+   * `skipRecordIds` must carry every record with a draft flush still in flight:
+   * the editor commits navigation synchronously and persists the draft
+   * asynchronously, so at this instant "no draft on disk" can simply mean
+   * "not written yet". Skipping those is the difference between a tidy list and
+   * silently deleting what the user just typed.
+   */
+  const reclaimPlanRecords = useCallback(
+    async (options: { planIds?: string[]; skipRecordIds?: string[] } = {}) => {
+      const reclaimed = await storage.reclaimEmptyPlanRecords(options);
+      if (reclaimed.length > 0) {
+        console.debug("[daily-plan] reclaimed empty plan records", reclaimed);
+        await refresh();
+        await markAutoBackupDirty("daily-plan-reclaim");
+      }
+      return reclaimed;
+    },
+    [refresh],
+  );
+
   const toggleRecordFavorite = useCallback(
     async (recordId: string, favorite: boolean) => {
       await storage.toggleRecordFavorite(recordId, favorite);
@@ -345,14 +425,23 @@ export const useAppData = () => {
 
   const getRecordDraft = useCallback(async (recordId: string) => storage.getRecordDraft(recordId), []);
 
+  /**
+   * Draft writes are debounced and frequent, so they deliberately do not trigger
+   * the full `refresh()` fan-out. `recordDrafts` still has to move, though: the
+   * daily-plan workspace derives "未保存（上次输入已保留）" from it, and a stale
+   * snapshot makes a plan the user just typed into read as untouched. Updating
+   * the list in place keeps that derivation honest at O(drafts) cost.
+   */
   const saveRecordDraft = useCallback(async (draft: Parameters<typeof storage.saveRecordDraft>[0]) => {
     const saved = await storage.saveRecordDraft(draft);
+    setRecordDrafts((previous) => [...previous.filter((item) => item.recordId !== saved.recordId), saved]);
     await markAutoBackupDirty("record-draft");
     return saved;
   }, []);
 
   const deleteRecordDraft = useCallback(async (recordId: string) => {
     await storage.deleteRecordDraft(recordId);
+    setRecordDrafts((previous) => previous.filter((item) => item.recordId !== recordId));
     await markAutoBackupDirty("record-draft-delete");
   }, []);
 
@@ -814,7 +903,17 @@ export const useAppData = () => {
   );
 
   const createRecordBlock = useCallback(
-    async (date = todayISO(), subject?: Subject, contentHtml = "<p></p>") => {
+    async (
+      date = todayISO(),
+      subject?: Subject,
+      contentHtml = "<p></p>",
+      /**
+       * `title` bypasses the automatic `nextRecordTitle` naming, and `planId`
+       * declares the record's origin. Both are optional, so every existing call
+       * site is unaffected.
+       */
+      options?: { title?: string; planId?: string },
+    ) => {
       const dayBlocks = await storage.listBlocks(date);
       const currentSettings = await storage.getSettings();
       const normalizedSubject = normalizeSubject(subject ?? fallbackSubjectName(currentSettings));
@@ -830,12 +929,13 @@ export const useAppData = () => {
         order: dayBlocks.length,
         subject: normalizedSubject,
         tags: [],
-        title: nextRecordTitle(normalizedSubject, subjectCount),
+        title: options?.title ?? nextRecordTitle(normalizedSubject, subjectCount),
         contentHtml: initialContentHtml,
         assets: [],
         formulas: [],
         mistakeRefs: [],
         favorite: false,
+        planId: options?.planId,
       };
       await storage.saveBlock(record);
       if (extractDecisionBlocks(record.contentHtml).length > 0) {
@@ -846,6 +946,44 @@ export const useAppData = () => {
       return record;
     },
     [refresh],
+  );
+
+  /**
+   * Open the log a plan stands for, creating it on first fulfilment.
+   *
+   * The rule is deliberately "reuse a live record, otherwise create one and
+   * overwrite the link" rather than "create once, reuse forever":
+   *
+   * - it makes double-tap harmless without any optimistic locking, because the
+   *   second call finds the record the first one just made;
+   * - it makes restoring a deleted log from trash snap the plan back to
+   *   "done", since the link was never cleared;
+   * - and it gives the user a way to genuinely redo a plan whose log they purged.
+   *
+   * Links are written after the record is saved, never in a shared transaction:
+   * a failure in between just leaves an ordinary unlinked log, so no content is
+   * ever lost to a partial write.
+   */
+  const openRecordFromPlan = useCallback(
+    async (plan: DailyPlan): Promise<RecordBlock | undefined> => {
+      const existing = plan.linkedRecordId
+        ? (await storage.listBlocks()).find(
+            (block): block is RecordBlock =>
+              block.id === plan.linkedRecordId && block.type === "record" && !block.deletedAt,
+          )
+        : undefined;
+      if (existing) {
+        return existing;
+      }
+      const created = await createRecordBlock(plan.date, plan.subject, "", {
+        title: plan.title,
+        planId: plan.id,
+      });
+      await storage.linkPlanRecord(plan.id, created.id);
+      await refresh();
+      return created;
+    },
+    [createRecordBlock, refresh],
   );
 
   const createContentTemplate = useCallback(
@@ -1098,6 +1236,9 @@ export const useAppData = () => {
     autoBackupState,
     podcasts,
     deletedRecords,
+    dailyPlans,
+    deletedDailyPlans,
+    recordDrafts,
     recordReviews,
     dueRecordReviews,
     recordReviewLogs,
@@ -1156,6 +1297,11 @@ export const useAppData = () => {
     ensureRecordReviewDay,
     addRichTextBlock,
     createRecordBlock,
+    saveDailyPlan,
+    createDailyPlan,
+    deleteDailyPlan,
+    openRecordFromPlan,
+    reclaimPlanRecords,
     createContentTemplate,
     saveContentTemplate,
     deleteContentTemplate,

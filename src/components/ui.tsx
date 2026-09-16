@@ -31,6 +31,7 @@ type PageHeaderProps = {
   eyebrow?: string;
   title: ReactNode;
   subtitle?: ReactNode;
+  titleActions?: ReactNode;
   actions?: ReactNode;
   density?: "normal" | "compact";
   className?: string;
@@ -40,6 +41,7 @@ export const PageHeader = ({
   eyebrow,
   title,
   subtitle,
+  titleActions,
   actions,
   density = "normal",
   className = "",
@@ -47,7 +49,10 @@ export const PageHeader = ({
   <header className={`page-header page-header-${density} ${className}`.trim()}>
     <div>
       {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-      <h1>{title}</h1>
+      <div className="page-header-title-row">
+        <h1>{title}</h1>
+        {titleActions && <div className="page-header-title-actions">{titleActions}</div>}
+      </div>
       {subtitle && <p className="page-header-subtitle">{subtitle}</p>}
     </div>
     {actions && <div className="page-header-actions">{actions}</div>}

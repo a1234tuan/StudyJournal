@@ -22,6 +22,7 @@ interface TodayPageProps {
   onOpenFavorites: () => void;
   onOpenRecord: (record: RecordBlock) => void;
   onOpenReview?: () => void;
+  onOpenDailyPlan?: () => void;
   onAskAi?: (date: string) => void;
   onToggleFavorite: (record: RecordBlock, favorite: boolean) => void;
   reviewStatesByRecord?: Record<string, RecordReviewState>;
@@ -45,6 +46,7 @@ export const TodayPage = ({
   onOpenFavorites,
   onOpenRecord,
   onOpenReview = () => undefined,
+  onOpenDailyPlan = () => undefined,
   onAskAi,
   onToggleFavorite,
   reviewStatesByRecord = {},
@@ -77,6 +79,11 @@ export const TodayPage = ({
         title="今天想记下什么？"
         subtitle={getDailyMotto(today)}
         density="compact"
+        titleActions={(
+          <button type="button" className="link-button" onClick={onOpenDailyPlan} title="今日计划" aria-label="打开今日计划">
+            今日计划
+          </button>
+        )}
         actions={(
           <>
             <div className="today-goal-pill" title="距离目标" aria-label={`距离目标 ${countdown >= 0 ? `${countdown} 天` : "已结束"}`}>

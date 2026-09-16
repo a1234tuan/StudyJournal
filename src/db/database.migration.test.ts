@@ -13,6 +13,7 @@ import {
   REVIEW_COACH_SCHEMA_17_STORES,
   REVIEW_COACH_SCHEMA_18_STORES,
   REVIEW_COACH_SCHEMA_19_STORES,
+  REVIEW_COACH_SCHEMA_23_STORES,
   REVIEW_COACH_SCHEMA_VERSION,
   REVIEW_ANNOTATION_SCHEMA_20_STORES,
   VOICE_RECALL_SCHEMA_21_STORES,
@@ -214,5 +215,54 @@ describe("StudyJournalDatabase review-coach migrations", () => {
     expect(await retried.settings.get("settings")).toMatchObject({ theme: "system" });
     expect(await retried.voiceRecallSessions.count()).toBe(0);
     retried.close();
+  });
+
+  it("adds the dailyPlans table at schema 24 without touching existing data", async () => {
+    const name = `daily-plan-schema-23-${crypto.randomUUID()}`;
+    names.add(name);
+    const schema23 = new Dexie(name);
+    schema23.version(23).stores(REVIEW_COACH_SCHEMA_23_STORES);
+    await schema23.open();
+    await schema23.table("settings").put({ id: "settings", theme: "reading" });
+    await schema23.table("blocks").put({
+      id: "existing-record",
+      type: "record",
+      date: "2026-09-15",
+      order: 0,
+      subject: "数学",
+      tags: [],
+      title: "升级前就存在的日志",
+      contentHtml: "<p>正文</p>",
+      assets: [],
+      formulas: [],
+      mistakeRefs: [],
+      createdAt: "2026-09-15T00:00:00.000Z",
+      updatedAt: "2026-09-15T00:00:00.000Z",
+    });
+    expect(schema23.tables.map((table) => table.name)).not.toContain("dailyPlans");
+    schema23.close();
+
+    const upgraded = new StudyJournalDatabase(name);
+    await upgraded.open();
+
+    expect(upgraded.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(upgraded.tables.map((table) => table.name)).toContain("dailyPlans");
+    // Additive migration: pre-existing rows and settings must survive untouched.
+    expect(await upgraded.blocks.get("existing-record")).toMatchObject({ title: "升级前就存在的日志" });
+    expect(await upgraded.settings.get("settings")).toMatchObject({ theme: "reading" });
+    // And the new table must be usable immediately, including its indexes.
+    expect(await upgraded.dailyPlans.count()).toBe(0);
+    await upgraded.dailyPlans.put({
+      id: "plan-1",
+      date: "2026-09-16",
+      subject: "数学",
+      title: "升级后新建的计划",
+      order: 0,
+      createdAt: "2026-09-16T00:00:00.000Z",
+      updatedAt: "2026-09-16T00:00:00.000Z",
+    });
+    expect(await upgraded.dailyPlans.where("date").equals("2026-09-16").count()).toBe(1);
+    expect(await upgraded.dailyPlans.where("linkedRecordId").equals("existing-record").count()).toBe(0);
+    upgraded.close();
   });
 });

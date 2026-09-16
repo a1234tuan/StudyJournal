@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../db/defaults";
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT } from "../features/reviewCoach/domain";
 import { completeCoachTestSnapshot } from "../features/reviewCoach/reviewCoachTestFixtures";
-import type { CloudSyncLedgerRecord, RecordBlock, RecordReviewLog, StorageSnapshot } from "../types";
-import { exportCloudSync, findConflictingChanges } from "./cloudSyncModel";
+import type { CloudSyncLedgerRecord, DailyPlan, RecordBlock, RecordReviewLog, StorageSnapshot } from "../types";
+import { NON_CONFLICTING_ENTITY_TYPES, exportCloudSync, findConflictingChanges } from "./cloudSyncModel";
 
 vi.mock("./firebase", () => ({
   firebaseAuth: { currentUser: null },
@@ -46,6 +46,7 @@ const snapshot = (overrides: Partial<StorageSnapshot["payload"]> = {}): StorageS
     recordReviewLogs: [],
     recordReviewDayStats: [],
     studySessions: [],
+    dailyPlans: [],
     settings: structuredClone(DEFAULT_SETTINGS),
     reviewCoach: structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     ...overrides,
@@ -143,6 +144,43 @@ describe("two-device incremental sync protocol", () => {
 
     expect(firstChanges.events.map((event) => event.id)).toEqual(["rating-1", "undo-1"]);
     expect((await deriveLocalCloudChanges(reviewed, ledgerFor(reviewed, 2))).events).toEqual([]);
+  });
+
+  it("carries a daily plan between devices as an ordinary entity, and its log's attribution too", async () => {
+    const base = await exportCloudSync(snapshot());
+    const plan: DailyPlan = {
+      id: "plan-1",
+      createdAt: stamp,
+      updatedAt: stamp,
+      date: "2026-09-07",
+      subject: "OS",
+      title: "进程调度 10 题",
+      order: 0,
+      linkedRecordId: "record-1",
+    };
+    const planned = await exportCloudSync(snapshot({
+      dailyPlans: [plan],
+      // The record carries the reverse pointer, so the pair has to converge
+      // together or device B would show a plan with no attribution.
+      blocks: [{ ...record, planId: "plan-1" }],
+    }));
+
+    const changes = await deriveLocalCloudChanges(planned, ledgerFor(base));
+    expect(changes.entities.map((entity) => entity.key).sort()).toEqual(["block:record-1", "daily-plan:plan-1"]);
+
+    // The second publish of the same content is a true no-op.
+    expect((await deriveLocalCloudChanges(planned, ledgerFor(planned, 2))).entities).toEqual([]);
+
+    // Same planning row edited on both devices is a real conflict, so plans must
+    // stay off the "last writer wins silently" list.
+    expect(NON_CONFLICTING_ENTITY_TYPES.has("daily-plan")).toBe(false);
+    const otherTitle = await exportCloudSync(snapshot({
+      dailyPlans: [{ ...plan, title: "进程调度 20 题" }],
+      blocks: [{ ...record, planId: "plan-1" }],
+    }));
+    expect(findConflictingChanges(planned.entities, otherTitle.entities)).toEqual([
+      { key: "daily-plan:plan-1", entityType: "daily-plan" },
+    ]);
   });
 
   it("detects all changed AI cockpit facts incrementally and skips locks only for a true no-op", async () => {

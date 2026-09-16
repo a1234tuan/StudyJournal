@@ -206,6 +206,18 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
       recordReviewDayStats: data.recordReviewDayStats ?? [],
       studySessions: data.studySessions ?? [],
       settings: ensureSettingsSubjects({ ...data.settings, schemaVersion: 4 }, recordBlocks),
+      /**
+       * Deliberately *not* `?? []`.
+       *
+       * An archive written before daily plans existed has no `dailyPlans` key,
+       * and the restore path reads "key absent" as "leave the local plans
+       * alone" precisely so importing an old backup cannot wipe them. Filling in
+       * `[]` here would rewrite that absence into an explicit "this snapshot
+       * contains no plans", and the import would then delete every plan on the
+       * device. Passing the key through only when the archive really has it
+       * keeps the distinction intact end to end.
+       */
+      ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
       reviewCoach: data.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },
     assets,

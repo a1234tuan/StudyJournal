@@ -1137,3 +1137,406 @@ body {
     overflow-wrap: anywhere;
   }
 }
+
+/* --- Daily plan workspace ------------------------------------------------
+   Everything is scoped to `.daily-plan-page`, and every colour resolves
+   through an existing theme variable, so both `reading` and `modern` (and the
+   light/dark switch) restyle it with no overrides here. */
+
+.daily-plan-page .daily-plan-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  background: var(--color-surface-muted);
+}
+
+.daily-plan-page .daily-plan-view-toggle button {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: .78rem;
+  cursor: pointer;
+}
+
+.daily-plan-page .daily-plan-view-toggle button.active {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-soft);
+}
+
+.daily-plan-page .daily-plan-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 5px 8px 5px 4px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+}
+
+.daily-plan-page .daily-plan-back:hover {
+  background: var(--color-interaction-hover);
+  color: var(--color-text);
+}
+
+.daily-plan-page .daily-plan-message {
+  margin: 10px 0 0;
+  color: var(--color-danger);
+  font-size: .8rem;
+}
+
+/* Compose form */
+
+.daily-plan-page .daily-plan-compose {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.daily-plan-page .daily-plan-compose-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.daily-plan-page .daily-plan-compose-row input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.daily-plan-page .daily-plan-compose-row .primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.daily-plan-page .daily-plan-compose-hint,
+.daily-plan-page .daily-plan-muted {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: .74rem;
+}
+
+.daily-plan-page .daily-plan-today-summary {
+  margin: 16px 0 0;
+  color: var(--color-muted);
+  font-size: .82rem;
+}
+
+.daily-plan-page .daily-plan-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.daily-plan-page .daily-plan-empty svg {
+  color: var(--color-muted);
+}
+
+.daily-plan-page .daily-plan-empty h2 {
+  margin: 0;
+  font-size: .92rem;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+/* Plan rows */
+
+.daily-plan-page .daily-plan-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.daily-plan-page .daily-plan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.daily-plan-page .daily-plan-row.entering {
+  animation: daily-plan-row-enter 320ms ease-out 1;
+}
+
+.daily-plan-page .daily-plan-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.daily-plan-page .daily-plan-row-main:hover:not(:disabled) {
+  background: var(--color-interaction-hover);
+}
+
+.daily-plan-page .daily-plan-row-main:disabled {
+  cursor: progress;
+  opacity: .7;
+}
+
+.daily-plan-page .daily-plan-row-heading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.daily-plan-page .daily-plan-row-subject {
+  color: var(--color-muted);
+  font-size: .72rem;
+}
+
+.daily-plan-page .daily-plan-row-title {
+  color: var(--color-text);
+  font-size: .92rem;
+  font-weight: 560;
+  overflow-wrap: anywhere;
+}
+
+.daily-plan-page .daily-plan-row-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  font-size: .76rem;
+}
+
+.daily-plan-page .daily-plan-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.daily-plan-page .daily-plan-status-done {
+  color: var(--color-success);
+}
+
+.daily-plan-page .daily-plan-status-pending {
+  color: var(--color-muted);
+}
+
+.daily-plan-page .daily-plan-status-draft {
+  color: var(--color-accent);
+}
+
+.daily-plan-page .daily-plan-status-hint,
+.daily-plan-page .daily-plan-status-note {
+  color: var(--color-muted);
+  font-size: .72rem;
+  opacity: .9;
+  overflow-wrap: anywhere;
+}
+
+.daily-plan-page .daily-plan-row-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.daily-plan-page .daily-plan-row-delete:hover {
+  background: var(--color-interaction-hover);
+  color: var(--color-danger);
+}
+
+/* History */
+
+.daily-plan-page .daily-plan-stats,
+.daily-plan-page .daily-plan-history {
+  margin-top: 22px;
+}
+
+.daily-plan-page .daily-plan-section-title {
+  margin: 0;
+  font-size: .95rem;
+  font-weight: 620;
+}
+
+.daily-plan-page .daily-plan-subjects {
+  display: grid;
+  gap: 9px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.daily-plan-page .daily-plan-subjects li {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-muted);
+  font-size: .78rem;
+}
+
+.daily-plan-page .daily-plan-subject-name {
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.daily-plan-page .daily-plan-subject-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--color-surface-muted);
+}
+
+.daily-plan-page .daily-plan-subject-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-success);
+}
+
+.daily-plan-page .daily-plan-subject-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-plan-page .daily-plan-history-group + .daily-plan-history-group {
+  margin-top: 18px;
+}
+
+.daily-plan-page .daily-plan-history-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.daily-plan-page .daily-plan-history-heading time {
+  color: var(--color-text);
+  font-size: .84rem;
+  font-weight: 560;
+}
+
+.daily-plan-page .daily-plan-history-heading small {
+  color: var(--color-muted);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-plan-page .daily-plan-history .daily-plan-list {
+  margin-top: 10px;
+}
+
+.daily-plan-page .daily-plan-expand {
+  margin-top: 14px;
+}
+
+@keyframes daily-plan-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Narrow screens: subject and title on one line, status on its own row, and
+     the compose form stacks so the 40-char input never gets squeezed. */
+  .daily-plan-page .daily-plan-compose-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .daily-plan-page .daily-plan-compose-row .primary-button {
+    justify-content: center;
+  }
+
+  .daily-plan-page .daily-plan-row-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .daily-plan-page .daily-plan-row-status {
+    justify-content: flex-start;
+  }
+
+  .daily-plan-page .daily-plan-subjects li {
+    grid-template-columns: minmax(60px, auto) minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daily-plan-page .daily-plan-row.entering {
+    animation: none;
+  }
+}
+
+/* Read-only attribution tag on a log that was started from a daily plan (D9).
+   Muted on purpose: it is context, not a control. */
+.record-plan-origin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: .74rem;
+  overflow-wrap: anywhere;
+}
+
+.record-plan-origin-deleted {
+  opacity: .85;
+}
+
+.record-plan-origin-text {
+  color: var(--color-text);
+  opacity: .82;
+}

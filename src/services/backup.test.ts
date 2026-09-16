@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import type { BackupPayload, ContentTemplate, RecordBlock, StorageSnapshot } from "../types";
+import type { BackupPayload, ContentTemplate, DailyPlan, RecordBlock, StorageSnapshot } from "../types";
 import { completeCoachTestSnapshot } from "../features/reviewCoach/reviewCoachTestFixtures";
 import { snapshotToZip, zipToSnapshot } from "./backup";
 
@@ -49,6 +49,7 @@ const payload = (blocks: RecordBlock[]): BackupPayload => ({
   recordReviewLogs: [],
   recordReviewDayStats: [],
   studySessions: [],
+  dailyPlans: [],
   settings: {
     id: "settings",
     examDate: "2026-12-27",
@@ -164,5 +165,54 @@ describe("backup import", () => {
     expect(raw).not.toContain("D:/private-backups");
     expect(raw).not.toContain("podcast-audio");
     expect(zip.file(/podcast\.mp3$/)).toEqual([]);
+  });
+
+  it("round-trips daily plans through a full backup, and preserves their attribution on records", async () => {
+    const plan: DailyPlan = {
+      id: "plan-1",
+      createdAt: stamp,
+      updatedAt: stamp,
+      date: "2026-06-21",
+      subject: "物理",
+      title: "力学 10 题",
+      order: 0,
+      linkedRecordId: "record-物理",
+    };
+    const withPlan: BackupPayload = {
+      ...payload([{ ...record("物理"), planId: plan.id }]),
+      manifest: { ...payload([]).manifest, counts: { ...payload([]).manifest.counts, dailyPlans: 1 } },
+      dailyPlans: [plan],
+    };
+    const zipBlob = await snapshotToZip({ payload: withPlan, assets: [] });
+
+    const data = JSON.parse(await (await JSZip.loadAsync(zipBlob)).file("data.json")!.async("string"));
+
+    expect(data.dailyPlans).toEqual([plan]);
+    expect(data.manifest.counts.dailyPlans).toBe(1);
+
+    const restored = await zipToSnapshot(new File([zipBlob], "backup.zip", { type: "application/zip" }));
+    expect(restored.payload.dailyPlans).toEqual([plan]);
+    // The record's own `planId` has to survive too: it is what keeps the
+    // "来自计划" label working after the archive is opened elsewhere.
+    const restoredRecord = restored.payload.blocks.find(
+      (block): block is RecordBlock => block.type === "record" && block.id === "record-物理",
+    );
+    expect(restoredRecord?.planId).toBe("plan-1");
+  });
+
+  it("leaves the daily-plans field absent when the archive predates the feature", async () => {
+    const legacy = new JSZip();
+    const legacyPayload = { ...payload([record("物理")]) };
+    delete (legacyPayload as { dailyPlans?: DailyPlan[] }).dailyPlans;
+    legacy.file("data.json", JSON.stringify(legacyPayload, null, 2));
+
+    const restored = await zipToSnapshot(new File([await legacy.generateAsync({ type: "blob" })], "legacy.zip", { type: "application/zip" }));
+
+    // Absent, not `[]`. The restore path reads the difference as "leave this
+    // device's plans alone" versus "this snapshot says there are none, delete
+    // them", so turning absence into an empty array here would silently wipe
+    // every plan on import.
+    expect(restored.payload.dailyPlans).toBeUndefined();
+    expect("dailyPlans" in restored.payload).toBe(false);
   });
 });

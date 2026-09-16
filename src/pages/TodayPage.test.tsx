@@ -88,6 +88,28 @@ describe("TodayPage", () => {
     expect(onOpenFavorites).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the daily plan from the header title action", () => {
+    const onOpenDailyPlan = vi.fn();
+    render(
+      <TodayPage
+        entry={null}
+        blocks={[]}
+        examDate="2026-12-27"
+        subjects={subjects}
+        onSaveEntry={vi.fn()}
+        onCreateRecord={vi.fn()}
+        onOpenFavorites={vi.fn()}
+        onOpenRecord={vi.fn()}
+        onToggleFavorite={vi.fn()}
+        onOpenDailyPlan={onOpenDailyPlan}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开今日计划" }));
+
+    expect(onOpenDailyPlan).toHaveBeenCalledTimes(1);
+  });
+
   it("copies the selected template into a newly created record", async () => {
     const template = {
       id: "template-translation",

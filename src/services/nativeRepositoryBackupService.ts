@@ -185,6 +185,9 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
       recordReviewDayStats: payload.recordReviewDayStats ?? [],
       studySessions: payload.studySessions ?? [],
       settings: ensureSettingsSubjects({ ...payload.settings, schemaVersion: 4 }, recordBlocks),
+      // Same absent-vs-empty rule as the other import paths: a repository file
+      // written before daily plans existed must not be read as "no plans".
+      ...(payload.dailyPlans !== undefined ? { dailyPlans: payload.dailyPlans } : {}),
       reviewCoach: payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },
     assets: parsed.assets ?? [],

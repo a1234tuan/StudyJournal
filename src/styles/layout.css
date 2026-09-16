@@ -105,6 +105,18 @@
   font-size: clamp(1.15rem, 2.5vw, 1.6rem);
 }
 
+.page-header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-header-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .page-header-subtitle,
 .section-header p:not(.eyebrow) {
   max-width: 620px;

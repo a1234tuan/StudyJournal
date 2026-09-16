@@ -95,8 +95,26 @@ export type RecordTabState = {
   restoreScrollY?: number;
 };
 
+/** Runtime list of daily-plan sub-views. Keep this as the single source of truth:
+ * web history restoration validates against it, so a view added only to the type
+ * union would silently break the browser Back button. */
+export const PLAN_VIEW_VALUES = ["today", "history"] as const;
+/** Which sub-view of the daily-plan page is showing. Not a navigation depth. */
+export type PlanView = (typeof PLAN_VIEW_VALUES)[number];
+
 export type TabMemory = {
-  today: RecordTabState & { adaptiveTaskId?: EntityId };
+  today: RecordTabState & {
+    adaptiveTaskId?: EntityId;
+    /**
+     * The daily-plan page is open.
+     *
+     * It occupies depth 1, the same as `adaptiveTaskId`, so depth alone cannot
+     * tell "home" from "daily plan" - the page key below has to carry it.
+     */
+    planOpen?: boolean;
+    /** Today's plans vs. the history view. Also part of the page key's identity. */
+    planView?: PlanView;
+  };
   journal: RecordTabState & {
     month: Date;
     selectedDate?: string;
@@ -136,7 +154,10 @@ export type TabMemory = {
 };
 
 export const createInitialTabMemory = (): TabMemory => ({
-  today: {},
+  // Concrete defaults rather than absent fields, so a browser-history round trip
+  // (which always materialises a value) and a freshly created state are
+  // indistinguishable - same convention as `journal.searchOpen` below.
+  today: { planOpen: false, planView: "today" },
   journal: {
     month: new Date(),
     searchOpen: false,
@@ -233,7 +254,16 @@ const popRecordReference = <T extends RecordTabState>(state: T): T | undefined =
 export const getTabDepth = (tab: TabKey, memory: TabMemory): number => {
   switch (tab) {
     case "today":
-      return memory.today.adaptiveTaskId ? 1 : memory.today.recordId ? 1 + referenceDepth(memory.today) : 0;
+      // `adaptiveTaskId` stays first: the Android back key (`App.tsx`) intercepts
+      // it before consulting `getTabDepth`, so reordering here would silently
+      // change what the hardware back button does.
+      return memory.today.adaptiveTaskId
+        ? 1
+        : memory.today.recordId
+          ? (memory.today.planOpen ? 2 : 1) + referenceDepth(memory.today)
+          : memory.today.planOpen
+            ? 1
+            : 0;
     case "journal":
       return memory.journal.recordId ? 2 + referenceDepth(memory.journal) : memory.journal.searchOpen || memory.journal.selectedDate ? 1 : 0;
     case "categories":
@@ -298,7 +328,12 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
     return `${tab}-${depth}-${recordPart}-${voicePart}`;
   }
   if (tab === "today") {
-    return `${tab}-${depth}-${recordPart}-${memory.today.adaptiveTaskId ?? "dashboard"}`;
+    // `planOpen` and `adaptiveTaskId` both sit at depth 1, so the token has to
+    // distinguish them or "home <-> daily plan" would be treated as the same page
+    // and skip PageTransition. `adaptiveTaskId` itself must stay the token (not a
+    // literal): task A -> task B has to look like a different page.
+    const screenPart = memory.today.planOpen ? "plan" : memory.today.adaptiveTaskId ?? "dashboard";
+    return `${tab}-${depth}-${recordPart}-${screenPart}`;
   }
   if (tab === "more") {
     const pageDepth = memory.more.subRoute === "ai" ? 1 : depth;
@@ -311,18 +346,40 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
 export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
   switch (tab) {
     case "today":
+      // 1. Immersive coach task wins, exactly as before.
       if (memory.today.adaptiveTaskId) {
         return { ...memory, today: { ...memory.today, adaptiveTaskId: undefined } };
       }
+      // 2. Reference stack before clearing `recordId` - otherwise a reference jump
+      //    would unwind the whole stack instead of one level.
       {
         const previous = popRecordReference(memory.today);
         if (previous) {
           return { ...memory, today: previous };
         }
       }
+      // 3. Editor -> daily plan: clear the record and every field that belongs to
+      //    it, but *keep* `planOpen`/`planView` so the user lands back on the page
+      //    they came from. `recordEditing` must be reset too: leaving it set would
+      //    make the next record opened from a plan start in immersive editing mode.
+      if (memory.today.recordId) {
+        return {
+          ...memory,
+          today: { ...memory.today, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined },
+        };
+      }
+      // 4. Leaving the plan page: reset the view as well, so entering it next time
+      //    starts on "today" rather than wherever the user last browsed.
+      if (memory.today.planOpen) {
+        return {
+          ...memory,
+          today: { ...memory.today, planOpen: false, planView: "today" },
+        };
+      }
+      // 5. Fallback: unchanged behaviour, plus the plan fields for completeness.
       return {
         ...memory,
-        today: { ...memory.today, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined, adaptiveTaskId: undefined },
+        today: { ...memory.today, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined, adaptiveTaskId: undefined, planOpen: false, planView: "today" },
       };
     case "journal":
       if (memory.journal.recordId) {

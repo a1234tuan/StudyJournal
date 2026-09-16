@@ -122,12 +122,33 @@ export const REVIEW_COACH_SCHEMA_23_STORES = {
 } as const;
 
 /**
+ * Schema 24 adds the "Daily Plan" feature: one new `dailyPlans` table.
+ *
+ * No existing table's indexes change, and no other store is redefined - this is
+ * a pure additive migration. `deletedAt` is deliberately not indexed (a handful
+ * of rows per day; in-memory filtering is free at this scale) even though other
+ * tables such as `decisionBlocks` do index it. `blocks` does not gain a `planId`
+ * index either: records are already loaded in full by `refresh()`, so an index
+ * would only force a large table rebuild for zero query benefit.
+ * See docs/daily-plan-final-plan-2026-09-16.md section 2.4.
+ */
+export const DAILY_PLAN_SCHEMA_24_STORES = {
+  ...REVIEW_COACH_SCHEMA_23_STORES,
+  dailyPlans: "id, date, updatedAt, createdAt, linkedRecordId",
+} as const;
+
+/**
  * The current Dexie schema version.
  *
  * Tests assert against this rather than a literal, so adding a migration does
  * not require editing every "reopen and check the version" test.
+ *
+ * Warning: this migration is one-way. Dexie throws `VersionError` when the
+ * stored version is higher than the declared one, and this repository has no
+ * handler for it - so once any device has opened schema 24, `version(24)` must
+ * never be removed. See docs/daily-plan-final-plan-2026-09-16.md section 12.
  */
-export const REVIEW_COACH_SCHEMA_VERSION = 23;
+export const REVIEW_COACH_SCHEMA_VERSION = 24;
 
 const tableRows = async <T>(transaction: Transaction, name: string): Promise<T[]> => {
   if (!transaction.db.tables.some((table) => table.name === name)) return [];

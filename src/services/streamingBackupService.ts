@@ -201,6 +201,10 @@ export const importNativeStreamableBackupAndRestore = async (
         recordReviewDayStats: data.recordReviewDayStats ?? [],
         studySessions: data.studySessions ?? [],
         settings: ensureSettingsSubjects({ ...data.settings, schemaVersion: 4 }, recordBlocks),
+        // Passed through only when the archive carries the key, so an archive
+        // written before daily plans existed still means "leave local plans
+        // alone" instead of "this device has none". See backup.ts `zipToSnapshot`.
+        ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
       },
       assets: data.assets ?? [],
       recordDrafts: data.recordDrafts ?? [],

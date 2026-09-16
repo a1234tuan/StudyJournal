@@ -36,6 +36,7 @@ import type {
   CloudSyncStateRecord,
   Block,
   ContentTemplate,
+  DailyPlan,
   DayEntry,
   KnowledgePodcast,
   MistakeCard,
@@ -48,6 +49,7 @@ import type {
   Tag,
 } from "../types";
 import {
+  DAILY_PLAN_SCHEMA_24_STORES,
   LEGACY_SCHEMA_16_STORES,
   REVIEW_COACH_SCHEMA_17_STORES,
   REVIEW_COACH_SCHEMA_18_STORES,
@@ -123,6 +125,13 @@ export class StudyJournalDatabase extends Dexie {
    * src/features/reviewCoach/interactionTrace.ts.
    */
   reviewCoachInteractionSegments!: Table<ReviewCoachInteractionSegmentLocal, string>;
+  /**
+   * Daily plan rows. Completion is derived from whether `linkedRecordId` points
+   * at a live record, so this table carries no status field. Soft-deleted rows
+   * stay here forever (there is no purge task) - that is what keeps the "from
+   * plan" attribution label on a log resolvable after its plan row is deleted.
+   */
+  dailyPlans!: Table<DailyPlan, string>;
 
   constructor(name = "study-journal-408") {
     super(name);
@@ -341,6 +350,7 @@ export class StudyJournalDatabase extends Dexie {
     this.version(21).stores(VOICE_RECALL_SCHEMA_21_STORES);
     this.version(22).stores(REVIEW_COACH_SCHEMA_22_STORES);
     this.version(23).stores(REVIEW_COACH_SCHEMA_23_STORES);
+    this.version(24).stores(DAILY_PLAN_SCHEMA_24_STORES);
   }
 }
 

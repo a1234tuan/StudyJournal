@@ -2,7 +2,9 @@ import {
   createInitialReviewLibraryState,
   createInitialTabMemory,
   MORE_SUB_ROUTE_VALUES,
+  PLAN_VIEW_VALUES,
   type MoreSubRoute,
+  type PlanView,
   type RecordReferenceNavigationEntry,
   type ReviewCardFilter,
   type ReviewCardSort,
@@ -245,7 +247,18 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
   }
 
   return {
-    today: { ...todayBase, adaptiveTaskId: isObject(value.today) ? optionalString(value.today.adaptiveTaskId) : undefined },
+    today: {
+      ...todayBase,
+      adaptiveTaskId: isObject(value.today) ? optionalString(value.today.adaptiveTaskId) : undefined,
+      // Validated here rather than in `restoreRecordState`, which is a whitelist
+      // of record fields only. An unrecognised view degrades to "today" - the same
+      // treatment `MORE_SUB_ROUTE_VALUES` gets, so one stale value cannot discard
+      // the whole snapshot and swallow the Back button.
+      planOpen: isObject(value.today) ? optionalBoolean(value.today.planOpen) ?? false : false,
+      planView: isObject(value.today) && (PLAN_VIEW_VALUES as readonly unknown[]).includes(value.today.planView)
+        ? value.today.planView as PlanView
+        : "today",
+    },
     journal: {
       ...journalBase,
       month,

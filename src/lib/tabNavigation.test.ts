@@ -62,6 +62,132 @@ describe("tabNavigation", () => {
     expect(next.categories.activeSubject).toBe("英语");
   });
 
+  describe("daily plan depth", () => {
+    it("puts the plan page at depth 1 and a plan record on top of it", () => {
+      const home = { ...createInitialTabMemory(), today: {} };
+      expect(getTabDepth("today", home)).toBe(0);
+
+      const planPage = { ...home, today: { planOpen: true, planView: "today" as const } };
+      expect(getTabDepth("today", planPage)).toBe(1);
+
+      const planRecord = { ...planPage, today: { ...planPage.today, recordId: "plan-record" } };
+      expect(getTabDepth("today", planRecord)).toBe(2);
+    });
+
+    it("keeps plan records one level above an ordinary home record", () => {
+      const memory = {
+        ...createInitialTabMemory(),
+        today: { recordId: "home-record" },
+      };
+      const planRecord = {
+        ...createInitialTabMemory(),
+        today: { planOpen: true, recordId: "plan-record" },
+      };
+
+      expect(getTabDepth("today", memory)).toBe(1);
+      expect(getTabDepth("today", planRecord)).toBe(2);
+    });
+
+    it("adds reference depth on top of the plan record", () => {
+      const memory = {
+        ...createInitialTabMemory(),
+        today: {
+          planOpen: true,
+          recordId: "plan-record",
+          referenceStack: [{ kind: "record" as const, recordId: "source-record", scrollY: 0 }],
+        },
+      };
+
+      expect(getTabDepth("today", memory)).toBe(3);
+    });
+
+    it("leaves the immersive coach task first in line", () => {
+      // The Android back key intercepts `adaptiveTaskId` before consulting depth,
+      // so the plan branch must not be able to pre-empt it.
+      const memory = {
+        ...createInitialTabMemory(),
+        today: { adaptiveTaskId: "task-1", planOpen: true, recordId: "plan-record" },
+      };
+
+      expect(getTabDepth("today", memory)).toBe(1);
+    });
+
+    it("closes the plan record into the plan page, keeping the view", () => {
+      const memory = {
+        ...createInitialTabMemory(),
+        today: { planOpen: true, planView: "history" as const, recordId: "plan-record", recordEditing: true },
+      };
+
+      const back = popTabDepth(memory, "today");
+
+      expect(back.today.recordId).toBeUndefined();
+      // Leaving `recordEditing` set would reopen the next plan record straight in
+      // immersive editing mode.
+      expect(back.today.recordEditing).toBeUndefined();
+      expect(back.today.planOpen).toBe(true);
+      expect(back.today.planView).toBe("history");
+      expect(getTabDepth("today", back)).toBe(1);
+    });
+
+    it("closes the plan page back to the home dashboard and resets the view", () => {
+      const memory = {
+        ...createInitialTabMemory(),
+        today: { planOpen: true, planView: "history" as const },
+      };
+
+      const back = popTabDepth(memory, "today");
+
+      // Back to exactly the freshly-created shape, so the browser-history round
+      // trip and the popped state agree.
+      expect(back.today.planOpen).toBe(false);
+      expect(back.today.planView).toBe("today");
+      expect(getTabDepth("today", back)).toBe(0);
+      expect(back.today).toEqual(createInitialTabMemory().today);
+    });
+
+    it("still unwinds record references before leaving the plan record", () => {
+      const memory = {
+        ...createInitialTabMemory(),
+        today: {
+          planOpen: true,
+          recordId: "referenced-record",
+          referenceStack: [{ kind: "record" as const, recordId: "plan-record", scrollY: 0 }],
+        },
+      };
+
+      const back = popTabDepth(memory, "today");
+
+      expect(back.today.recordId).toBe("plan-record");
+      expect(back.today.planOpen).toBe(true);
+      expect(back.today.referenceStack).toEqual([]);
+    });
+
+    it("keys the plan page apart from the dashboard and from coach tasks", () => {
+      const home = { ...createInitialTabMemory(), today: {} };
+      const planPage = { ...home, today: { planOpen: true } };
+      const planRecord = { ...planPage, today: { ...planPage.today, recordId: "plan-record" } };
+      const coachTask = { ...home, today: { adaptiveTaskId: "task-1" } };
+
+      // The plan page and a coach task are both depth 1, so depth alone cannot
+      // tell them apart.
+      expect(getTabDepth("today", planPage)).toBe(getTabDepth("today", coachTask));
+      expect(buildTabPageKey("today", planPage)).not.toBe(buildTabPageKey("today", home));
+      expect(buildTabPageKey("today", planPage)).not.toBe(buildTabPageKey("today", coachTask));
+      // The plan page and a plan record share the screen token; depth and record
+      // id are what separate them.
+      expect(buildTabPageKey("today", planRecord)).toContain("plan");
+      expect(buildTabPageKey("today", planRecord)).not.toBe(buildTabPageKey("today", planPage));
+      expect(buildTabPageKey("today", planPage)).toContain("plan");
+    });
+
+    it("keeps the task id itself as the page token so task A and task B differ", () => {
+      const first = { ...createInitialTabMemory(), today: { adaptiveTaskId: "task-a" } };
+      const second = { ...createInitialTabMemory(), today: { adaptiveTaskId: "task-b" } };
+
+      expect(buildTabPageKey("today", first)).not.toBe(buildTabPageKey("today", second));
+    });
+  });
+
   it("returns through record references before closing the source record", () => {
     const memory = {
       ...createInitialTabMemory(),
