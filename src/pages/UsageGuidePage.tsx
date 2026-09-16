@@ -115,6 +115,20 @@ export const UsageGuidePage = () => (
           />
           <figcaption>写入日志的有效内容，会继续服务于搜索、复习和 AI 上下文。</figcaption>
         </figure>
+        <div className="guide-definition-grid">
+          <div><span>今日计划</span><p>按学科列出今天准备完成的内容，计划标题会保留，方便之后回看当天安排。</p></div>
+          <div><span>计划如何完成</span><p>打开计划条目并写下实际过程、结果或卡点；保存有效日志后，该计划才会显示为已完成。</p></div>
+          <div><span>历史与统计</span><p>只展示有计划的日期，完成情况来自实际日志记录。计划不会自动生成日志，也不会代替你的复习判断。</p></div>
+        </div>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/daily-plan.png"
+            alt="今日计划流程：选择学科、写下计划、保留计划条目、进入日志记录过程，保存日志后显示完成，并在历史与统计中查看有计划日期"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>计划是当天的意图；写入实际日志，才是对计划的兑现。</figcaption>
+        </figure>
       </section>
 
       <section id="review" className="usage-guide-section">
@@ -254,6 +268,7 @@ export const UsageGuidePage = () => (
             <p><strong>录音找不到：</strong>打开侧栏“录音”或“更多 → 录音库”，也可回到对应日志查看。</p>
           </div>
         </details>
+        <p className="guide-callout"><MessageCircleQuestion size={17} />反馈：微信：A6472589；邮箱：kkleo0218@gmail.com</p>
       </section>
     </article>
   </main>

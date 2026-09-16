@@ -27,19 +27,22 @@ describe("UsageGuidePage", () => {
     expect(screen.getByRole("link", { name: /09.*按任务查找/ })).toHaveAttribute("href", "#find");
   });
 
-  it("renders all five semantic illustrations without stale setup copy", () => {
+  it("renders all six semantic illustrations without stale setup copy", () => {
     render(<UsageGuidePage />);
 
     const images = screen.getAllByRole("img");
-    expect(images).toHaveLength(5);
+    expect(images).toHaveLength(6);
     expect(images.map((image) => image.getAttribute("src"))).toEqual([
       "/guide/learning-loop.png",
       "/guide/record-structure.png",
+      "/guide/daily-plan.png",
       "/guide/review-spacing.png",
       "/guide/coach-flow.png",
       "/guide/ai-learning-modes.png",
     ]);
     expect(images.every((image) => image.getAttribute("alt")?.trim())).toBe(true);
+    expect(screen.getByText(/计划是当天的意图/)).toBeInTheDocument();
+    expect(screen.getByText(/微信：A6472589/)).toBeInTheDocument();
     expect(screen.getByText(/更多 → AI 问答/)).toBeInTheDocument();
     expect(screen.getByText(/复习 → 学习助教/)).toBeInTheDocument();
     expect(screen.queryByText(/qwen3\.7-plus|阿里云百炼|每日约 20000 张/)).not.toBeInTheDocument();
