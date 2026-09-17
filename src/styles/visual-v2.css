@@ -1331,7 +1331,10 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
-  gap: 4px;
+  /* The 6px gap is the dead zone between the row's two tap targets. It is the
+     only thing separating "open the log" from "delete the plan", so it is
+     deliberate rather than incidental spacing. */
+  gap: 6px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
@@ -1349,7 +1352,10 @@ body {
   min-width: 0;
   padding: 12px 14px;
   border: 0;
-  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  /* Rounded on all four corners now that the delete control no longer occupies
+     the full right edge: this keeps the hover wash's right edge a clean rounded
+     card corner instead of squaring off mid-row. */
+  border-radius: var(--radius-card);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -1421,20 +1427,29 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A contained icon button, not a full-height divider band: the old rule drew a
+   `border-left` down the whole card height and stretched a trash icon across it,
+   which read as a page separator rather than a delete control and left its tap
+   target flush against the row. Sized and shaped like the app's other icon
+   buttons (36px, `--radius-control`), quiet until hover/focus - where the danger
+   colour finally states what it does. */
 .daily-plan-page .daily-plan-row-delete {
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
+  width: 36px;
+  height: 36px;
+  margin-right: 6px;
   border: 0;
-  border-left: 1px solid var(--color-border);
-  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-muted);
   cursor: pointer;
 }
 
-.daily-plan-page .daily-plan-row-delete:hover {
+.daily-plan-page .daily-plan-row-delete:hover,
+.daily-plan-page .daily-plan-row-delete:focus-visible {
   background: var(--color-interaction-hover);
   color: var(--color-danger);
 }
