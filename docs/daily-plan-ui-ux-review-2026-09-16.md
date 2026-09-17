@@ -79,9 +79,16 @@
 - **`gap: 0 18px` 必须显式写**：否则会继承 `.page-header` 的 `gap: 18px`，在三行文字之间凭空插入 18px 行距。
 - **`display: contents` 是必需的**：左列是一个整体 `<div>`，不把它"摊平"，标题行就无法参与外层网格、也就无法跨列。
 - **窄屏要补两条**：`≤920px` 时列数变 1、标题行改回单列占位；动作组的 `margin-top: 10px` 是用来补回原先由 flex `gap: 10px` 提供的那段间距（`gap` 已被改成 0）。
-- **页头会长高约 7px**（桌面）：原先动作组 36px 的顶部会与标题行底部重叠 7px，网格行不重叠，所以这 7px 变成真实高度。
+- **页头会长高约 9px**（桌面实测 88 → 97；窄屏 134 → 134，无变化）：原先动作组 36px 的顶部会与标题行底部重叠，flex 布局允许重叠、网格行不允许，所以这段重叠变成了真实高度。窄屏本来就把动作组排在文字下方，因此没有新增高度。
 
-**实测验证（1440×1000）：** 入口 `right = 1360`、动作组 `right = 1360` —— 两者右边缘精确对齐到页头右边缘；入口 `y = 58` 落在标题行（`y = 57`）上，动作组 `y = 96` 仍在副标题行（`y = 109`）上。**（390×844）：** 标题行跨满整行、入口贴右，动作组独占下一行且左对齐。
+**实测验证（临时 Playwright 探针，跑完即删，两个视口各测一次）：**
+
+| 视口 | 页头 | 标题行 | 入口 | 动作组 |
+| --- | --- | --- | --- | --- |
+| 1440×1000 | `x=320, w=1040, right=1360, h=97` | `x=320, w=1040`（**跨满两列**），`y=57` | `x=1252, w=90, right=1342, y=57`（距右边缘 **18px**，与 `<h1>` 同行） | `right=1360, y=97`（仍在副标题行 `y=110`） |
+| 390×844 | `x=16, w=358, right=374, h=134` | `x=16, w=358`（跨满整行），`y=45` | `x=266, w=90, right=356, y=45`（距右边缘 **18px**） | `x=16..254, y=122`（独占下一行、左对齐） |
+
+两个视口下页头的计算 `display` 均为 `grid`、左列均为 `display: contents`，说明网格规则确实生效；桌面标题行可推区间宽 1040px，入口落在最右端 —— 也就是说"`margin-left: auto` 没有可推空间"这个旧问题已不复存在。
 
 **其他两个方向（未采用，保留备查）：**
 
@@ -137,9 +144,9 @@
 - `.primary-button`（`components.css:86-99`）：`border-color: var(--color-primary-strong); background: var(--color-primary); color: #fff`，圆角 `--radius-control`；
 - `.today-compose-main`（`visual-v2.css:224-239`）：`1px solid var(--color-border)` + `--radius-control` + 背景 `color-mix(in srgb, var(--color-primary-soft) 72%, var(--color-bg))`，就是"新建 xx 记录"那张入口卡片。
 
-当前入口与这两者都没有关系。
+**修复前**，入口与这两者都没有关系（这是本项被判为 P1 的直接依据）；修复后入口即为上表的 `.primary-button` 本身。
 
-**建议：** 与 P1-01 的方案绑定——选 A 就用 `.secondary-button`（**文字**按钮：`min-height: 40px`、`1px` 边框、`--color-surface` 底色、`font-weight: 700`，见 `components.css:77-101` + `styles.css:536-553`），它是"安静的按钮"，与"链接"彻底区分；选 C 就直接复用 `.today-compose-main` 的 token 组合，让两张卡看起来是一家人。若希望入口是明确的行动号召，也可用 `.primary-button`，但要注意它会出现两个实心主色按钮（另一个是「开始复习」）而互相抢焦点，需谨慎。
+**建议（立项时的备选，最终未采用）：** 与 P1-01 的方案绑定——选 A 就用 `.secondary-button`（**文字**按钮：`min-height: 40px`、`1px` 边框、`--color-surface` 底色、`font-weight: 700`，见 `components.css:77-101` + `styles.css:536-553`），它是"安静的按钮"，与"链接"彻底区分；选 C 就直接复用 `.today-compose-main` 的 token 组合，让两张卡看起来是一家人。若希望入口是明确的行动号召，也可用 `.primary-button`，但要注意它会出现两个实心主色按钮（另一个是「开始复习」）而互相抢焦点，需谨慎。
 
 **重要澄清（本文初稿用词不严谨，已更正）：** 初稿写"改成 `secondary-button`（与同组的 CloudSyncButton 同族）"是**错的**——`CloudSyncButton` 用的不是 `.secondary-button`，而是 `.icon-button`：`36 × 36`、`border: 1px solid var(--border)`、`border-radius: 8px`、`color: var(--muted)`（`styles.css:604-613`），内容只有一个 `<RefreshCw size={18} />`，**没有任何可见文字**（`CloudSyncButton.tsx:85-96`，靠 `title` / `aria-label="云同步"` 表意）。两者只是"都不显眼"，并不是同一套控件。
 
@@ -151,14 +158,16 @@
 
 #### 附：入口控件尺寸对照
 
+下表是立项时的现状与候选（"建议 A/C 采用"均为当时的备选，**最终都没采用**）；实际落地方案见 P1-02 的「实施结果」。
+
 | 控件 | 类 | 实际尺寸 | 可见文字 | 适用语义 |
 | --- | --- | --- | --- | --- |
-| 现有「今日计划」 | `.link-button` | 行内，无固定高度 | 有（accent 色） | 正文内联跳转（**误用**） |
+| 修复前的「今日计划」 | `.link-button` | 行内，无固定高度 | 有（accent 色） | 正文内联跳转（**误用**） |
 | 云同步 / 收藏 | `.icon-button` | 36 × 36 | 无 | 页头工具，靠图标识别 |
 | 目标 pill | `.today-goal-pill` | 高 36 | 有 | 只读状态显示 |
-| 文字按钮 | `.secondary-button` | 高 ≥ 40、`padding: 0 12px` | 有 | 次要动作（**建议 A 采用**） |
-| 入口卡片 | `.today-compose-main` | 高 58、图标 20 + 粗体标题 | 有 | 主功能入口（**建议 C 采用**） |
-| 主按钮 | `.primary-button` | 高 ≥ 40、实心主色、白字 | 有 | 页面唯一主 CTA（**不建议占用**） |
+| 文字按钮 | `.secondary-button` | 高 ≥ 40、`padding: 0 12px` | 有 | 次要动作（当时建议 A 采用，未采用） |
+| 入口卡片 | `.today-compose-main` | 高 58、图标 20 + 粗体标题 | 有 | 主功能入口（当时建议 C 采用，未采用） |
+| 主按钮 | `.primary-button` | 高 ≥ 40、实心主色、白字 | 有 | 页面唯一主 CTA（当时判为"不建议占用"，**最终按用户要求采用**，取舍见 P1-02） |
 
 **采用方案 A 时的对齐问题：** 页头右侧同行的 pill 与图标按钮都是 `36px` 高，`40px` 的按钮会高出 `4px`。需要把同行控件统一到 `40px`（或给按钮单独约束 `height: 36px`），否则会出现基线不齐。
 
@@ -233,8 +242,8 @@
 
 | 编号 | 问题 | 建议方向 | 涉及文件 |
 | --- | --- | --- | --- |
-| P1-01 | 入口位置贴在标题右侧 | **方案 B**（用户选定的方向）：留在标题行、推到行右端，作用域收在 `.today-page`，需给 `ui.tsx` 左列加一个类名 + 3 条声明；方案 A 进 `actions` 动作组（零 CSS）；方案 C 迁入内容区做成卡片 | `TodayPage.tsx`、`ui.tsx`、`visual-v2.css`/`pages.css` |
-| P1-02 | 入口是内联链接样式 | 随 P1-01 方案：A 用 `secondary-button`（**文字**按钮，非图标按钮），C 复用 `.today-compose-main` 的 token 组合；**不要**做成 `.icon-button` | `TodayPage.tsx`、样式 |
+| P1-01 | 入口位置贴在标题右侧 | **已实施**：方案 B（用户选定方向）——留在标题行、推到行右端，作用域收在 `.today-page`，给 `ui.tsx` 左列加一个类名 + 网格声明；未采用的备选：A 进 `actions` 动作组（零 CSS）、C 迁入内容区做成卡片 | `TodayPage.tsx`、`ui.tsx`、`visual-v2.css` |
+| P1-02 | 入口是内联链接样式 | **已实施**：改用共享 `.primary-button`（与「开始复习」同一个类），并加 `margin-right: 18px` 不贴边；立项时的 A（`secondary-button`）/ C 备选均未采用；**不要**做成 `.icon-button` | `TodayPage.tsx`、样式 |
 | P2-01 | 导航层无可发现入口 | 「更多」页补一条 `list-row` | `MorePage.tsx` |
 | P2-02 | 视图切换位置与同类控件不一致 | 与 `.daily-plan-back` 排成子页面顶栏，或下沉正文区 | `DailyPlanPage.tsx`、样式 |
 | P2-03 | 学科分布条误用成功绿 | 改为 `var(--color-primary)` | `visual-v2.css:1438` |
