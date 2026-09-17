@@ -1221,11 +1221,22 @@ body {
   box-shadow: var(--shadow-soft);
 }
 
+/* Subpage top bar: back control on the left, the view switcher on the right, the
+   same arrangement `.record-editor-topbar` uses. It also keeps the switcher out
+   of the page title, which is where it was drifting from `.journal-view-tabs`
+   and `.review-mode-tabs` - both of which live in the content area. */
+.daily-plan-page .daily-plan-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
 .daily-plan-page .daily-plan-back {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-top: 4px;
   padding: 5px 8px 5px 4px;
   border: 0;
   border-radius: var(--radius-control);

@@ -291,28 +291,6 @@ export const DailyPlanPage = ({
         eyebrow={view === "today" ? formatChineseDate(todayDate) : `累计 ${groups.length} 天有计划`}
         title={view === "today" ? "今日计划" : "计划历史"}
         density="compact"
-        titleActions={(
-          <div className="daily-plan-view-toggle" role="tablist" aria-label="计划视图">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "today"}
-              className={view === "today" ? "active" : ""}
-              onClick={() => onViewChange("today")}
-            >
-              今日
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "history"}
-              className={view === "history" ? "active" : ""}
-              onClick={() => onViewChange("history")}
-            >
-              历史
-            </button>
-          </div>
-        )}
         actions={view === "today" && todayGroup ? (
           <span className="counter-pill" title="今天的计划完成度">
             {todayGroup.doneCount} / {todayGroup.totalCount} 完成
@@ -320,10 +298,40 @@ export const DailyPlanPage = ({
         ) : undefined}
       />
 
-      <button type="button" className="daily-plan-back" onClick={onBack} aria-label="返回今天">
-        <ChevronLeft size={17} aria-hidden="true" />
-        今天
-      </button>
+      {/*
+        The view toggle used to sit in the header's `titleActions` slot, which is
+        not where this app puts view switchers: the journal and review tabs both
+        live in the content area. It shares a row with the back control instead,
+        the same "back on the left, local controls on the right" bar the record
+        editor uses, so the page title stays a title and the toggle reads as a
+        control for the view below it.
+      */}
+      <div className="daily-plan-topbar">
+        <button type="button" className="daily-plan-back" onClick={onBack} aria-label="返回今天">
+          <ChevronLeft size={17} aria-hidden="true" />
+          今天
+        </button>
+        <div className="daily-plan-view-toggle" role="tablist" aria-label="计划视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "today"}
+            className={view === "today" ? "active" : ""}
+            onClick={() => onViewChange("today")}
+          >
+            今日
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "history"}
+            className={view === "history" ? "active" : ""}
+            onClick={() => onViewChange("history")}
+          >
+            历史
+          </button>
+        </div>
+      </div>
 
       {message && <p className="daily-plan-message" role="status">{message}</p>}
 
