@@ -15,7 +15,7 @@
 | E-1 | 解冻范围 | §2 只允许「计划完成度的确定性统计（完成率、连续完成天数、学科分布、按日分组）。**不做模型调用**」 | 允许计划元数据进入 AI 上下文与版本化 prompt，产出「意图 vs 兑现」的模型反馈 |
 | E-2 | 落地位置 | §4 前置 + `docs/daily-plan-intent-2026-09-16.md:64`：「AI 联动（L2）留给 Exocortex 的 `Goal / Constraint / Capacity` 层」 | **该功能级延期作废。** L2 在本仓库开发 |
 | E-3 | §5「为 Exocortex 迁移预留的约束」 | 动机是「用户的后续意图是可能搬到 Exocortex」 | 四条约束**全部保留**，但降级为**模块边界纪律**：动机改为契约显式、不污染既有语义、可整体摘除，**与其去向无关** |
-| E-4 | Exocortex 方案文档 | 视为继续有效的迁移边界 | `docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 标注为**暂停**；仓库级分离规则本身不变 |
+| E-4 | Exocortex 方案文档 | 视为继续有效的迁移边界 | `docs/archive/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 标注为**暂停**；仓库级分离规则本身不变 |
 
 ## 3. 本次扩大后的允许范围
 
@@ -49,5 +49,5 @@
 - 本文件自 2026-09-17 起生效。
 - `AGENTS.md` 的 Current Baseline 首条改为同时指向两份解冻记录，并说明范围已扩大。
 - 需求基线 `docs/daily-plan-intent-2026-09-16.md` 与定稿方案 `docs/daily-plan-final-plan-2026-09-16.md` 中「L2 留给 Exocortex」的表述按本文原地修订，结构不变，修订处均带日期标注。
-- `docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 顶部标注为暂停，正文不做删改。
+- `docs/archive/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 顶部标注为暂停，正文不做删改。
 - 上游不变：需求 `docs/daily-plan-intent-2026-09-16.md` → 治理 `docs/studyjournal-scope-unfreeze-2026-09-16.md` + 本文 → 定稿 `docs/daily-plan-final-plan-2026-09-16.md`（L0/L2 的落地设计待新文档）。

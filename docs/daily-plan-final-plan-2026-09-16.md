@@ -1,8 +1,8 @@
 # 「今日计划」最终可执行方案（2026-09-16 · 定稿）
 
 > **本文地位：唯一权威、可直接开工的方案。** 取代以下三份前序文档中的相应章节：
-> - `docs/daily-plan-implementation-plan-v3.md`（可执行实施方案 v3）
-> - `docs/daily-plan-detailed-design-2026-09-16.md`（详细设计 LLD）
+> - `docs/archive/daily-plan-implementation-plan-v3.md`（可执行实施方案 v3）
+> - `docs/archive/daily-plan-detailed-design-2026-09-16.md`（详细设计 LLD）
 > - `docs/audit/daily-plan-design-reaudit-2026-09-16.md` 与 `...-second-audit-recheck-2026-09-16.md` 的修订清单（R-1…R-12 / S-1…S-6 已全部并入本文，见 §13 台账）
 >
 > 上游（不变）：需求 `docs/daily-plan-intent-2026-09-16.md` → 治理 `docs/studyjournal-scope-unfreeze-2026-09-16.md`。
@@ -1010,7 +1010,7 @@ git diff --check
 | D8 | 删日志 → 计划保留、派生未完成（`linkedRecordId` 不清空，可从回收站自动回到已完成） | 用户 2026-09-16 定稿 | §1 / §1.1（8-a~8-f）/ §3.2 / §3.4 / §5.5 / §8.7 / §9.1 / §9.3 |
 | D9 | 删计划 → 日志与归属标签都保留（新增 `listDeletedDailyPlans` 支撑标签显示完整学科+标题） | 用户 2026-09-16 定稿 | §1 / §1.1（9-a~9-g）/ §3.3 / §4.1 / §4.4 / §5.5 / §8.5 / §8.7 / §9.1 / §9.3 |
 
-**前序文档状态**：`daily-plan-detailed-design-2026-09-16.md` 与 `daily-plan-implementation-plan-v3.md` 的设计/实施章节自本文起失效，保留作历史记录；两份审计复核报告保留作方法论参考。
+**前序文档状态**：`docs/archive/daily-plan-detailed-design-2026-09-16.md` 与 `docs/archive/daily-plan-implementation-plan-v3.md` 的设计/实施章节自本文起失效，保留作历史记录；两份审计复核报告保留作方法论参考。
 
 ---
 

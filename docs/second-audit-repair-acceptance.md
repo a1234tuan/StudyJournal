@@ -50,7 +50,7 @@
 - 隔离 Firebase Emulator：npm run test:firebase。
 - 桌面真实本地帧测试：node --test desktop/voiceAsrSocket.test.cjs。
 - Android：JDK 21 下执行 gradlew.bat testDebugUnitTest assembleDebug；VoiceAsrFramesTest 使用本地 MockWebServer，无外部账户调用。只新增同版本 OkHttp 的测试依赖，没有升级运行依赖。
-- 差异检查：git diff --check。未修改 schema 21 存储定义；代码与文档按用户授权分开提交，冻结包记录见 release-freeze-2026-09-09.md。
+- 差异检查：git diff --check。未修改 schema 21 存储定义；代码与文档按用户授权分开提交，冻结包记录见 docs/archive/release-freeze-2026-09-09.md。
 
 ## 未关闭的发布门禁
 

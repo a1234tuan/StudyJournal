@@ -43,7 +43,7 @@
 
 ## 4. 解冻的前置与后果
 
-- **前置**：本解冻不改变「Exocortex 必须在新目录、新仓库启动」的规则；`docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 的迁移边界继续有效。
+- **前置**：本解冻不改变「Exocortex 必须在新目录、新仓库启动」的规则；`docs/archive/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md` 的迁移边界继续有效。
 - **后果**：本仓库的「维护冻结」状态自本日起变为**「维护 + 单一范围演进」**。除「今日计划」外的新功能提案仍然需要单独解冻。
 - **回滚**：schema 24 是单向的。回装早于本次改动的 APK/桌面版会因为数据库版本高于代码版本而打不开数据（仓库当前没有 `VersionError` 处理）。因此本次改动上线后，**不支持旧版本回装**；这条限制必须在发布说明中写明。
 
@@ -60,5 +60,5 @@
 
 - 本文件自 2026-09-16 起生效。
 - `AGENTS.md` 的 Current Baseline 增加一行指针，指向本文，避免基线描述与实现冲突。
-- 实施细节见 `docs/daily-plan-implementation-plan-v3.md`。
+- 实施细节见 `docs/archive/daily-plan-implementation-plan-v3.md`。
 - 需求基线见 `docs/daily-plan-intent-2026-09-16.md`。

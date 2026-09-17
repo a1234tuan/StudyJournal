@@ -1,7 +1,7 @@
 # 「今日计划」需求意图复述（2026-09-16 口述整理）
 
 - 来源：用户 2026-09-16 口述的 6 条需求
-- 性质：**需求复述与推断**，不是实施方案，也不是对 `docs/daily-plan-feature-design-v2.md` 的修改
+- 性质：**需求复述与推断**，不是实施方案，也不是对 `docs/archive/daily-plan-feature-design-v2.md` 的修改
 - 用途：本文用于修正 v2 方案的**需求部分**；技术可行性以 `docs/audit/daily-plan-feasibility-audit-2026-09-16.md` 为准
 - **2026-09-17 修订**：§5 与 §7 决策 1 中「L2（计划 × AI 反馈）留给 Exocortex」的结论**已作废**，改为在本仓库开发，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md`。修订处均在原地带日期标注；本文其余内容继续有效。
 
@@ -49,7 +49,7 @@
 | L1 派生洞察 | 「周末完成率高于工作日」「某学科完成率偏低」 | ❌（规则引擎） | ✅ 可以做，但必须标注为派生洞察，不是学习结论 |
 | L2 模型反馈 | 让模型据计划完成度给出建议/追问 | ✅ | ⚠️ 需要新的版本化 prompt 与 AI 角色；且 `docs/新的方案.md:743-744` 规定 AI 不得决定任务优先级、正式掌握状态或延迟验证日期，输出只能是建议文本 |
 
-**建议（2026-09-17 修订）**：L0 + L1 + **L2 全部留在 StudyJournal**。原文「L2 正是 `docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md:34` 列为 Exocortex 第一层的 `Goal / Constraint / Capacity`，应在新仓库做」**已作废**——用户于 2026-09-17 明确「暂时不对 Exocortex 做后续开发」，该功能级延期由 `docs/studyjournal-scope-unfreeze-2026-09-17.md` 撤销。L2 的模型输出仍受 `docs/新的方案.md:738-750` 约束：**只能是建议文本**，不得决定任务优先级、正式掌握状态或延迟验证日期。
+**建议（2026-09-17 修订）**：L0 + L1 + **L2 全部留在 StudyJournal**。原文「L2 正是 `docs/archive/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md:34` 列为 Exocortex 第一层的 `Goal / Constraint / Capacity`，应在新仓库做」**已作废**——用户于 2026-09-17 明确「暂时不对 Exocortex 做后续开发」，该功能级延期由 `docs/studyjournal-scope-unfreeze-2026-09-17.md` 撤销。L2 的模型输出仍受 `docs/新的方案.md:738-750` 约束：**只能是建议文本**，不得决定任务优先级、正式掌握状态或延迟验证日期。
 
 ## 6. 仍然成立的硬约束
 
@@ -89,6 +89,6 @@
 
 | 文档 | 作用 |
 | --- | --- |
-| `docs/daily-plan-feature-design-v2.md` | 被修正的对象；§3/§5.5/§7 的多处结论按本文 §3 表格改写 |
+| `docs/archive/daily-plan-feature-design-v2.md` | 被修正的对象；§3/§5.5/§7 的多处结论按本文 §3 表格改写 |
 | `docs/audit/daily-plan-feasibility-audit-2026-09-16.md` | 技术可行性审计：3 处阻断、16 条事实不符、3 处内部矛盾 |
 | 本文 | 需求复述与推断，收敛掉审计里的 B-2 / B-3 / C-1 |
