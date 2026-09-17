@@ -80,7 +80,7 @@ export const TodayPage = ({
         subtitle={getDailyMotto(today)}
         density="compact"
         titleActions={(
-          <button type="button" className="link-button" onClick={onOpenDailyPlan} title="今日计划" aria-label="打开今日计划">
+          <button type="button" className="primary-button" onClick={onOpenDailyPlan} title="今日计划" aria-label="打开今日计划">
             今日计划
           </button>
         )}

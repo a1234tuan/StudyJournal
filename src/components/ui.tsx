@@ -47,7 +47,7 @@ export const PageHeader = ({
   className = "",
 }: PageHeaderProps) => (
   <header className={`page-header page-header-${density} ${className}`.trim()}>
-    <div>
+    <div className="page-header-lead">
       {eyebrow && <p className="eyebrow">{eyebrow}</p>}
       <div className="page-header-title-row">
         <h1>{title}</h1>

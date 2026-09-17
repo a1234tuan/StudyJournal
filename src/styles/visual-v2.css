@@ -213,6 +213,56 @@ body {
 
 .page { padding-top: 36px; }
 
+/* Today-page header: the plan entry belongs on the title's own line, aligned to
+   the header's right edge. The shared `PageHeader` stacks its three text lines
+   inside one flex column and pins the action group to the bottom of that column
+   (`align-items: flex-end`), which is why the pill/icons sit on the subtitle's
+   line and the title line cannot reach the right edge on its own - pushing the
+   slot with `margin-left: auto` has no slack to travel into. The today page
+   therefore re-lays its own header as a two-column grid, and `display: contents`
+   promotes the lead column's children so the title row can span both columns.
+   Every other page keeps the shared `PageHeader` contract untouched. */
+.today-page > .page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0 18px;
+}
+
+.today-page > .page-header > .page-header-lead {
+  display: contents;
+}
+
+.today-page > .page-header .eyebrow { grid-area: 1 / 1; }
+.today-page > .page-header .page-header-title-row { grid-area: 2 / 1 / 3 / 3; }
+.today-page > .page-header .page-header-subtitle { grid-area: 3 / 1; }
+.today-page > .page-header .page-header-actions { grid-area: 3 / 2; }
+
+.today-page > .page-header .page-header-title-actions {
+  margin-left: auto;
+  /* The entry uses the shared `.primary-button` (same colour, text colour and font
+     size as `开始复习`), kept off the header's edge so it does not read as a
+     corner-stuck chip. Set this to 0 to align it with the action group below. */
+  margin-right: 18px;
+}
+
+@media (max-width: 920px) {
+  /* One column: the title row now spans the full width, and the action group
+     drops to its own row. Its 10px separation used to come for free from the
+     flex column's `gap`, so it is restored as a margin here. */
+  .today-page > .page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .today-page > .page-header .page-header-title-row { grid-area: 2 / 1; }
+
+  .today-page > .page-header .page-header-actions {
+    grid-area: 4 / 1;
+    justify-self: start;
+    margin-top: 10px;
+  }
+}
+
 .today-compose-band {
   position: relative;
   width: 100%;
