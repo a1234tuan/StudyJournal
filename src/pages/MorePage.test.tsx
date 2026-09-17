@@ -17,6 +17,7 @@ const renderMorePage = (settings = DEFAULT_SETTINGS) => {
     onOpenTemplates: vi.fn(),
     onOpenCategories: vi.fn(),
     onOpenGuide: vi.fn(),
+    onOpenDailyPlan: vi.fn(),
     settings,
   };
 
@@ -35,6 +36,7 @@ describe("MorePage", () => {
     expect(screen.getByText("回收站")).toBeInTheDocument();
     expect(screen.getByText("模板")).toBeInTheDocument();
     expect(screen.getByText("统计")).toBeInTheDocument();
+    expect(screen.getByText("今日计划")).toBeInTheDocument();
     expect(screen.getByText("设置")).toBeInTheDocument();
 
     expect(screen.queryByRole("heading", { name: "完整备份" })).not.toBeInTheDocument();
@@ -86,5 +88,18 @@ describe("MorePage", () => {
 
     const toolRows = screen.getAllByRole("button");
     expect(toolRows[0]).toHaveTextContent("AI 问答");
+  });
+
+  /**
+   * The daily-plan workspace is the one entry here that leaves the "更多" tab, so
+   * its handler is the today page's entry path rather than a `more` sub-route.
+   * This guards the row's presence and that it is wired to that handler.
+   */
+  it("reaches the daily-plan workspace from the app list", () => {
+    const props = renderMorePage();
+
+    fireEvent.click(screen.getByRole("button", { name: "今日计划" }));
+
+    expect(props.onOpenDailyPlan).toHaveBeenCalledTimes(1);
   });
 });

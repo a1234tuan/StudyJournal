@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, BrainCircuit, ChevronRight, Download, FileText, Headphones, Layers3, LayoutTemplate, Mic2, Settings, Trash2 } from "lucide-react";
+import { BarChart3, BookOpen, BrainCircuit, ChevronRight, Download, FileText, Headphones, Layers3, LayoutTemplate, ListChecks, Mic2, Settings, Trash2 } from "lucide-react";
 
 import type { AppSettings, AutoBackupSettings } from "../types";
 import { createDefaultAiPresets } from "../db/defaults";
@@ -18,6 +18,13 @@ interface MorePageProps {
   onOpenTemplates: () => void;
   onOpenCategories: () => void;
   onOpenGuide: () => void;
+  /**
+   * The daily-plan workspace lives in the today tab, so this is a cross-tab
+   * entry rather than a `more` sub-route - the same way 分类管理 reaches the
+   * categories tab. It exists because the workspace was only reachable from the
+   * today page's header, which made a whole feature look like a header extra.
+   */
+  onOpenDailyPlan: () => void;
   settings: AppSettings;
   autoBackupState?: AutoBackupSettings;
 }
@@ -58,6 +65,7 @@ export const MorePage = ({
   onOpenTemplates,
   onOpenCategories,
   onOpenGuide,
+  onOpenDailyPlan,
   settings,
   autoBackupState,
 }: MorePageProps) => (
@@ -101,6 +109,7 @@ export const MorePage = ({
     <section className="more-section more-hub-section">
       <h2>应用</h2>
       <div className="more-list">
+        <ListRow icon={<ListChecks size={19} />} title="今日计划" trailing={<ChevronRight size={17} />} onClick={onOpenDailyPlan} />
         <ListRow icon={<Layers3 size={19} />} title="分类管理" trailing={<ChevronRight size={17} />} onClick={onOpenCategories} />
         <ListRow icon={<Mic2 size={19} />} title="录音库" trailing={<ChevronRight size={17} />} onClick={onOpenRecordings} />
         <ListRow icon={<LayoutTemplate size={19} />} title="模板" trailing={<ChevronRight size={17} />} onClick={onOpenTemplates} />

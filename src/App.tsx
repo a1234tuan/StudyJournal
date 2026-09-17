@@ -1467,6 +1467,9 @@ export const App = () => {
           />
         );
       case null:
+        // The daily-plan workspace lives in the today tab, so the "更多" entry
+        // reuses the today page's own entry path rather than growing a second
+        // one: one destination, one back behaviour, no drift between them.
         return (
           <MorePage
             onOpenBackup={() => openMoreSubRoute("backup")}
@@ -1480,6 +1483,7 @@ export const App = () => {
             onOpenTemplates={() => openMoreSubRoute("templates")}
             onOpenCategories={() => switchTab("categories")}
             onOpenGuide={() => openMoreSubRoute("guide")}
+            onOpenDailyPlan={openDailyPlan}
             settings={settings}
             autoBackupState={app.autoBackupState ?? undefined}
           />
