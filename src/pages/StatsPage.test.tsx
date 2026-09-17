@@ -1,8 +1,20 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { addDaysISO, todayISO } from "../lib/date";
 import type { RecordReviewStats } from "../types";
 import { StatsPage } from "./StatsPage";
+
+/**
+ * The two recall cards read a *rolling* window: `summarizeRecall`
+ * (`src/lib/learningStats.ts`) starts the 7-day window at `date - 6 days`, and
+ * `StatsPage` feeds it the real `todayISO()`. Hard-coded trend dates therefore
+ * leave the window as the clock advances - pinning them to 2026-09-10/11 made
+ * this case fail on its own from 2026-09-17, when the 09-10 row dropped out and
+ * only the 30-day card still reported 8. Keep them relative to today so both
+ * cards always see both rows (4 + 4 = 8).
+ */
+const daysAgo = (days: number) => addDaysISO(todayISO(), -days);
 
 const stats: RecordReviewStats = {
   activeCount: 3,
@@ -24,8 +36,8 @@ const stats: RecordReviewStats = {
   },
   dayStats: [],
   masteryTrend: [
-    { date: "2026-09-10", rememberedRate: 0.5, reviewedCount: 4 },
-    { date: "2026-09-11", rememberedRate: 0.75, reviewedCount: 4 },
+    { date: daysAgo(2), rememberedRate: 0.5, reviewedCount: 4 },
+    { date: daysAgo(1), rememberedRate: 0.75, reviewedCount: 4 },
   ],
 };
 
