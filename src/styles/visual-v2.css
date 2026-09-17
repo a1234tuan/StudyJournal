@@ -1485,7 +1485,11 @@ body {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--color-success);
+  /* A share-of-total bar, so it uses the same fill as every other one in the
+     app (`.stats-trend-bar span`, `.review-progress-track > span`). `success`
+     stays reserved for status: the row-level `.daily-plan-status-done` on this
+     very page is what "completed" looks like. */
+  background: var(--color-primary);
 }
 
 .daily-plan-page .daily-plan-subject-count {
