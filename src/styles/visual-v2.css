@@ -263,6 +263,21 @@ body {
   }
 }
 
+@media (min-width: 921px) {
+  /* Desktop only: the action group sits on its own grid row (3 / 2) directly
+     below 今日计划, whose row gap is 0 — give it breathing room. Let 今日计划's
+     right edge line up with 开始复习 (`.review-due-banner > .primary-button`,
+     justify-self: end inside the banner's 14px padding), not with the page
+     edge. Mobile keeps its own inset and one-column layout untouched. */
+  .today-page > .page-header .page-header-title-actions {
+    margin-right: 14px;
+  }
+
+  .today-page > .page-header .page-header-actions {
+    margin-top: 14px;
+  }
+}
+
 .today-compose-band {
   position: relative;
   width: 100%;
