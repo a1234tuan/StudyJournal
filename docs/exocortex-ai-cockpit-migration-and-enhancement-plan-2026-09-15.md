@@ -3,6 +3,8 @@
 > 版本：`ai-cockpit-exocortex-plan@1.0`  
 > 日期：2026-09-15（Asia/Shanghai）  
 > 性质：从 StudyJournal 冻结基线迁移到独立 Exocortex 仓库的产品、架构、实施与验收方案。
+>
+> **状态：暂停（2026-09-17）**。用户于 2026-09-17 明确「暂时不对 Exocortex 做后续开发」：今日计划的后续（含原本判给本方案 `Goal / Constraint / Capacity` 层的 L2）改为继续在 StudyJournal 开发，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md`。本文**全文保留、内容未做删改**，作为将来的参考材料；它描述的前提（新目录 + 新仓库）本身**未被撤销**，只是当前不执行。若将来重启本方案，须先按本文 §11「近期产品决策」的待确认清单重新过一遍。
 
 ## 0. 阅读说明（迁移基线）
 

@@ -8,6 +8,8 @@
 > 上游（不变）：需求 `docs/daily-plan-intent-2026-09-16.md` → 治理 `docs/studyjournal-scope-unfreeze-2026-09-16.md`。
 > 核对基线：Dexie schema 23（`src/db/reviewCoachSchema.ts:130`），2026-09-16 逐条回源码核对。
 > **本文仍不含代码改动**；§10 是逐文件、带锚点与验收标准的执行清单。
+>
+> **2026-09-17 修订**：D1 与 D7 中面向 Exocortex 的表述已按 `docs/studyjournal-scope-unfreeze-2026-09-17.md` 修订——原定留给 Exocortex 的 L2（计划元数据 × AI 反馈）改为**在本仓库开发**，可剥离约束保留但动机改为模块边界纪律。§1–§14 的其余技术结论（数据设计、回收器、导航、同步、测试、执行清单）**全部不变**；L2 本身尚无设计，不在本文范围内。
 
 ---
 
@@ -21,13 +23,13 @@
 
 | # | 决策 | 来源 |
 | --- | --- | --- |
-| D1 | 落地在 StudyJournal 本仓库（已获定向解冻），只做「计划 + 日志 + 统计」；AI 联动留给 Exocortex | 用户 2026-09-16 |
+| D1 | 落地在 StudyJournal 本仓库（已获定向解冻），做「计划 + 日志 + 统计」（L0）。**2026-09-17 修订**：AI 联动（L2）原定「留给 Exocortex」，现改为同样在本仓库开发，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md` | 用户 2026-09-16 / 2026-09-17 |
 | D2 | 「完成」= **存在未删除的日志记录**；次日结算不解析正文 | 用户 |
 | D3 | **不预生成日志**；点开并保存时才创建 → 无草稿态守卫、无定时清理任务 | 用户 |
 | D4 | 计划标题 → **`RecordBlock.title`，正文留空** | 用户 |
 | D5 | `title` **UI 限 40 字，数据层不校验**；超长拆成同一学科的多条计划 | 用户 |
 | D6 | 「今日计划」入口复用 `TodayPage` 既有按钮，**不新建导航层级以外的页面** | 本文 |
-| D7 | 计划功能模块可整体剥离（只读 `dailyPlans`/`blocks`/`subjects`/`assets`，不反向依赖），便于迁 Exocortex | 用户 |
+| D7 | 计划功能模块保持可整体剥离（只读 `dailyPlans`/`blocks`/`subjects`/`assets`，不反向依赖）。**2026-09-17 修订**：动机由「便于迁 Exocortex」改为**模块边界纪律**，约束本身不变 | 用户 |
 | D8 | **删除一条已兑现的日志（软删除进回收站）→ 计划行保留，派生为未完成**；不写任何数据 | 用户 2026-09-16 |
 | D9 | **删除一个计划行 → 已兑现的日志保留为普通日志，归属标签也保留**（含学科与计划标题） | 用户 2026-09-16 |
 
@@ -85,7 +87,7 @@ export interface DailyPlan extends BaseEntity {
 planId?: EntityId;               // 归属声明：这条日志来自哪个计划
 ```
 
-- **两边都存的理由**：`DailyPlan.linkedRecordId` 是「计划 → 记录」的**判定真源**（列表直接判定，无需索引）；`RecordBlock.planId` 是**记录自身的归属声明**，在计划行被删除后仍然成立，并随内容一起流动（导出、记录互通、Exocortex 迁移）。
+- **两边都存的理由**：`DailyPlan.linkedRecordId` 是「计划 → 记录」的**判定真源**（列表直接判定，无需索引）；`RecordBlock.planId` 是**记录自身的归属声明**，在计划行被删除后仍然成立，并随内容一起流动（导出、记录互通，以及将来任何形式的数据迁移）。
 - **真源约定**：完成判定只读 `linkedRecordId`；`planId` 只用于展示与归属查询。
 - **哈希影响**：`planId === undefined` 不进入稳定 JSON（`cloudSyncModel.ts:130` 的 `sortValue` 显式跳过 `undefined`）→ **既有记录哈希不变**；计划记录首次带 `planId` 上行会改变一次哈希，属正常增量。
 

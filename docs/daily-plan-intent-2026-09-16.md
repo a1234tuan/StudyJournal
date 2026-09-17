@@ -3,6 +3,7 @@
 - 来源：用户 2026-09-16 口述的 6 条需求
 - 性质：**需求复述与推断**，不是实施方案，也不是对 `docs/daily-plan-feature-design-v2.md` 的修改
 - 用途：本文用于修正 v2 方案的**需求部分**；技术可行性以 `docs/audit/daily-plan-feasibility-audit-2026-09-16.md` 为准
+- **2026-09-17 修订**：§5 与 §7 决策 1 中「L2（计划 × AI 反馈）留给 Exocortex」的结论**已作废**，改为在本仓库开发，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md`。修订处均在原地带日期标注；本文其余内容继续有效。
 
 ---
 
@@ -48,7 +49,7 @@
 | L1 派生洞察 | 「周末完成率高于工作日」「某学科完成率偏低」 | ❌（规则引擎） | ✅ 可以做，但必须标注为派生洞察，不是学习结论 |
 | L2 模型反馈 | 让模型据计划完成度给出建议/追问 | ✅ | ⚠️ 需要新的版本化 prompt 与 AI 角色；且 `docs/新的方案.md:743-744` 规定 AI 不得决定任务优先级、正式掌握状态或延迟验证日期，输出只能是建议文本 |
 
-**建议**：L0 + L1 留在 StudyJournal；L2（真正的「计划 × AI 反馈」）正是 `docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md:34` 列为 Exocortex 第一层的 `Goal / Constraint / Capacity`，应在新仓库做。
+**建议（2026-09-17 修订）**：L0 + L1 + **L2 全部留在 StudyJournal**。原文「L2 正是 `docs/exocortex-ai-cockpit-migration-and-enhancement-plan-2026-09-15.md:34` 列为 Exocortex 第一层的 `Goal / Constraint / Capacity`，应在新仓库做」**已作废**——用户于 2026-09-17 明确「暂时不对 Exocortex 做后续开发」，该功能级延期由 `docs/studyjournal-scope-unfreeze-2026-09-17.md` 撤销。L2 的模型输出仍受 `docs/新的方案.md:738-750` 约束：**只能是建议文本**，不得决定任务优先级、正式掌握状态或延迟验证日期。
 
 ## 6. 仍然成立的硬约束
 
@@ -61,7 +62,7 @@
 
 | # | 问题 | 决策 |
 | --- | --- | --- |
-| 1 | 落地位置 | **留在 StudyJournal，只做「计划 + 日志 + 统计」**（L0 层）；AI 联动（L2）留给 Exocortex 的 `Goal / Constraint / Capacity` 层 |
+| 1 | 落地位置 | **留在 StudyJournal**，做「计划 + 日志 + 统计」（L0 层）。**2026-09-17 修订**：AI 联动（L2）原定「留给 Exocortex 的 `Goal / Constraint / Capacity` 层」，现改为同样在本仓库开发，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md` |
 | 2 | 「完成」的判据 | **存在未删除的日志记录即完成**。次日结算只看记录是否存在，不解析正文 |
 | 3 | 是否预生成日志 | **不预生成**。点开计划并保存时才创建日志；无草稿态，无空记录清理任务 |
 | 4 | 计划标题落到日志哪个字段 | **落到 `RecordBlock.title`，正文留空**。编辑器里日志标题本就用户可编辑，写入后仍可自由修改 |
@@ -74,7 +75,7 @@
   - 清空正文：记录仍存在 → 按决策 2 仍算「完成」。若希望算未完成，需要额外一条「内容为空即视为未完成」的规则（当前不采纳）。
   - 删除日志：走现有软删除（进回收站），`getRecordBlocks` 已按 `deletedAt` 过滤，因此该计划自动回到「未完成」。这就够了，不需要额外逻辑。
 
-**由决策 1 派生的前置条件（已闭环）：**「留在 StudyJournal」与当时的冻结声明冲突，现已由用户显式解冻本仓库的这一块范围，见 `docs/studyjournal-scope-unfreeze-2026-09-16.md`；该文档同时写明「后续可能整体搬到 Exocortex」，故实现上要求计划功能模块可整体剥离（只读 `dailyPlans` / `blocks` / `subjects`，不反向依赖其它模块）。
+**由决策 1 派生的前置条件（已闭环）：**「留在 StudyJournal」与当时的冻结声明冲突，现已由用户显式解冻本仓库的这一块范围，见 `docs/studyjournal-scope-unfreeze-2026-09-16.md`（2026-09-17 又扩大过一次，见 `docs/studyjournal-scope-unfreeze-2026-09-17.md`）。**2026-09-17 修订**：原文以「该文档同时写明『后续可能整体搬到 Exocortex』」作为「计划功能模块可整体剥离」这条约束的动机，**该迁移预期现已撤销**；**约束本身保留**（只读 `dailyPlans` / `blocks` / `subjects`，不反向依赖其它模块），但动机改为**模块边界纪律**——契约显式、不污染既有语义、可整体摘除，与其去向无关。
 
 ## 8. 两个细节（均已确认，见 §7 决策 4 / 5）
 

@@ -73,8 +73,8 @@ export interface RecordBlock extends BaseEntity {
    *
    * This is not the completion truth source - `DailyPlan.linkedRecordId` is.
    * It survives the plan row being deleted (deleting a plan never cascades
-   * into its log), and it travels with the record through export, record
-   * transfer and the Exocortex migration. See docs/daily-plan-final-plan-2026-09-16.md D9.
+   * into its log), and it travels with the record through export and record
+   * transfer. See docs/daily-plan-final-plan-2026-09-16.md D9.
    */
   planId?: EntityId;
 }
