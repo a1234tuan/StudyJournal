@@ -2321,6 +2321,147 @@ describe("RichTextEditor", () => {
     expect(onChange).toHaveBeenCalled();
   });
 
+  it("preserves a paragraph plus collapse block through the application clipboard", async () => {
+    const onChange = vi.fn();
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={[
+          "<p>前面的正文</p>",
+          '<record-collapse data-title="解析" data-summary="提示" data-default-open="false"><p>折叠正文</p></record-collapse>',
+          "<p>后面的正文</p>",
+        ].join("")}
+        onChange={onChange}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    act(() => editorRef!.commands.selectAll());
+    const clipboard = new Map<string, string>();
+    fireEvent.copy(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/html")).toContain("record-collapse");
+    expect(clipboard.get("text/html")).toContain("折叠正文");
+    expect(clipboard.get("text/plain")).toContain("折叠正文");
+    expect(clipboard.get("text/markdown")).toContain("折叠正文");
+
+    act(() => editorRef!.commands.setContent("<p></p>"));
+    fireEvent.paste(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        getData: (type: string) => clipboard.get(type) ?? "",
+        items: [],
+      },
+    });
+
+    await waitFor(() => expect(editorRef!.getHTML()).toContain("record-collapse"));
+    expect(editorRef!.getHTML()).toContain("data-title=\"解析\"");
+    expect(editorRef!.getHTML()).toContain("折叠正文");
+  });
+
+  it("cuts a paragraph plus collapse block as one structural selection", async () => {
+    const onChange = vi.fn();
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={'<p>前面的正文</p><record-collapse data-title="解析" data-summary="提示" data-default-open="false"><p>折叠正文</p></record-collapse><p>后面的正文</p>'}
+        onChange={onChange}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    act(() => editorRef!.commands.selectAll());
+    const clipboard = new Map<string, string>();
+    fireEvent.cut(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/html")).toContain("record-collapse");
+    await waitFor(() => expect(editorRef!.getHTML()).not.toContain("record-collapse"));
+  });
+
+  it("uses the readable HTML fallback when cutting a formula and collapse block together", async () => {
+    const onChange = vi.fn();
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={'<p>前面的 <record-inline-math data-formula-id="cut-inline" data-latex="x^2"></record-inline-math> 正文</p><record-collapse data-title="解析" data-summary="提示" data-default-open="false"><p>折叠正文</p></record-collapse>'}
+        onChange={onChange}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    act(() => editorRef!.commands.selectAll());
+    const clipboard = new Map<string, string>();
+    fireEvent.cut(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/html")).toContain("$x^2$");
+    expect(clipboard.get("text/html")).toContain("record-collapse");
+    expect(clipboard.get("text/plain")).toContain("折叠正文");
+    await waitFor(() => expect(editorRef!.getHTML()).not.toContain("record-collapse"));
+  });
+
+  it("keeps the collapse structure when a mixed selection also contains a formula", async () => {
+    const onChange = vi.fn();
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={'<p>前面的 <record-inline-math data-formula-id="mixed-inline" data-latex="x^2"></record-inline-math> 正文</p><record-collapse data-title="解析" data-summary="提示" data-default-open="false"><p>折叠正文</p></record-collapse><p>后面的正文</p>'}
+        onChange={onChange}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    act(() => editorRef!.commands.selectAll());
+    const clipboard = new Map<string, string>();
+    fireEvent.copy(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    act(() => editorRef!.commands.setContent("<p></p>"));
+    fireEvent.paste(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        getData: (type: string) => clipboard.get(type) ?? "",
+        items: [],
+      },
+    });
+
+    await waitFor(() => expect(editorRef!.getHTML()).toContain("record-inline-math"));
+    expect(editorRef!.getHTML()).toContain("data-latex=\"x^2\"");
+    expect(editorRef!.getHTML()).toContain("record-collapse");
+  });
+
   it("copies formulas when the browser DOM selection spans their node views", async () => {
     let editorRef: Editor | undefined;
     render(

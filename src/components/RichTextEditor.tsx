@@ -688,6 +688,15 @@ const makeExternalClipboardHtml = (html: string): string => {
   return template.innerHTML;
 };
 
+// Clipboard text is intentionally Markdown-friendly for external consumers,
+// but that channel cannot represent nested application nodes such as a
+// collapse block. A copy produced by this editor carries both the
+// ProseMirror slice marker and one of our custom `record-*` elements; prefer
+// that HTML payload on the matching in-app paste path so mixed selections do
+// not flatten into ordinary paragraphs.
+const isStructuredEditorClipboardHtml = (html: string): boolean =>
+  /data-pm-slice\s*=/.test(html) && /<record-[a-z0-9-]+\b/i.test(html);
+
 const copyEditorSelection = (view: EditorView, event: ClipboardEvent, requireNativeSelection = false): boolean => {
   if (handledCopyEvents.has(event)) {
     return true;
@@ -1882,6 +1891,21 @@ export const RichTextEditor = ({
       },
       handleDOMEvents: {
         copy: (view, event) => copyEditorSelection(view, event as ClipboardEvent),
+        cut: (view, event) => {
+          // ProseMirror's built-in cut path cannot use the editor's external
+          // HTML fallback serializer. Keep read-only review content safe,
+          // while making editable Ctrl+X share the exact copy payload and
+          // then delete the selected slice atomically.
+          if (!view.editable) {
+            return false;
+          }
+          const handled = copyEditorSelection(view, event as ClipboardEvent);
+          if (!handled) {
+            return false;
+          }
+          view.dispatch(view.state.tr.deleteSelection().scrollIntoView().setMeta("uiEvent", "cut"));
+          return true;
+        },
         dragstart: (_view, event) => {
           event.preventDefault();
           return true;
@@ -1976,6 +2000,20 @@ export const RichTextEditor = ({
           view.dispatch(applyPasteHistoryMode(transaction, pasteHistoryMode(clipboard.plainText)).scrollIntoView());
           return true;
         }
+
+        if (isStructuredEditorClipboardHtml(clipboard.htmlText)) {
+          const anchor = beginPasteOperation(view);
+          const slice = parseClipboardSlice(view, clipboard.plainText, clipboard.htmlText, false);
+          if (slice) {
+            event.preventDefault();
+            replaceSelectionWithSlice(view, slice, anchor.bookmark, pasteHistoryMode(clipboard.plainText));
+            const assetAnchor = refreshPasteAnchor(view, anchor.requestId);
+            void insertPastedAssets(view, clipboard.files, assetAnchor);
+            return true;
+          }
+          cancelPendingPaste(view);
+        }
+
         const markdownSource = selectHistoryBoundedPasteSource([clipboard.markdown, clipboard.plainText]);
         if (markdownSource) {
           event.preventDefault();

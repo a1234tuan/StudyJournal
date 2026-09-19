@@ -439,7 +439,8 @@ D-7 决定的只是"只读态 Ctrl+X 要不要顺手把内容放进剪贴板"。
 - `src/components/RichTextEditor.tsx` 新增外部 HTML 序列化：保留应用内所需的
   `data-latex`，并把行内公式/块公式分别写成 `$...$` / `$$\n...\n$$` 的可见文本。
 - 公式节点边界恢复、原生选区兜底和应用内结构化 HTML 往返保持不变；临时黑盒探针已删除。
-- 已通过 `RichTextEditor.test.tsx`（114/114）、`e2e/editor-clipboard.spec.ts`（14/14）、
+- 对“正文 + 折叠块 + 公式”的混合选区，应用内粘贴现在优先解析带 `data-pm-slice` 的本应用 HTML，避免 Markdown/plain-text 通道把折叠块扁平化；可编辑 Ctrl+X 复用相同复制载荷后删除选区。
+- 已通过 `RichTextEditor.test.tsx`（当前 118/118）、`e2e/editor-clipboard.spec.ts`（14/14）、
   `tsc -b`、生产构建和 `git diff --check`。
 
 _本文档保留原方案作为历史和后续范围依据；实施状态以本节、源码和 `CHANGELOG.md` 为准。_
