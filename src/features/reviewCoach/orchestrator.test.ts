@@ -479,6 +479,8 @@ describe("ReviewCoachOrchestrator", () => {
 
     expect(result.batch.status).toBe("partial");
     expect(result.batch.subBatches.map((item) => item.status)).toEqual(["succeeded", "failed"]);
+    expect(result.batch.subBatches[1].errorCode).toBe("analysis:network");
+    expect(result.batch.subBatches[1].errorCode).not.toContain("provider unavailable");
     expect(planSession).toHaveBeenCalledTimes(2);
     expect(store.blueprints).toHaveLength(2);
   });

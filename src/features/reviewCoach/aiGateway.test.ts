@@ -44,5 +44,23 @@ describe("feedback interpretation gateway", () => {
     vi.mocked(sendChatCompletionDetailed).mockResolvedValue({ content: "not json" });
     const gateway = createFeedbackInterpretationGateway({ provider, apiKey: "secret" });
     await expect(gateway.interpretFeedback({ feedbackId: "f", decisionBlockId: "b", recordId: "r", contentVersion: 1, comment: "x", decisionBlockContent: "y" })).rejects.toThrow("有效 JSON");
+    expect(vi.mocked(sendChatCompletionDetailed)).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses at most one shape-only repair request after malformed output", async () => {
+    vi.mocked(sendChatCompletionDetailed)
+      .mockResolvedValueOnce({ content: "not json" })
+      .mockResolvedValueOnce({ content: JSON.stringify({
+        status: "ok", actionability: "needs_training", difficultyType: "concept", stuckAt: null,
+        userHypothesis: null, preferredPractice: null, missingInformation: [], confidence: 0.7,
+      }) });
+    const gateway = createFeedbackInterpretationGateway({ provider, apiKey: "secret" });
+    await expect(gateway.interpretFeedback({
+      feedbackId: "f", decisionBlockId: "b", recordId: "r", contentVersion: 1, comment: "x", decisionBlockContent: "y",
+    })).resolves.toMatchObject({ response: { status: "ok" } });
+
+    expect(vi.mocked(sendChatCompletionDetailed)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(sendChatCompletionDetailed).mock.calls[1][0].prompt).toContain("只修复输出格式");
+    expect(vi.mocked(sendChatCompletionDetailed).mock.calls[1][0].prompt).not.toContain("not json");
   });
 });

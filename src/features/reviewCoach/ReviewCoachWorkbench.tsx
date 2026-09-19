@@ -8,6 +8,7 @@ import { listDecayedBlocksNeedingReplan } from "./replay";
 import { rankWaitingTasks } from "./orchestrator";
 import { formatActionableError } from "../../lib/uiError";
 import { useInteractionTrace } from "../../hooks/useInteractionTrace";
+import { structuredOutputModeForProvider } from "../../lib/aiProviders";
 
 interface ReviewCoachWorkbenchProps {
   planningBlocks: readonly AnalysisPlanningBlock[];
@@ -47,6 +48,21 @@ const taskStatusLabel: Record<AdaptiveReviewTask["status"], string> = {
   abandoned: "已放弃",
   stale: "内容已更新",
   deleted: "已删除",
+};
+
+export const formatDecisionBlockPreview = (markdown: string, maxLength = 150): string => {
+  const formulas: string[] = [];
+  const prose = markdown.replace(/\$\$([\s\S]*?)\$\$|\$([^$\n]+?)\$/g, (_match, blockFormula: string | undefined, inlineFormula: string | undefined) => {
+    const formula = (blockFormula ?? inlineFormula ?? "").replace(/\s+/g, " ").trim();
+    if (formula) formulas.push(formula);
+    return " ";
+  }).replace(/\s+/g, " ").trim();
+  const formulaLabel = formulas[0] ? `公式：${formulas[0]}` : "";
+  if (!formulaLabel) return prose.slice(0, maxLength);
+  const separator = prose ? " · " : "";
+  const proseBudget = Math.max(0, maxLength - formulaLabel.length - separator.length);
+  const shortenedProse = prose.slice(0, proseBudget).trim();
+  return `${shortenedProse}${shortenedProse ? separator : ""}${formulaLabel}`;
 };
 
 export const ReviewCoachWorkbench = ({
@@ -151,7 +167,7 @@ export const ReviewCoachWorkbench = ({
               <div key={block.decisionBlockId} className="review-coach-analysis-item">
                 <span className="review-coach-analysis-copy">
                   <span><strong>{block.recordTitle}</strong></span>
-                  <span className="review-coach-block-preview">{block.contextMarkdown.replace(/\s+/g, " ").slice(0, 150)}</span>
+                  <span className="review-coach-block-preview">{formatDecisionBlockPreview(block.contextMarkdown)}</span>
                   <span className="review-coach-feedback-quote">“{block.feedback.at(-1)!.comment}”</span>
                 </span>
               </div>
@@ -161,6 +177,12 @@ export const ReviewCoachWorkbench = ({
           {plan.oversized.length > 0 && (
             <p className="review-coach-error">{plan.oversized.map((item) => item.recordTitle).join("、")} 超过模型上下文上限，请缩小或拆分决策块。</p>
           )}
+
+          <p className="review-coach-provider-note">
+            {provider
+              ? `当前模型：${provider.providerName} / ${provider.model}。结构化输出：${structuredOutputModeForProvider(provider) === "json-object" ? "接口 JSON object" : "仅提示词 + 本机 Schema 校验"}。`
+              : "尚未选择模型。请先在“更多 -> AI 设置”中配置供应商、模型和 API Key。"}
+          </p>
 
           {/*
             M5: one action, no batch confirmation. The entry point should lead
@@ -174,9 +196,15 @@ export const ReviewCoachWorkbench = ({
             className="primary-button"
             disabled={plan.oversized.length > 0 || Boolean(busyAction)}
             onClick={() => void run("analysis", () => onAnalyze(planningBlocks.map((item) => item.decisionBlockId), false), "分析完成，已生成复习任务。")}
+            aria-busy={busyAction === "analysis"}
           >
-            <BrainCircuit size={17} />开始分析并出题
+            <BrainCircuit size={17} />{busyAction === "analysis" ? "正在分析并出题…" : "开始分析并出题"}
           </button>
+          {busyAction === "analysis" && (
+            <p className="review-coach-provider-note" role="status" aria-live="polite">
+              已提交当前复习重点，正在等待模型返回结构化任务。请保持应用在前台，不要重复点击。
+            </p>
+          )}
         </div>
       )}
 

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Editor } from "@tiptap/react";
 import { closeHistory, redoDepth, undoDepth } from "@tiptap/pm/history";
+import { NodeSelection } from "@tiptap/pm/state";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -2281,8 +2282,11 @@ describe("RichTextEditor", () => {
     });
 
     const copiedText = clipboard.get("text/plain") ?? "";
+    const copiedHtml = clipboard.get("text/html") ?? "";
     expect(copiedText).toContain("由 $\\frac{a}{b}$ 可得结论。");
     expect(copiedText).toContain("\n\n$$\nE=mc^2\n$$\n\n因此继续计算。");
+    expect(copiedHtml).toContain("$\\frac{a}{b}$");
+    expect(copiedHtml).toContain("$$\nE=mc^2\n$$");
     expect(onChange).not.toHaveBeenCalled();
 
     act(() => {
@@ -2357,6 +2361,45 @@ describe("RichTextEditor", () => {
 
     expect(clipboard.get("text/plain")).toContain("$x^2$");
     expect(clipboard.get("text/plain")).toContain("$$\ny=mx+b\n$$");
+    expect(clipboard.get("text/markdown")).toBe(clipboard.get("text/plain"));
+  });
+
+  it("copies formulas from a read-only review selection when Chromium targets body", async () => {
+    render(
+      <RichTextEditor
+        value={[
+          "<p>关于例 14.7 的通关练习题，做对这个意味着通关</p>",
+          '<record-formula data-formula-id="review-formula" data-title="公式" data-latex="I=\\int_0^1 x\\arcsin\\sqrt{4x-4x^2}dx"></record-formula>',
+          "<p></p>",
+        ].join("")}
+        onChange={vi.fn()}
+        readOnly
+      />,
+    );
+
+    await waitFor(() => expect(document.querySelector(".formula-editor-card")).toBeInTheDocument());
+    const paragraphs = Array.from(document.querySelectorAll(".rich-editor > p"));
+    const startText = paragraphs[0]?.firstChild;
+    const trailingParagraph = paragraphs.at(-1);
+    expect(startText).toBeInstanceOf(Text);
+    expect(trailingParagraph).toBeInTheDocument();
+    const range = document.createRange();
+    range.setStart(startText!, 0);
+    range.setEnd(trailingParagraph!, 0);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const clipboard = new Map<string, string>();
+    fireEvent.copy(document.body, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/plain")).toContain("关于例 14.7 的通关练习题，做对这个意味着通关");
+    expect(clipboard.get("text/plain")).toContain("$$\nI=\\int_0^1 x\\arcsin\\sqrt{4x-4x^2}dx\n$$");
     expect(clipboard.get("text/markdown")).toBe(clipboard.get("text/plain"));
   });
 
@@ -2456,6 +2499,77 @@ describe("RichTextEditor", () => {
       vi.mocked(isNativePlatform).mockReturnValue(false);
       vi.mocked(writeNativeClipboardText).mockReset();
     }
+  });
+
+  it("selects a block formula on a single click so Ctrl+C includes its LaTeX", async () => {
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={'<p>前文</p><record-formula data-formula-id="click-formula" data-title="公式" data-latex="y=mx+b"></record-formula><p>后文</p>'}
+        onChange={vi.fn()}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    const formulaCard = document.querySelector(".formula-editor-card");
+    expect(formulaCard).toBeInTheDocument();
+    fireEvent.click(formulaCard!);
+
+    expect(editorRef!.state.selection).toBeInstanceOf(NodeSelection);
+    expect(screen.queryByLabelText("块公式")).not.toBeInTheDocument();
+
+    const clipboard = new Map<string, string>();
+    fireEvent.copy(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/plain")).toBe("$$\ny=mx+b\n$$");
+    expect(clipboard.get("text/markdown")).toBe("$$\ny=mx+b\n$$");
+
+    fireEvent.doubleClick(formulaCard!);
+    expect(await screen.findByLabelText("块公式")).toBeInTheDocument();
+  });
+
+  it("recovers a formula when the browser leaves a collapsed caret inside its NodeView", async () => {
+    let editorRef: Editor | undefined;
+    render(
+      <RichTextEditor
+        value={'<p>前文</p><record-formula data-formula-id="collapsed-formula" data-latex="E=mc^2"></record-formula><p>后文</p>'}
+        onChange={vi.fn()}
+        renderInsertTools={(editor) => {
+          editorRef = editor;
+          return null;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(editorRef).toBeDefined());
+    const formulaCard = document.querySelector(".formula-editor-card")!;
+    const textNode = formulaCard.firstChild;
+    expect(textNode).toBeTruthy();
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.collapse(true);
+    const nativeSelection = window.getSelection()!;
+    nativeSelection.removeAllRanges();
+    nativeSelection.addRange(range);
+
+    const clipboard = new Map<string, string>();
+    fireEvent.copy(document.querySelector(".rich-editor")!, {
+      clipboardData: {
+        clearData: vi.fn(),
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    expect(clipboard.get("text/plain")).toBe("$$\nE=mc^2\n$$");
   });
 
   it("creates a block formula on Enter and leaves Markdown literal inside code", async () => {

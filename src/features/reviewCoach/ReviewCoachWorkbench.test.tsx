@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordBlock } from "../../types";
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT, type AdaptiveReviewTask, type SessionBlueprint } from "./domain";
 import type { AnalysisPlanningBlock } from "./analysisPlanner";
-import { ReviewCoachWorkbench } from "./ReviewCoachWorkbench";
+import { formatDecisionBlockPreview, ReviewCoachWorkbench } from "./ReviewCoachWorkbench";
 import * as traceModule from "../../hooks/useInteractionTrace";
 
 const stamp = "2026-09-07T08:00:00.000Z";
@@ -57,6 +57,43 @@ describe("ReviewCoachWorkbench", () => {
 
     // One click is the whole interaction: it both analyses and queues.
     await waitFor(() => expect(onAnalyze).toHaveBeenCalledWith(["block-1"], false));
+  });
+
+  it("shows an explicit in-flight state while analysis is waiting for the provider", async () => {
+    let resolve: (() => void) | undefined;
+    const onAnalyze = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+    render(<ReviewCoachWorkbench {...baseProps} onAnalyze={onAnalyze} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /开始分析并出题/ }));
+
+    expect(await screen.findByRole("button", { name: /正在分析并出题/ })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/正在等待模型返回结构化任务/);
+    resolve?.();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("分析完成，已生成复习任务。"));
+  });
+
+  it("keeps inline and block formulas visible even after the prose cutoff", () => {
+    const longProse = "这是很长的复习重点正文".repeat(20);
+
+    expect(formatDecisionBlockPreview(`${longProse} $E = mc^2$`)).toContain("公式：E = mc^2");
+    expect(formatDecisionBlockPreview(`${longProse}\n\n$$\\int_0^1 x^2 dx$$`)).toContain("公式：\\int_0^1 x^2 dx");
+  });
+
+  it("shows the active provider and the structured-output requirement", () => {
+    render(<ReviewCoachWorkbench
+      {...baseProps}
+      provider={{
+        id: "gemini",
+        providerName: "Gemini relay",
+        baseUrl: "https://relay.example/v1",
+        model: "gemini-3.1-pro",
+        temperature: 0.7,
+        maxTokens: 4096,
+      }}
+    />);
+
+    expect(screen.getByText(/当前模型：Gemini relay \/ gemini-3\.1-pro/)).toBeInTheDocument();
+    expect(screen.getByText(/结构化输出：仅提示词 \+ 本机 Schema 校验/)).toBeInTheDocument();
   });
 
   it("does not show a pseudo-precise pass rate while the only judge is the model", () => {

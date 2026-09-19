@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sendChatCompletionDetailed } from "../../services/aiClientService";
 import { REVIEW_COACH_ROLE_SYSTEM_PROMPT } from "./rolePrompts";
-import { answerModes, quizPracticeTypes } from "./aiSchemas";
+import { answerModes, quizPracticeTypes, quizTurnJsonSchema } from "./aiSchemas";
 import { createQuizExecutionGateway } from "./quizExecutionGateway";
 
 vi.mock("../../services/aiClientService", async (importOriginal) => ({ ...await importOriginal<typeof import("../../services/aiClientService")>(), sendChatCompletionDetailed: vi.fn() }));
@@ -20,8 +20,10 @@ describe("quiz execution gateway", () => {
     expect(result).toMatchObject({ status: "ok", answerMode: "unique" });
     const request = vi.mocked(sendChatCompletionDetailed).mock.calls[0][0];
     expect(request.request).toMatchObject({ structuredOutput: true, thinkingMode: "disabled" });
-    expect(request.prompt).toContain('"answerCriteria":["..."]');
+    expect(request.prompt).toContain('"answerCriteria"');
+    expect(request.prompt).toContain(JSON.stringify(quizTurnJsonSchema, null, 2));
     expect(request.prompt).toContain("input.blueprint.evidence 原样复制");
+    expect(request.prompt).toContain("Markdown 数学分隔符");
   });
 
   it("sends the JSON-only role prompt instead of the conversational one (C-1)", async () => {
@@ -39,12 +41,12 @@ describe("quiz execution gateway", () => {
     await gateway.generateTurn({ blueprint: {}, decisionBlockContent: "source" });
 
     const prompt = vi.mocked(sendChatCompletionDetailed).mock.calls[0][0].prompt!;
-    const practiceTypeMatch = prompt.match(/"practiceType":"([^"]+)"/);
-    const answerModeMatch = prompt.match(/"answerMode":"([^"]+)"/);
     // Strict set equality, order-independent: this is the assertion that catches the enum drifting
     // away from the parser again (three of the six old values were not valid practice types).
-    expect(practiceTypeMatch![1].split("|").sort()).toEqual([...quizPracticeTypes].sort());
-    expect(answerModeMatch![1].split("|").sort()).toEqual([...answerModes].sort());
+    const schemaText = JSON.stringify(quizTurnJsonSchema, null, 2);
+    expect(prompt).toContain(schemaText);
+    for (const value of quizPracticeTypes) expect(schemaText).toContain(`"${value}"`);
+    for (const value of answerModes) expect(schemaText).toContain(`"${value}"`);
   });
 
   it("offers the local leak verdict to the quality reviewer (C-4)", async () => {

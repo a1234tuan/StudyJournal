@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createAiProviderTemplate, createDefaultAiProviders, normalizeAiConfig, normalizeAiProvider } from "./aiProviders";
+import { createAiProviderTemplate, createDefaultAiProviders, normalizeAiConfig, normalizeAiProvider, structuredOutputModeForProvider } from "./aiProviders";
 import { createDefaultAiPresets } from "../db/defaults";
 
 describe("aiProviders", () => {
@@ -107,5 +107,13 @@ describe("aiProviders", () => {
       model: "",
     });
     expect(provider.baseUrl).not.toBe("https://api.deepseek.com");
+    expect(provider.builtIn).toBeUndefined();
+  });
+
+  it("defaults only verified built-in endpoints to JSON object mode", () => {
+    expect(structuredOutputModeForProvider({ builtIn: "deepseek", baseUrl: "https://api.deepseek.com" })).toBe("json-object");
+    expect(structuredOutputModeForProvider({ builtIn: "deepseek", baseUrl: "https://gemini.example/v1" })).toBe("prompt-only");
+    expect(structuredOutputModeForProvider({ builtIn: "custom-proxy", baseUrl: "https://relay.example/v1" })).toBe("prompt-only");
+    expect(structuredOutputModeForProvider({ builtIn: "custom-proxy", structuredOutputMode: "json-object" })).toBe("json-object");
   });
 });

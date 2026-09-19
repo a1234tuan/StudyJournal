@@ -1,5 +1,5 @@
 import type { AiChatAttachment, AiChatMessage, AiCompletionResult, AiCompletionUsage, AiContextPack, AiProviderProfile } from "../types";
-import { DEFAULT_AI_CONTEXT_WINDOW_TOKENS, DEFAULT_AI_MEMORY_TURNS } from "../lib/aiProviders";
+import { DEFAULT_AI_CONTEXT_WINDOW_TOKENS, DEFAULT_AI_MEMORY_TURNS, structuredOutputModeForProvider } from "../lib/aiProviders";
 import { blobToBase64 } from "./backup";
 import { canUseNativeAi, runNativeAiChat } from "./nativeAi";
 import {
@@ -348,6 +348,19 @@ const requestOpenAiChatCompletionDetailed = async (options: {
   const { provider, apiKey, messages } = options;
   if (options.signal?.aborted) throw new DOMException("AI request cancelled", "AbortError");
   const maxTokens = options.maxTokens ?? provider.maxTokens;
+  // `thinking` is a DeepSeek extension, not part of OpenAI Chat Completions.
+  // Sending it to Gemini or a generic compatible relay can make an otherwise
+  // valid structured request fail before the model sees the prompt.
+  const providerHost = (() => {
+    try { return new URL(provider.baseUrl).hostname.toLowerCase(); } catch { return ""; }
+  })();
+  const thinkingMode = provider.builtIn === "deepseek" && providerHost === "api.deepseek.com"
+    ? options.thinkingMode
+    : undefined;
+  // `response_format` is optional in the OpenAI-compatible ecosystem. The
+  // capability is explicit so a custom relay can opt in after verification;
+  // unknown/custom profiles otherwise stay prompt-only for compatibility.
+  const structuredOutput = options.structuredOutput && structuredOutputModeForProvider(provider) === "json-object";
 
   if (canUseNativeAi()) {
     return runNativeAiChat({
@@ -357,8 +370,8 @@ const requestOpenAiChatCompletionDetailed = async (options: {
       temperature: provider.temperature,
       maxTokens,
       messages,
-      structuredOutput: options.structuredOutput,
-      thinkingMode: options.thinkingMode,
+      structuredOutput,
+      thinkingMode,
       reasoningEffort: options.reasoningEffort,
       timeoutMs: options.timeoutMs,
       signal: options.signal,
@@ -395,8 +408,8 @@ const requestOpenAiChatCompletionDetailed = async (options: {
         messages,
         temperature: provider.temperature,
         max_tokens: maxTokens,
-        ...(options.structuredOutput ? { response_format: { type: "json_object" } } : {}),
-        ...(options.thinkingMode ? { thinking: { type: options.thinkingMode } } : {}),
+        ...(structuredOutput ? { response_format: { type: "json_object" } } : {}),
+        ...(thinkingMode ? { thinking: { type: thinkingMode } } : {}),
         ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
       }),
       signal: timeoutController.signal,

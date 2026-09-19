@@ -23,7 +23,14 @@ describe("session planning gateway", () => {
     const prompt = buildSessionPlanningPrompt({ blocks: [{ decisionBlockId: "block-1", recordId: "record-1", contentVersion: 1, recordTitle: "BFS", subject: "DS", contextMarkdown: "context", excerptHash: "hash-1", feedback: [] }], allowedSupportingDecisionBlockIds: [] });
     expect(prompt).toContain("不得补造来源");
     expect(prompt).toContain("hash-1");
-    expect(prompt).toContain("session-blueprint-v1");
+    expect(prompt).toContain("session-blueprint-v2");
+    expect(prompt).toContain('"required"');
+    expect(prompt).toContain("可复核推导");
+    expect(prompt).toContain("推导结果不得冒充来源事实");
+    expect(prompt).toContain("题面存在歧义，不单独构成信息不足");
+    expect(prompt).toContain("诊断题、辨析题或前置知识检查");
+    expect(prompt).toContain("Markdown 数学分隔符");
+    expect(prompt).toContain("不要输出裸 e^{...}");
   });
 
   it("requests strict JSON and returns token diagnostics", async () => {

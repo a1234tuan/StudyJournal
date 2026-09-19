@@ -463,13 +463,13 @@ body {
 .adaptive-review-finish,
 .adaptive-review-inline-dialog { border-right: 0; border-left: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .adaptive-review-objective { border-left: 2px solid var(--color-primary); padding-left: 16px; }
-.adaptive-review-turn h2,
+.adaptive-review-question,
 .adaptive-review-finish h2 { font-family: var(--font-reading); font-weight: 580; }
 .adaptive-review-turn textarea,
 .adaptive-review-finish textarea,
 .adaptive-review-inline-dialog textarea { border-color: var(--color-border); background: var(--color-surface); line-height: 1.7; }
 .adaptive-review-result > strong { color: var(--color-primary-strong); }
-.adaptive-review-hints p { border-left-color: var(--color-accent); background: var(--color-accent-soft); }
+.adaptive-review-hint { border-left-color: var(--color-accent); background: var(--color-accent-soft); }
 
 @media (max-width: 720px) {
   .review-direct-edit { min-width: 42px; padding-inline: 9px; font-size: 0; }

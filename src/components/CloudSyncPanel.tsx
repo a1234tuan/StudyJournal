@@ -19,6 +19,7 @@ import {
 import { cloudSyncStore, useCloudSyncStore } from "../services/cloudSyncStore";
 import { getFirebaseStorageUsage, type FirebaseStorageUsage } from "../services/firebaseStorageUsageService";
 import { FirebaseStorageUsageRequestGate } from "../services/firebaseStorageUsageRequestGate";
+import { cloudGoogleSignInErrorMessage } from "../services/cloudGoogleSignIn";
 import { CloudSyncButton } from "./CloudSyncButton";
 import { SurfaceCard } from "./ui";
 
@@ -30,6 +31,7 @@ const formatDateTime = (value: string) =>
   new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 
 const errorMessage = (error: unknown) => formatUiError(error, "cloud-sync");
+const signInErrorMessage = (error: unknown) => cloudGoogleSignInErrorMessage(error) ?? errorMessage(error);
 
 const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes < 0) return "--";
@@ -197,7 +199,7 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
       cloudSyncStore.setOutcome("success", message);
     } catch (error) {
       if (cloudSyncStore.isCurrent(token)) {
-        const message = errorMessage(error);
+        const message = signInErrorMessage(error);
         setMessage(message);
         cloudSyncStore.setOutcome("error", message);
       }

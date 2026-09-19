@@ -259,6 +259,7 @@ describe("buildAiMessages", () => {
       temperature: 0.7,
       maxTokens: 4096,
       contextWindowTokens: 65_536,
+      builtIn: "deepseek" as const,
     };
 
     const result = await sendChatCompletionDetailed({
@@ -294,6 +295,86 @@ describe("buildAiMessages", () => {
       reasoning_effort: "high",
     });
     expect(result).toMatchObject({ content: "{}", finishReason: "stop", requestId: "req-structured" });
+  });
+
+  it("does not send the DeepSeek thinking extension to Gemini or custom OpenAI-compatible providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendChatCompletionDetailed({
+      provider: {
+        id: "gemini",
+        providerName: "Gemini relay",
+        baseUrl: "https://relay.example/v1",
+        model: "gemini-3.1-pro",
+        temperature: 0.7,
+        maxTokens: 4096,
+      },
+      apiKey: "test",
+      history: [],
+      prompt: "输出 JSON",
+      request: { structuredOutput: true, thinkingMode: "disabled" },
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty("response_format");
+    expect(body).not.toHaveProperty("thinking");
+  });
+
+  it("does not trust stale DeepSeek template metadata after the endpoint is changed to Gemini", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendChatCompletionDetailed({
+      provider: {
+        id: "edited-template",
+        providerName: "Gemini",
+        baseUrl: "https://gemini-relay.example/v1",
+        model: "gemini-3.1-pro",
+        temperature: 0.7,
+        maxTokens: 4096,
+        builtIn: "deepseek",
+      },
+      apiKey: "test",
+      history: [],
+      prompt: "输出 JSON",
+      request: { structuredOutput: true, thinkingMode: "disabled" },
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty("response_format");
+    expect(body).not.toHaveProperty("thinking");
+  });
+
+  it("lets a verified custom relay opt into JSON object mode explicitly", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendChatCompletionDetailed({
+      provider: {
+        id: "custom-json",
+        providerName: "Gemini relay",
+        baseUrl: "https://relay.example/v1",
+        model: "gemini-3.1-pro",
+        temperature: 0.7,
+        maxTokens: 4096,
+        builtIn: "custom-proxy",
+        structuredOutputMode: "json-object",
+      },
+      apiKey: "test",
+      history: [],
+      prompt: "输出 JSON",
+      request: { structuredOutput: true },
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body).toHaveProperty("response_format", { type: "json_object" });
   });
 
   it("reports HTML responses as likely Base URL path errors", async () => {

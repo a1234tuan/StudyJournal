@@ -43,6 +43,33 @@ describe("AdaptiveReviewPage", () => {
     expect(screen.getByRole("button", { name: "提示 1" })).toBeInTheDocument();
   });
 
+  it("renders coach objectives, questions, hints and criteria with KaTeX", () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.sessionBlueprints[0] = {
+      ...coachTestBlueprint,
+      objective: "判断 $x \\to 0^+$ 时 $e^{1/x}$ 的极限。",
+      completionCriteria: ["能说明 $t=1/x$ 的换元方向。"],
+    };
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = {
+      ...coachTestTurn,
+      status: "displayed",
+      question: "设 $t=\\dfrac{1}{x}$，求 $\\arctan t$。",
+      availableHints: ["先判断 $x\\to0^+$ 时 $t$ 的方向。"],
+      answerText: undefined,
+      answeredAt: undefined,
+      assessment: undefined,
+      assessmentRationale: undefined,
+      hintsUsed: [{ level: 1, requestedAt: coachTestStamp }],
+    };
+
+    const { container } = render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    expect(container.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(4);
+    expect(container.querySelector(".adaptive-review-question")).toHaveTextContent("设");
+    expect(container.querySelector(".adaptive-review-question")).not.toHaveTextContent("$t=");
+  });
+
   it("shows answer evidence after submission and requires confirmation for conflicting mastery", () => {
     const snapshot = completeCoachTestSnapshot();
     snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };

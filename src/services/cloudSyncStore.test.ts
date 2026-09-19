@@ -75,6 +75,40 @@ describe("cloudSyncStore watchdog", () => {
     expect(cloudSyncStore.getSnapshot().readBudget).toBeUndefined();
     expect(cloudSyncStore.getSnapshot().writeBudget).toBeUndefined();
   });
+
+  it("keeps native sign-in current while its account chooser backgrounds the WebView", () => {
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    cloudSyncStore.setBusy("sign-in");
+    const token = cloudSyncStore.currentToken();
+
+    visibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(cloudSyncStore.getSnapshot().busy).toBe("sign-in");
+    expect(cloudSyncStore.isCurrent(token)).toBe(true);
+    expect(cloudSyncStore.finishBusy(token)).toBe(true);
+  });
+
+  it("still invalidates a sync request interrupted by a real background transition", () => {
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    cloudSyncStore.setBusy("sync");
+    const token = cloudSyncStore.currentToken();
+
+    visibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(cloudSyncStore.getSnapshot()).toMatchObject({
+      busy: null,
+      outcome: { status: "uncertain" },
+    });
+    expect(cloudSyncStore.isCurrent(token)).toBe(false);
+  });
 });
 
 describe("cloudSyncStore outcome toast", () => {

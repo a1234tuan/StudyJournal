@@ -90,7 +90,7 @@ const RecordAssetNodeView = ({ node, getPos, updateAttributes, extensionOptions,
   );
 };
 
-const RecordFormulaNodeView = ({ node, updateAttributes, editor }: NodeViewProps) => {
+const RecordFormulaNodeView = ({ node, updateAttributes, editor, getPos }: NodeViewProps) => {
   const title = String(node.attrs.title ?? "");
   const latex = String(node.attrs.latex ?? "");
   const editable = editor.isEditable;
@@ -124,6 +124,26 @@ const RecordFormulaNodeView = ({ node, updateAttributes, editor }: NodeViewProps
     setEditing(false);
   };
 
+  const selectNode = () => {
+    const position = getPos();
+    if (typeof position !== "number" || editor.isDestroyed) {
+      return;
+    }
+    editor.view.dispatch(
+      editor.state.tr
+        .setSelection(NodeSelection.create(editor.state.doc, position))
+        .scrollIntoView(),
+    );
+  };
+
+  const beginEditing = () => {
+    if (!editable || editing) {
+      return;
+    }
+    updateAttributes({ editing: true });
+    setEditing(true);
+  };
+
   const commitOnBlur = (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof globalThis.Node && event.currentTarget.parentElement?.contains(nextTarget)) {
@@ -133,11 +153,17 @@ const RecordFormulaNodeView = ({ node, updateAttributes, editor }: NodeViewProps
   };
 
   return (
-    <NodeViewWrapper className="record-inline-node formula-editor-card" contentEditable={false} onClick={() => {
-      if (editable && !editing) {
-        setEditing(true);
-      }
-    }}>
+    <NodeViewWrapper
+      className="record-inline-node formula-editor-card"
+      contentEditable={false}
+      onClick={() => {
+        if (!editing) {
+          selectNode();
+        }
+      }}
+      onDoubleClick={beginEditing}
+      data-latex={latex}
+    >
       {editing ? (
         <>
           <input value={draftTitle} placeholder="公式标题" onChange={(event) => setDraftTitle(event.target.value)} onBlur={commitOnBlur} />
@@ -204,7 +230,7 @@ const RecordInlineMathNodeView = ({ node, updateAttributes, editor }: NodeViewPr
       if (editable && !editing) {
         setEditing(true);
       }
-    }}>
+    }} data-latex={latex}>
       {editing ? (
         <input
           autoFocus

@@ -58,6 +58,7 @@ import { buildAnalysisPlanningBlocks, maxAnalysisInputTokensForProvider, type An
 import { assertTurnContextBudget } from "../features/reviewCoach/contextBudget";
 import { createSessionPlanningGateway, defaultSessionPlanningMetadata } from "../features/reviewCoach/sessionPlanningGateway";
 import { createQuizExecutionGateway, defaultQuizExecutionMetadata } from "../features/reviewCoach/quizExecutionGateway";
+import { actionableDirectAnalysisError, assertAnalysisBatchCompleted } from "../features/reviewCoach/analysisErrors";
 import { buildDecisionBlockAiContextPack } from "../services/aiContextService";
 import type { InterventionPath, SubjectiveOutcome } from "../features/reviewCoach/domain";
 
@@ -89,6 +90,7 @@ export const useAppData = () => {
   const [dueRecordReviews, setDueRecordReviews] = useState<RecordReviewState[]>([]);
   const [recordReviewLogs, setRecordReviewLogs] = useState<RecordReviewLog[]>([]);
   const [recordReviewStats, setRecordReviewStats] = useState<RecordReviewStats | null>(null);
+  const deepAnalysisInFlightRef = useRef<Promise<unknown> | null>(null);
   const [reviewCoachSnapshot, setReviewCoachSnapshot] = useState<ReviewCoachFormalSnapshot>(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT);
   const [assetsVersion, setAssetsVersion] = useState(0);
   const [interpretationRuntimeReady, setInterpretationRuntimeReady] = useState(
@@ -509,9 +511,9 @@ export const useAppData = () => {
     allowCrossBlockSupport: boolean,
     operationId: string,
   ) => {
-    if (planningBlocks.length === 0) throw new Error("没有可分析的复习重点。");
+    if (planningBlocks.length === 0) throw new ActionableError("没有可分析的复习重点。请确认已保存复习重点和评价后再试。");
     if (typeof document !== "undefined" && (document.visibilityState !== "visible" || !navigator.onLine)) {
-      throw new Error("请回到前台并联网后再开始深度分析。");
+      throw new ActionableError("请让应用保持在前台并确认网络可用后再开始分析。");
     }
     const currentSettings = await storage.getSettings();
     const provider = getCurrentAiProvider(currentSettings.ai);
@@ -560,25 +562,52 @@ export const useAppData = () => {
         signal: controller.signal,
       });
       await markAutoBackupDirty("review-coach-deep-analysis");
+      assertAnalysisBatchCompleted(result.batch);
       return result;
+    } catch (error) {
+      throw actionableDirectAnalysisError(error, provider);
     } finally {
       interpretationAbortControllersRef.current.delete(controller);
       await refresh();
     }
   }, [refresh, reviewCoachSnapshot.aiRoleConfigs]);
 
-  const runDeepAnalysis = useCallback(async (decisionBlockIds: readonly string[], allowCrossBlockSupport: boolean) => {
-    const selected = new Set(decisionBlockIds);
-    return executeDeepAnalysis(analysisPlanningBlocks.filter((item) => selected.has(item.decisionBlockId)), allowCrossBlockSupport, newId());
-  }, [analysisPlanningBlocks, executeDeepAnalysis]);
+  const runExclusiveDeepAnalysis = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
+    if (deepAnalysisInFlightRef.current) return deepAnalysisInFlightRef.current as Promise<T>;
+    const promise = work().finally(() => {
+      if (deepAnalysisInFlightRef.current === promise) deepAnalysisInFlightRef.current = null;
+    });
+    deepAnalysisInFlightRef.current = promise;
+    return promise;
+  }, []);
 
-  const resumeDeepAnalysis = useCallback(async (batchId: string) => {
-    const batch = reviewCoachSnapshot.analysisBatches.find((item) => item.id === batchId && ["confirmed", "running"].includes(item.status));
+  const runDeepAnalysis = useCallback((decisionBlockIds: readonly string[], allowCrossBlockSupport: boolean) => runExclusiveDeepAnalysis(async () => {
+    const selected = new Set(decisionBlockIds);
+    // The rating flow and cloud refresh can update formal queue rows between the
+    // render and the click. Always plan from the repository's current snapshot
+    // instead of submitting the React snapshot that produced the button.
+    const freshSnapshot = await reviewCoachRepository.getFormalSnapshot();
+    const freshBlocks = buildAnalysisPlanningBlocks({
+      snapshot: freshSnapshot,
+      records: recordBlocks,
+      assets,
+      reviewLogs: recordReviewLogs,
+    }).filter((item) => selected.has(item.decisionBlockId));
+    if (freshBlocks.length !== selected.size) {
+      await refresh();
+      throw new ActionableError("分析队列刚刚发生了变化，页面已刷新。请重新进入学习助教后再试；不会重复扣费或删除评价。");
+    }
+    return executeDeepAnalysis(freshBlocks, allowCrossBlockSupport, newId());
+  }), [assets, executeDeepAnalysis, recordBlocks, recordReviewLogs, refresh, runExclusiveDeepAnalysis]);
+
+  const resumeDeepAnalysis = useCallback((batchId: string) => runExclusiveDeepAnalysis(async () => {
+    const freshSnapshot = await reviewCoachRepository.getFormalSnapshot();
+    const batch = freshSnapshot.analysisBatches.find((item) => item.id === batchId && ["confirmed", "running"].includes(item.status));
     if (!batch) throw new Error("没有可继续的分析批次。");
     const queueIds = new Set(batch.inputRefs.map((item) => item.queueItemId));
     const blockIds = new Set(batch.inputRefs.map((item) => item.decisionBlockId));
     const planningBlocks = buildAnalysisPlanningBlocks({
-      snapshot: reviewCoachSnapshot,
+      snapshot: freshSnapshot,
       records: recordBlocks,
       assets,
       reviewLogs: recordReviewLogs,
@@ -589,7 +618,7 @@ export const useAppData = () => {
       Boolean(batch.allowCrossBlockSupport),
       batch.idempotencyKey.startsWith("analysis:") ? batch.idempotencyKey.slice("analysis:".length) : batch.id,
     );
-  }, [assets, executeDeepAnalysis, recordBlocks, recordReviewLogs, reviewCoachSnapshot]);
+  }), [assets, executeDeepAnalysis, recordBlocks, recordReviewLogs, runExclusiveDeepAnalysis]);
 
   const switchAdaptiveTask = useCallback(async (taskId: string) => {
     const updated = await reviewCoachOrchestrator.switchCurrentTask(taskId);

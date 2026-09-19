@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, Keyboard, Lightbulb, LoaderCircle, LogOut, Mic, Pause, Play, RotateCcw, Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AiMarkdown } from "../../components/AiMarkdown";
 import type { RecordBlock } from "../../types";
 import { formatActionableError } from "../../lib/uiError";
 import type { VoiceCaptureAdapter } from "../voiceRecall/contracts";
@@ -289,7 +290,11 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
       </header>
 
       <section className="adaptive-review-objective">
-        {!delayedVerification && <><small>本次目标</small><strong>{blueprint.objective}</strong><p>{blueprint.completionCriteria.join("；")}</p></>}
+        {!delayedVerification && <>
+          <small>本次目标</small>
+          <div className="ai-markdown adaptive-review-objective-title adaptive-review-markdown"><AiMarkdown content={blueprint.objective} /></div>
+          <div className="ai-markdown adaptive-review-objective-criteria adaptive-review-markdown"><AiMarkdown content={blueprint.completionCriteria.join("；")} /></div>
+        </>}
         {delayedVerification && <p className="adaptive-review-verification-note">使用新题检查间隔后的回忆；结果不会改写整条日志的 FSRS 日期。</p>}
       </section>
 
@@ -304,7 +309,7 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
       {currentTurn && (
         <section className="adaptive-review-turn">
           <div className="adaptive-review-turn-meta"><span>第 {currentTurn.sequence} 轮</span><small>{currentTurn.practiceType}</small></div>
-          <h2>{currentTurn.question}</h2>
+          <div className="ai-markdown adaptive-review-question adaptive-review-markdown" role="heading" aria-level={2}><AiMarkdown content={currentTurn.question} /></div>
 
           {!answered ? (
             <>
@@ -313,7 +318,7 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
                   {currentTurn.availableHints!.map((hint, index) => {
                     const level = index + 1;
                     const revealed = requestedLevels.has(level);
-                    return revealed ? <p key={level}><Lightbulb size={15} />{hint}</p> : <button key={level} type="button" disabled={Boolean(busy) || (level > 1 && !requestedLevels.has(level - 1))} onClick={() => void run(`hint:${level}`, () => onRequestHint(currentTurn.id, level))}><Lightbulb size={15} />提示 {level}</button>;
+                    return revealed ? <div key={level} className="adaptive-review-hint"><Lightbulb size={15} /><div className="ai-markdown adaptive-review-markdown"><AiMarkdown content={hint} /></div></div> : <button key={level} type="button" disabled={Boolean(busy) || (level > 1 && !requestedLevels.has(level - 1))} onClick={() => void run(`hint:${level}`, () => onRequestHint(currentTurn.id, level))}><Lightbulb size={15} />提示 {level}</button>;
                   })}
                 </div>
               )}
@@ -342,9 +347,9 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
           ) : (
             <div className={`adaptive-review-result ${currentTurn.assessment}`}>
               <strong>{assessmentLabel[currentTurn.assessment!]}</strong>
-              <p>{currentTurn.assessmentRationale}</p>
+              <div className="ai-markdown adaptive-review-markdown"><AiMarkdown content={currentTurn.assessmentRationale ?? ""} /></div>
               <div><small>你的回答</small><p>{currentTurn.answerText}</p></div>
-              <div><small>答案依据</small><ul>{currentTurn.answerCriteria.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              <div><small>答案依据</small><ul>{currentTurn.answerCriteria.map((item) => <li key={item}><div className="ai-markdown adaptive-review-markdown"><AiMarkdown content={item} /></div></li>)}</ul></div>
               <div className="adaptive-review-source"><small>来源片段 · {record.title}</small><p>{extractSourceText(record, task.decisionBlockId)}</p></div>
               {isClosedLoopV2 && !delayedVerification && !v2LoopClosed && needsInterventionChoice && (
                 // The learner says which action they need next. They are not

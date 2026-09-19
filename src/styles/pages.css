@@ -3146,11 +3146,17 @@
 }
 
 .review-coach-cost-note,
+.review-coach-provider-note,
 .review-coach-error,
 .review-coach-message,
 .review-coach-confirmation p,
 .review-coach-task-list p {
   margin: 0;
+}
+
+.review-coach-provider-note {
+  color: var(--color-muted);
+  font-size: 0.72rem;
 }
 
 .review-coach-analysis > .primary-button {
@@ -3899,6 +3905,13 @@
 .adaptive-review-objective small,
 .adaptive-review-result small,
 .adaptive-review-turn-meta { color: var(--color-muted); }
+.adaptive-review-objective-title { font-weight: 700; }
+.adaptive-review-objective-title p,
+.adaptive-review-objective-criteria p,
+.adaptive-review-question p,
+.adaptive-review-hint p,
+.adaptive-review-result .adaptive-review-markdown p { margin: 0; }
+.adaptive-review-objective .adaptive-review-objective-title p { color: var(--color-text); }
 .adaptive-review-objective p,
 .adaptive-review-start p { margin: 0; color: var(--color-muted); }
 .adaptive-review-objective .adaptive-review-verification-note {
@@ -3912,12 +3925,12 @@
 .adaptive-review-start h2 { font-size: 1.15rem; }
 .adaptive-review-start .primary-button { margin-top: 18px; }
 .adaptive-review-turn-meta { display: flex; justify-content: space-between; gap: 12px; }
-.adaptive-review-turn h2 { margin: 18px 0; font-size: 1.25rem; line-height: 1.6; }
+.adaptive-review-question { margin: 18px 0; font-size: 1.25rem; line-height: 1.6; font-weight: 700; }
 .adaptive-review-turn textarea,
 .adaptive-review-finish textarea,
 .adaptive-review-inline-dialog textarea { width: 100%; resize: vertical; margin-top: 14px; }
 .adaptive-review-hints { display: grid; gap: 8px; margin-bottom: 14px; }
-.adaptive-review-hints p { display: flex; gap: 8px; margin: 0; padding: 10px 12px; background: #fff8e8; border-left: 3px solid #b7791f; }
+.adaptive-review-hint { display: flex; gap: 8px; margin: 0; padding: 10px 12px; background: #fff8e8; border-left: 3px solid #b7791f; }
 .adaptive-review-hints button { width: fit-content; }
 .adaptive-answer-mode,
 .adaptive-voice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -3956,7 +3969,7 @@
   .adaptive-review-turn,
   .adaptive-review-finish,
   .adaptive-review-inline-dialog { padding: 14px; }
-  .adaptive-review-turn h2 { font-size: 1.08rem; }
+  .adaptive-review-question { font-size: 1.08rem; }
   .adaptive-review-primary-actions > button,
   .adaptive-review-outcomes > button { width: 100%; flex-basis: 100%; }
   .adaptive-review-secondary-actions { justify-content: stretch; }

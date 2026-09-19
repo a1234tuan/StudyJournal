@@ -10,6 +10,7 @@ import {
   getCurrentAiProvider,
   normalizeAiConfig,
   normalizeAiProvider,
+  structuredOutputModeForProvider,
 } from "../lib/aiProviders";
 import { normalizeAiChatCompletionsUrl, testAiProviderConnection } from "../services/aiClientService";
 import { storage } from "../services/storageAdapter";
@@ -304,6 +305,19 @@ export const AiSettingsPanel = ({ settings, onChanged }: AiSettingsPanelProps) =
                         onChange={(event) => updateProvider(provider.id, { model: event.target.value })}
                         placeholder="deepseek-v4-flash / qwen-plus / meta/llama-3.3-70b-instruct"
                       />
+                    </label>
+                    <label>
+                      结构化输出能力
+                      <select
+                        value={structuredOutputModeForProvider(provider)}
+                        onChange={(event) => updateProvider(provider.id, { structuredOutputMode: event.target.value as AiProviderProfile["structuredOutputMode"] })}
+                      >
+                        <option value="json-object">接口支持 JSON object</option>
+                        <option value="prompt-only">仅依赖提示词</option>
+                      </select>
+                      <small>{structuredOutputModeForProvider(provider) === "json-object"
+                        ? "学习助教会同时发送 response_format=json_object；中转接口必须兼容该字段。"
+                        : "学习助教只发送严格 JSON 提示词，并用本机 Schema 校验结果；适合不接受 response_format 的中转。"}</small>
                     </label>
                     <label>
                       API Key

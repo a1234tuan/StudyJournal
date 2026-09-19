@@ -4,4 +4,12 @@
     <string name="title_activity_main">学习日志</string>
     <string name="package_name">com.noteproject.study408</string>
     <string name="custom_url_scheme">com.noteproject.study408</string>
+    <!-- Public OAuth client identifier used by the native Google account chooser. -->
+    <string name="default_web_client_id">545473367044-76r63pohs3v6o0tnu06g582ms1p5m5p6.apps.googleusercontent.com</string>
+    <!-- Public Firebase Android client identifiers; authorization remains enforced by Auth and Rules. -->
+    <string name="google_app_id">1:545473367044:android:66e31b0c2f300ed2903951</string>
+    <string name="google_api_key">AIzaSyDOK_vsr5Rv2TNMG1hGwRhnE1W0FNclzZU</string>
+    <string name="gcm_defaultSenderId">545473367044</string>
+    <string name="project_id">study-journal-408-9f31</string>
+    <string name="google_storage_bucket">study-journal-408-9f31.firebasestorage.app</string>
 </resources>

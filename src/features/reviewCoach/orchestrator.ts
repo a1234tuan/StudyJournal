@@ -19,6 +19,7 @@ import type {
 } from "./domain";
 import { AiRequestError } from "../../services/aiClientService";
 import { waitAiRetry } from "../../services/aiRetry";
+import { analysisFailureCode } from "./analysisErrors";
 import {
   calculateClosedLoopVerificationSchedule,
   calculateDelayedVerificationSchedule,
@@ -436,7 +437,7 @@ export class ReviewCoachOrchestrator {
       ...interpretation,
       status: "failed" as FeedbackInterpretationStatus,
       attemptCount: maxRetries + 1,
-      errorCode: lastError instanceof Error ? lastError.message.slice(0, 240) : "interpretation-failed",
+      errorCode: analysisFailureCode(lastError),
       updatedAt: this.dependencies.clock.now(),
     };
     return this.dependencies.repository.saveFeedbackInterpretation(failed);
@@ -626,7 +627,7 @@ export class ReviewCoachOrchestrator {
             ...item,
             status: "failed",
             attemptCount: maxRetries + 1,
-            errorCode: lastError instanceof Error ? lastError.message.slice(0, 240) : "analysis-failed",
+            errorCode: analysisFailureCode(lastError),
           } : item),
         };
         batch = await this.dependencies.repository.updateAnalysisBatch(batch);

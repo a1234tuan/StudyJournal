@@ -464,15 +464,45 @@ const serializeClipboardText = (slice: Slice): string =>
     return node.type.spec.leafText?.(node) ?? "";
   });
 
+const handledCopyEvents = new WeakSet<ClipboardEvent>();
+
 // A native drag selection can cross a contentEditable=false atom NodeView
 // without being reflected in ProseMirror's state selection. Read that range
 // directly when copying so atom nodes (including formulas) remain in the slice.
 const sliceFromNativeSelection = (view: EditorView): Slice | undefined => {
   const selection = view.dom.ownerDocument.defaultView?.getSelection?.();
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+  if (!selection || selection.rangeCount === 0) {
     return undefined;
   }
   const range = selection.getRangeAt(0);
+  if (selection.isCollapsed) {
+    // A browser can leave a collapsed DOM caret inside an atom NodeView even
+    // though the user meant to select the formula card. Recover that atom for
+    // copy; text inputs inside the editing UI must keep their native copy path.
+    const anchor = selection.anchorNode;
+    const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+    if (!anchorElement || anchorElement.closest("input,textarea")) {
+      return undefined;
+    }
+    const nodeViewElement = anchorElement.closest("[data-node-view-wrapper],.formula-editor-card,.record-inline-math");
+    if (!nodeViewElement || !view.dom.contains(nodeViewElement)) {
+      return undefined;
+    }
+    let atomSlice: Slice | undefined;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name !== "recordInlineMath" && node.type.name !== "recordFormula") {
+        return true;
+      }
+      const nodeDOM = view.nodeDOM(position);
+      const nodeDOMElement = nodeDOM instanceof Element ? nodeDOM : undefined;
+      if (nodeDOMElement && (nodeDOMElement === nodeViewElement || nodeDOMElement.contains(nodeViewElement) || nodeViewElement.contains(nodeDOMElement))) {
+        atomSlice = view.state.doc.slice(position, position + node.nodeSize);
+        return false;
+      }
+      return false;
+    });
+    return atomSlice;
+  }
   const containsEndpoint = (node: Node | null): boolean => {
     if (!node) {
       return false;
@@ -483,8 +513,67 @@ const sliceFromNativeSelection = (view: EditorView): Slice | undefined => {
   if (!containsEndpoint(range.startContainer) || !containsEndpoint(range.endContainer)) {
     return undefined;
   }
-  const start = view.posAtDOM(range.startContainer, range.startOffset, 1);
-  const end = view.posAtDOM(range.endContainer, range.endOffset, -1);
+  const atomPositions: Array<{ from: number; to: number; dom: Element }> = [];
+  view.state.doc.descendants((node, position) => {
+    if (node.type.name !== "recordInlineMath" && node.type.name !== "recordFormula") {
+      return true;
+    }
+    const nodeDOM = view.nodeDOM(position);
+    if (!(nodeDOM instanceof Element)) {
+      return false;
+    }
+    try {
+      if (range.intersectsNode(nodeDOM)) {
+        atomPositions.push({ from: position, to: position + node.nodeSize, dom: nodeDOM });
+      }
+    } catch {
+      // Detached NodeViews cannot belong to the active editor selection.
+    }
+    return false;
+  });
+  const atomPositionForEndpoint = (container: Node | null, isStart: boolean): number | undefined => {
+    if (!container) {
+      return undefined;
+    }
+    const target = container.nodeType === 3 ? container.parentElement : container instanceof Element ? container : null;
+    const atom = atomPositions.find(({ dom }) => target && (dom === target || dom.contains(target) || target.contains(dom)));
+    if (!atom) {
+      return undefined;
+    }
+    return isStart ? atom.from : atom.to;
+  };
+  let start: number;
+  let end: number;
+  try {
+    start = view.posAtDOM(range.startContainer, range.startOffset, 1);
+    end = view.posAtDOM(range.endContainer, range.endOffset, -1);
+  } catch {
+    // Browser selections that terminate inside a contentEditable=false
+    // NodeView (notably the nested KaTeX DOM of an inline formula) may not
+    // map to a ProseMirror position. Recover each failed endpoint from the
+    // intersected atom instead of dropping the whole clipboard selection.
+    const mappedStart = atomPositionForEndpoint(range.startContainer, true);
+    const mappedEnd = atomPositionForEndpoint(range.endContainer, false);
+    const fallbackStart = mappedStart ?? (() => {
+      try {
+        return view.posAtDOM(range.startContainer, range.startOffset, 1);
+      } catch {
+        return undefined;
+      }
+    })();
+    const fallbackEnd = mappedEnd ?? (() => {
+      try {
+        return view.posAtDOM(range.endContainer, range.endOffset, -1);
+      } catch {
+        return undefined;
+      }
+    })();
+    if (fallbackStart === undefined || fallbackEnd === undefined) {
+      return undefined;
+    }
+    start = fallbackStart;
+    end = fallbackEnd;
+  }
   let from = Math.min(start, end);
   let to = Math.max(start, end);
   if (from < 0 || to <= from || to > view.state.doc.content.size) {
@@ -515,6 +604,139 @@ const sliceFromNativeSelection = (view: EditorView): Slice | undefined => {
   } catch {
     return undefined;
   }
+};
+
+const serializeNativeSelectionText = (view: EditorView): string | undefined => {
+  const selection = view.dom.ownerDocument.defaultView?.getSelection?.();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return undefined;
+  }
+  const sourceRange = selection.getRangeAt(0);
+  const endpointInEditor = (node: Node | null): boolean => {
+    if (!node) {
+      return false;
+    }
+    const target = node.nodeType === 3 ? node.parentNode : node;
+    return target ? view.dom.contains(target) : false;
+  };
+  if (!endpointInEditor(sourceRange.startContainer) || !endpointInEditor(sourceRange.endContainer)) {
+    return undefined;
+  }
+
+  // Expand a native range to whole formula NodeViews before cloning it. A
+  // Chromium range can start/end inside KaTeX's generated MathML subtree,
+  // which otherwise clones only the rendered glyphs and loses the source
+  // LaTeX entirely.
+  const range = sourceRange.cloneRange();
+  const formulaElements = Array.from(view.dom.querySelectorAll<HTMLElement>(".record-inline-math, .formula-editor-card"));
+  for (const element of formulaElements) {
+    let intersects = false;
+    try {
+      intersects = range.intersectsNode(element);
+    } catch {
+      continue;
+    }
+    if (!intersects) {
+      continue;
+    }
+    const containsStart = element === range.startContainer || element.contains(range.startContainer);
+    const containsEnd = element === range.endContainer || element.contains(range.endContainer);
+    if (containsStart) {
+      range.setStartBefore(element);
+    }
+    if (containsEnd) {
+      range.setEndAfter(element);
+    }
+  }
+
+  const blockTags = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "PRE", "H1", "H2", "H3", "H4", "H5", "H6"]);
+  const visit = (node: Node): string => {
+    if (node.nodeType === 3) {
+      return node.nodeValue ?? "";
+    }
+    if (!(node instanceof Element)) {
+      return Array.from(node.childNodes).map(visit).join("");
+    }
+    if (node.classList.contains("record-inline-math")) {
+      return "$" + (node.getAttribute("data-latex") ?? "") + "$";
+    }
+    if (node.classList.contains("formula-editor-card")) {
+      return "$$\n" + (node.getAttribute("data-latex") ?? "") + "\n$$";
+    }
+    if (node.tagName === "BR") {
+      return "\n";
+    }
+    const content = Array.from(node.childNodes).map(visit).join("");
+    return blockTags.has(node.tagName) ? content + "\n\n" : content;
+  };
+  const text = visit(range.cloneContents()).replace(/\n{3,}/g, "\n\n").trim();
+  return text || undefined;
+};
+
+const makeExternalClipboardHtml = (html: string): string => {
+  if (typeof document === "undefined" || !html) {
+    return html;
+  }
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const element of Array.from(template.content.querySelectorAll<HTMLElement>("record-inline-math, record-formula"))) {
+    const latex = element.getAttribute("data-latex") ?? "";
+    element.textContent = element.tagName.toLowerCase() === "record-formula"
+      ? `$$\n${latex}\n$$`
+      : `$${latex}$`;
+  }
+  return template.innerHTML;
+};
+
+const copyEditorSelection = (view: EditorView, event: ClipboardEvent, requireNativeSelection = false): boolean => {
+  if (handledCopyEvents.has(event)) {
+    return true;
+  }
+  const nativeText = serializeNativeSelectionText(view);
+  const nativeSlice = sliceFromNativeSelection(view);
+  const nativeSelection = view.dom.ownerDocument.defaultView?.getSelection?.();
+  const nativeRangeBelongsToEditor = (() => {
+    if (!nativeSelection || nativeSelection.rangeCount === 0) {
+      return false;
+    }
+    const range = nativeSelection.getRangeAt(0);
+    const contains = (node: Node | null) => {
+      if (!node) return false;
+      const target = node.nodeType === 3 ? node.parentNode : node;
+      return target ? view.dom.contains(target) : false;
+    };
+    return contains(range.startContainer) && contains(range.endContainer);
+  })();
+  const slice = nativeSlice
+    ?? ((!requireNativeSelection || nativeRangeBelongsToEditor) && !view.state.selection.empty
+      ? view.state.selection.content()
+      : undefined);
+  if (!slice && !nativeText) {
+    return false;
+  }
+  const clipboardData = event.clipboardData;
+  if (!clipboardData && !isNativePlatform()) {
+    return false;
+  }
+  const serialized = slice ? view.serializeForClipboard(slice) : undefined;
+  const text = nativeText ?? serialized?.text ?? "";
+  const html = makeExternalClipboardHtml(
+    serialized?.dom.innerHTML
+      ?? "<pre>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</pre>",
+  );
+
+  event.preventDefault();
+  handledCopyEvents.add(event);
+  if (clipboardData) {
+    clipboardData.clearData();
+    clipboardData.setData("text/html", html);
+    clipboardData.setData("text/markdown", text);
+    clipboardData.setData("text/plain", text);
+  }
+  if (isNativePlatform()) {
+    void writeNativeClipboardText(text);
+  }
+  return true;
 };
 
 const clipboardTextsMatch = (left: string, right: string): boolean =>
@@ -1659,26 +1881,7 @@ export const RichTextEditor = ({
         draggable: "false",
       },
       handleDOMEvents: {
-        copy: (view, event) => {
-          const slice = sliceFromNativeSelection(view)
-            ?? (view.state.selection.empty ? undefined : view.state.selection.content());
-          const clipboardData = (event as ClipboardEvent).clipboardData;
-          if (!slice) {
-            return false;
-          }
-          const { dom, text } = view.serializeForClipboard(slice);
-          event.preventDefault();
-          if (clipboardData) {
-            clipboardData.clearData();
-            clipboardData.setData("text/html", dom.innerHTML);
-            clipboardData.setData("text/markdown", text);
-            clipboardData.setData("text/plain", text);
-          }
-          if (isNativePlatform()) {
-            void writeNativeClipboardText(text);
-          }
-          return true;
-        },
+        copy: (view, event) => copyEditorSelection(view, event as ClipboardEvent),
         dragstart: (_view, event) => {
           event.preventDefault();
           return true;
@@ -1850,6 +2053,26 @@ export const RichTextEditor = ({
       }
     },
   });
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) {
+      return undefined;
+    }
+    const handleDocumentCopy = (event: ClipboardEvent) => {
+      const target = event.target;
+      const targetElement = target instanceof Element ? target : target instanceof globalThis.Node ? target.parentElement : null;
+      if (targetElement?.closest("input, textarea, select")) {
+        return;
+      }
+      copyEditorSelection(editor.view, event, true);
+    };
+    // In read-only review views a mouse drag creates a valid DOM range without
+    // focusing the ProseMirror root. Chromium then dispatches `copy` at body,
+    // so the editor's own DOM handler never sees it. Capture at document level
+    // and accept only selections whose endpoints belong to this editor.
+    document.addEventListener("copy", handleDocumentCopy, true);
+    return () => document.removeEventListener("copy", handleDocumentCopy, true);
+  }, [editor]);
 
   useEffect(() => {
     if (!editor) {

@@ -157,11 +157,13 @@ export const useCloudSyncStore = () =>
 /** Cross-platform "app left/returned to foreground" signal (visibilitychange covers web, desktop
  *  Electron, and Android WebView). If we go to background mid-sync and come back still busy, the
  *  in-flight request most likely got suspended by the OS — clear busy immediately instead of making
- *  the user wait out the watchdog, and tell them what happened. */
+ *  the user wait out the watchdog, and tell them what happened. Native Google sign-in is the one
+ *  exception: its account chooser intentionally backgrounds the WebView, so invalidating that token
+ *  would hide its eventual cancellation/error and allow overlapping native auth requests. */
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
-      if (state.busy !== null) backgroundedWhileBusy = true;
+      if (state.busy !== null && state.busy !== "sign-in") backgroundedWhileBusy = true;
       return;
     }
     if (document.visibilityState === "visible") {

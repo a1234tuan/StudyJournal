@@ -381,6 +381,8 @@ export interface AiProviderProfile {
   contextWindowTokens?: number;
   memoryTurns?: number;
   voiceThinkingMode?: "enabled" | "disabled";
+  /** How this endpoint enforces structured JSON for Learning Coach calls. */
+  structuredOutputMode?: "json-object" | "prompt-only";
   builtIn?: "deepseek" | "nvidia" | "aliyun" | "custom-proxy";
 }
 

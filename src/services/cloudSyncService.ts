@@ -68,6 +68,7 @@ import {
   nativeFirebaseStorageObjectExists,
   uploadNativeFirebaseStorageBlob,
 } from "./nativeFirebaseStorage";
+import { runNativeGoogleSignIn } from "./cloudGoogleSignIn";
 
 const PROTOCOL_VERSION = 2;
 const MAX_BATCH_WRITES = 400;
@@ -2138,14 +2139,14 @@ export const completeGoogleRedirect = async (): Promise<User | null> => {
 };
 
 const signInWithNativeGoogle = async (): Promise<User> => {
-  const result = await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true });
-  const idToken = result.credential?.idToken;
-  if (!idToken) {
-    throw new Error("Google 登录未返回身份令牌。请确认 Android 应用的 SHA-1 指纹和 google-services.json 已更新。");
-  }
-  const credential = GoogleAuthProvider.credential(idToken, result.credential?.accessToken ?? null);
-  const userCredential = await signInWithCredential(firebaseAuth, credential);
-  return userCredential.user;
+  return runNativeGoogleSignIn(
+    () => FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }),
+    async ({ idToken, accessToken }) => {
+      const credential = GoogleAuthProvider.credential(idToken, accessToken);
+      const userCredential = await signInWithCredential(firebaseAuth, credential);
+      return userCredential.user;
+    },
+  );
 };
 
 const signInWithDesktopOAuth = async (): Promise<User> => {

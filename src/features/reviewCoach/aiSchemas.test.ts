@@ -14,17 +14,17 @@ describe("review coach AI contracts", () => {
   // turns, and feeds effect attribution, so an unannounced change would silently pool
   // results produced under different instructions.
   const EXPECTED_PROMPT_VERSIONS: Record<string, string> = {
-    feedbackInterpretation: "feedback-interpretation-v1",
-    sessionBlueprint: "session-blueprint-v1",
-    quizTurn: "quiz-turn-v2",
-    questionQuality: "question-quality-v1",
-    answerEvaluation: "answer-evaluation-v2",
+    feedbackInterpretation: "feedback-interpretation-v2",
+    sessionBlueprint: "session-blueprint-v2",
+    quizTurn: "quiz-turn-v3",
+    questionQuality: "question-quality-v2",
+    answerEvaluation: "answer-evaluation-v3",
   };
 
   it("pins prompt, policy, and JSON schema versions for every AI role", () => {
     for (const [role, contract] of Object.entries(REVIEW_COACH_AI_CONTRACTS)) {
       expect(contract.promptVersion).toBe(EXPECTED_PROMPT_VERSIONS[role]);
-      expect(contract.policyVersion).toBe("review-coach-policy-v1");
+      expect(contract.policyVersion).toBe("review-coach-policy-v2");
       expect(contract.schemaVersion).toBe(1);
       expect(contract.schema).toHaveProperty("oneOf");
       expect(JSON.stringify(contract.schema)).toContain("insufficient-context");

@@ -15,9 +15,22 @@ $distIndex = Join-Path $repoRoot "dist\index.html"
 $assetRoot = Join-Path $androidRoot "app\src\main\assets\public"
 $assetIndex = Join-Path $assetRoot "index.html"
 $capacitorCli = Join-Path $repoRoot "node_modules\.bin\cap.cmd"
+$androidStrings = Join-Path $androidRoot "app\src\main\res\values\strings.xml"
 
 if (-not (Test-Path -LiteralPath $capacitorCli -PathType Leaf)) {
   throw "Capacitor CLI was not found at $capacitorCli. Run npm install first."
+}
+if (-not (Test-Path -LiteralPath $androidStrings -PathType Leaf)) {
+  throw "Android string resources were not found at $androidStrings."
+}
+$androidStringsText = Get-Content -LiteralPath $androidStrings -Raw
+if ($androidStringsText -notmatch '<string name="default_web_client_id">[^<]+\.apps\.googleusercontent\.com</string>' -or $androidStringsText -match 'WILL_BE_OVERRIDDEN') {
+  throw "Android Google sign-in is missing a valid default_web_client_id. Native login would build but fail at runtime."
+}
+foreach ($requiredFirebaseResource in @("google_app_id", "google_api_key", "gcm_defaultSenderId", "project_id")) {
+  if ($androidStringsText -notmatch ('<string name="' + [regex]::Escape($requiredFirebaseResource) + '">[^<]+</string>')) {
+    throw "Android Firebase initialization is missing the public resource $requiredFirebaseResource."
+  }
 }
 
 Push-Location $repoRoot
@@ -49,3 +62,4 @@ foreach ($requiredText in @("自动讲话", "按住讲话", "点击录音", "语
 }
 
 Write-Host "Verified Android web assets: $assetRoot"
+Write-Host "Verified Android native Google OAuth client resource."

@@ -4,6 +4,21 @@ import { newId } from "./entity";
 export const DEFAULT_AI_MEMORY_TURNS = 12;
 export const DEFAULT_AI_CONTEXT_WINDOW_TOKENS = 65_536;
 
+export type AiStructuredOutputMode = NonNullable<AiProviderProfile["structuredOutputMode"]>;
+
+export const structuredOutputModeForProvider = (provider: Pick<AiProviderProfile, "builtIn" | "structuredOutputMode"> & Partial<Pick<AiProviderProfile, "baseUrl">>): AiStructuredOutputMode => {
+  if (provider.structuredOutputMode) return provider.structuredOutputMode;
+  if (!provider.builtIn || provider.builtIn === "custom-proxy") return "prompt-only";
+  let host = "";
+  try { host = new URL(provider.baseUrl ?? "").hostname.toLowerCase(); } catch { /* invalid URL is handled by request validation */ }
+  const expectedHost = provider.builtIn === "deepseek"
+    ? "api.deepseek.com"
+    : provider.builtIn === "nvidia"
+      ? "integrate.api.nvidia.com"
+      : "dashscope.aliyuncs.com";
+  return host === expectedHost ? "json-object" : "prompt-only";
+};
+
 const baseProvider = (): Omit<AiProviderProfile, "id" | "providerName" | "baseUrl" | "model" | "builtIn"> => ({
   temperature: 0.7,
   maxTokens: 4096,
@@ -27,6 +42,7 @@ export const createAiProviderTemplate = (
         providerName: "DeepSeek",
         baseUrl: "https://api.deepseek.com",
         model: "deepseek-v4-flash",
+        structuredOutputMode: "json-object",
         builtIn: "deepseek",
       };
     case "nvidia":
@@ -36,6 +52,7 @@ export const createAiProviderTemplate = (
         providerName: "NVIDIA",
         baseUrl: "https://integrate.api.nvidia.com/v1",
         model: "meta/llama-3.3-70b-instruct",
+        structuredOutputMode: "json-object",
         builtIn,
       };
     case "aliyun":
@@ -45,6 +62,7 @@ export const createAiProviderTemplate = (
         providerName: "阿里云百炼",
         baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         model: "qwen-plus",
+        structuredOutputMode: "json-object",
         builtIn,
       };
     case "custom-proxy":
@@ -54,6 +72,7 @@ export const createAiProviderTemplate = (
         providerName: "自定义中转 API",
         baseUrl: "https://api.vectorengine.ai",
         model: "",
+        structuredOutputMode: "prompt-only",
         builtIn,
       };
   }
@@ -82,6 +101,13 @@ export const normalizeAiProvider = (provider: Partial<AiProviderProfile>): AiPro
     maxTokens: Number(provider.maxTokens) || fallback.maxTokens,
     contextWindowTokens: Number(provider.contextWindowTokens) || fallback.contextWindowTokens,
     memoryTurns: Number(provider.memoryTurns) || DEFAULT_AI_MEMORY_TURNS,
+    // Missing capability metadata means "custom/unknown", not DeepSeek. The
+    // fallback supplies numeric defaults only; inheriting its builtIn marker
+    // would make Gemini and relays receive DeepSeek-specific request fields.
+    builtIn: provider.builtIn,
+    structuredOutputMode: provider.structuredOutputMode === "json-object" || provider.structuredOutputMode === "prompt-only"
+      ? provider.structuredOutputMode
+      : structuredOutputModeForProvider(provider),
   };
 };
 

@@ -7,12 +7,12 @@ import type {
 } from "./domain";
 
 export const REVIEW_COACH_AI_SCHEMA_VERSION = 1;
-export const FEEDBACK_INTERPRETATION_PROMPT_VERSION = "feedback-interpretation-v1";
-export const SESSION_BLUEPRINT_PROMPT_VERSION = "session-blueprint-v1";
-export const QUIZ_TURN_PROMPT_VERSION = "quiz-turn-v2";
-export const QUESTION_QUALITY_PROMPT_VERSION = "question-quality-v1";
-export const ANSWER_EVALUATION_PROMPT_VERSION = "answer-evaluation-v2";
-export const REVIEW_COACH_POLICY_VERSION = "review-coach-policy-v1";
+export const FEEDBACK_INTERPRETATION_PROMPT_VERSION = "feedback-interpretation-v2";
+export const SESSION_BLUEPRINT_PROMPT_VERSION = "session-blueprint-v2";
+export const QUIZ_TURN_PROMPT_VERSION = "quiz-turn-v3";
+export const QUESTION_QUALITY_PROMPT_VERSION = "question-quality-v2";
+export const ANSWER_EVALUATION_PROMPT_VERSION = "answer-evaluation-v3";
+export const REVIEW_COACH_POLICY_VERSION = "review-coach-policy-v2";
 
 export interface InsufficientContextAiResult {
   status: "insufficient-context";
@@ -440,6 +440,18 @@ export const parseAnswerEvaluationAiResponse = (value: unknown): AnswerEvaluatio
   }
   return body as unknown as AnswerEvaluationAiResponse;
 };
+
+/**
+ * Sends the actual success contract to the model instead of only naming it.
+ * Provider-side JSON mode guarantees syntax at most; the local parser remains
+ * the authority for references and formal data. Keeping this helper here makes
+ * the prompt and the parser share one schema source of truth.
+ */
+export const formatReviewCoachSchemaInstruction = (schema: JsonSchema): string => [
+  "成功结果必须符合下面的完整 JSON Schema。不要只输出拒绝分支；当材料足够时必须生成 status=ok 的完整结果。",
+  "Schema 中的 additionalProperties=false、required、enum 和字段类型都必须遵守。",
+  JSON.stringify(schema, null, 2),
+].join("\n");
 
 export const REVIEW_COACH_AI_CONTRACTS = {
   feedbackInterpretation: {
