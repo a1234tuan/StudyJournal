@@ -4300,6 +4300,117 @@
   margin-top: 22px;
 }
 
+.ocr-dashboard-page {
+  display: grid;
+  gap: 22px;
+}
+
+.ocr-dashboard-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ocr-dashboard-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.ocr-dashboard-item-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.ocr-dashboard-item-content h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ocr-dashboard-item-content {
+  min-width: 0;
+}
+
+.ocr-dashboard-item-content p {
+  margin: 3px 0 0;
+  color: var(--color-muted);
+}
+
+.ocr-dashboard-asset-name {
+  color: var(--color-text) !important;
+}
+
+.ocr-dashboard-status-failed,
+.ocr-dashboard-status-timeout {
+  color: var(--color-danger) !important;
+}
+
+.ocr-dashboard-status {
+  overflow-wrap: anywhere;
+}
+
+.ocr-dashboard-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ocr-dashboard-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 56px 20px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-card);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.ocr-dashboard-empty h2,
+.ocr-dashboard-empty p {
+  margin: 0;
+}
+
+.record-readable-export-control {
+  display: grid;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.record-readable-export-control label {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.record-readable-export-control select {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .ocr-dashboard-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ocr-dashboard-item-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 600px) {
   .primary-workspace-page {
     padding-top: 16px;

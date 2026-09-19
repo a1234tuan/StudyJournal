@@ -20,6 +20,7 @@ import { parseLinearRecordContent, recordToLinearMarkdown, recordToPlainText } f
 import { normalizeNativeShareError, writeBlobToNativeShareCache } from "./nativeFileWriter";
 import { canUseNativeZipArchive } from "./nativeZipArchive";
 import { exportNativeStreamableBackupForShare } from "./streamingBackupService";
+import MarkdownIt from "markdown-it";
 
 const assetLabel = (asset: Asset | undefined, fallbackTitle: string): string => {
   if (!asset) {
@@ -133,7 +134,7 @@ export const createPlainText = (snapshot: StorageSnapshot): string => {
   ].join("\n\n---\n\n");
 };
 
-const writeOrDownload = async (
+export const writeOrDownload = async (
   blob: Blob,
   fileName: string,
   title: string,
@@ -166,6 +167,102 @@ const writeOrDownload = async (
   options.onProgress?.({ stage: "done", message: "导出文件已交给系统分享面板。" });
 
   return "已打开系统保存/分享面板。";
+};
+
+export type ReadableRecordExportFormat = "markdown" | "html" | "plain-text";
+
+const readableRecordBodyMarkdown = (record: RecordBlock, assets: Asset[]): string => {
+  const content = recordToLinearMarkdown(record, assets);
+  const lines = content.split("\n");
+  // recordToLinearMarkdown already starts with a title and subject. The
+  // single-record wrapper below owns that metadata so it is not duplicated.
+  if (lines[0]?.startsWith("## ")) {
+    lines.shift();
+  }
+  if (lines[0] === "") {
+    lines.shift();
+  }
+  if (lines[0]?.startsWith("学科：")) {
+    lines.splice(0, 1);
+  }
+  while (lines[0] === "") {
+    lines.shift();
+  }
+  return lines
+    .join("\n")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_match, label: string) => `**图片：${label}**`)
+    .trim();
+};
+
+export const createReadableRecordMarkdown = (record: RecordBlock, assets: Asset[] = []): string => {
+  const metadata = [
+    `# ${record.title}`,
+    "",
+    `- 日期：${record.date}`,
+    `- 学科：${record.subject}`,
+    record.tags.length > 0 ? `- 标签：${record.tags.join("、")}` : "",
+    "",
+  ].filter(Boolean);
+  const body = readableRecordBodyMarkdown(record, assets);
+  return [...metadata, body, ""].join("\n");
+};
+
+export const createReadableRecordPlainText = (record: RecordBlock, assets: Asset[] = []): string => {
+  const lines = [
+    record.title,
+    `日期：${record.date}`,
+    `学科：${record.subject}`,
+    record.tags.length > 0 ? `标签：${record.tags.join("、")}` : "",
+    "",
+    recordToPlainText(record, assets),
+  ];
+  return lines.filter(Boolean).join("\n").trim() + "\n";
+};
+
+export const createReadableRecordHtml = (record: RecordBlock, assets: Asset[] = []): string => {
+  const markdown = createReadableRecordMarkdown(record, assets);
+  const renderer = new MarkdownIt({ html: true, breaks: true, linkify: true });
+  const body = renderer.render(markdown);
+  return `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><title>${record.title.replace(/[<&>\"]/g, "")}</title><style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:860px;margin:40px auto;padding:0 24px;line-height:1.75;color:#202124}h1{line-height:1.25}blockquote{border-left:4px solid #9aa0a6;padding-left:16px;color:#4b5563}pre{white-space:pre-wrap;background:#f5f6f7;padding:12px;border-radius:8px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d7dbe0;padding:6px 8px;text-align:left}details{margin:12px 0;padding:8px 12px;border:1px solid #d7dbe0;border-radius:8px}</style></head><body>${body}</body></html>`;
+};
+
+export const exportReadableRecord = async (
+  store: StorageAdapter,
+  recordId: string,
+  format: ReadableRecordExportFormat,
+  options: ExportOptions = {},
+): Promise<string> => {
+  const snapshot = await store.createSnapshot();
+  const record = snapshot.payload.blocks.find(
+    (block): block is RecordBlock => block.type === "record" && block.id === recordId && !block.deletedAt,
+  );
+  if (!record) {
+    throw new Error("找不到要导出的日志。");
+  }
+  const assets = snapshot.assets;
+  const baseName = `study-journal-record-${sanitizeFileName(`${record.date}-${record.title}`)}`;
+  if (format === "markdown") {
+    return writeOrDownload(
+      new Blob([createReadableRecordMarkdown(record, assets)], { type: "text/markdown;charset=utf-8" }),
+      `${baseName}.md`,
+      "日志可读导出（Markdown）",
+      options,
+    );
+  }
+  if (format === "html") {
+    return writeOrDownload(
+      new Blob([createReadableRecordHtml(record, assets)], { type: "text/html;charset=utf-8" }),
+      `${baseName}.html`,
+      "日志可读导出（HTML）",
+      options,
+    );
+  }
+  return writeOrDownload(
+    new Blob([createReadableRecordPlainText(record, assets)], { type: "text/plain;charset=utf-8" }),
+    `${baseName}.txt`,
+    "日志可读导出（纯文本）",
+    options,
+  );
 };
 
 export const exportFullBackup = async (snapshot: StorageSnapshot, options: ExportOptions = {}): Promise<string> => {

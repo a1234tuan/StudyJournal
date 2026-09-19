@@ -38,6 +38,7 @@ import { AiExportPage } from "./pages/AiExportPage";
 import { AiChatPage } from "./pages/AiChatPage";
 import { KnowledgePodcastPage } from "./pages/KnowledgePodcastPage";
 import { OcrSettingsPage } from "./pages/OcrSettingsPage";
+import { OcrDashboardPage } from "./pages/OcrDashboardPage";
 import { TtsSettingsPage } from "./pages/TtsSettingsPage";
 import { PodcastTemplatesPage } from "./pages/PodcastTemplatesPage";
 import { FavoritesPage } from "./pages/FavoritesPage";
@@ -55,6 +56,8 @@ import { buildAiKnowledgeContextPackAsync, type AiRecordReviewContext } from "./
 import { createAiSessionForScope } from "./services/aiSessionService";
 import { createEmptyPodcast } from "./services/knowledgePodcastService";
 import { exportRecordTransferPackage } from "./services/recordTransferService";
+import { exportReadableRecord, type ReadableRecordExportFormat } from "./services/knowledgeExportService";
+import { runOcrForAsset } from "./services/ocrJobService";
 import { storage } from "./services/storageAdapter";
 import { getFavoriteRecords } from "./lib/journalSelectors";
 import { todayISO } from "./lib/date";
@@ -1201,6 +1204,7 @@ export const App = () => {
         await app.removeRecordFromReview(recordId);
       }}
       onExportRecord={(recordId) => exportRecordTransferPackage(storage, [recordId])}
+      onExportReadableRecord={(recordId, format: ReadableRecordExportFormat) => exportReadableRecord(storage, recordId, format)}
       onOpenVoiceRecall={(sourceRecord) => openVoiceRecall(sourceRecord, "record")}
       isNewRecord={newlyCreatedRecordIdsRef.current.has(record.id)}
       onListDecisionBlockArchives={(recordId) => reviewCoachRepository.listRestorableDecisionBlockArchives(recordId)}
@@ -1415,6 +1419,18 @@ export const App = () => {
         );
       case "ocrSettings":
         return <OcrSettingsPage onChanged={app.refresh} />;
+      case "ocrDashboard":
+        return (
+          <OcrDashboardPage
+            records={app.recordBlocks}
+            assets={app.assets}
+            onRetry={async (assetId) => {
+              await runOcrForAsset(assetId, { force: true, onAssetChanged: app.refresh });
+              await app.refresh();
+            }}
+            onOpenRecord={(record, assetId) => openRecordInTab(record, "more", assetId)}
+          />
+        );
       case "ttsSettings":
         return <TtsSettingsPage settings={settings} onChanged={app.refresh} />;
       case "podcastTemplates":
@@ -1475,6 +1491,7 @@ export const App = () => {
             onOpenBackup={() => openMoreSubRoute("backup")}
             onOpenAi={() => openMoreSubRoute("ai")}
             onOpenOcrSettings={() => openMoreSubRoute("ocrSettings")}
+            onOpenOcrDashboard={() => openMoreSubRoute("ocrDashboard")}
             onOpenPodcasts={() => openMoreSubRoute("podcasts")}
             onOpenStats={() => openMoreSubRoute("stats")}
             onOpenSettings={() => openMoreSubRoute("settings")}

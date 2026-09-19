@@ -182,6 +182,8 @@ export const VoiceRecallWorkspace = ({
   const [teacherDraft, setTeacherDraft] = useState("");
   const [teacherMemory, setTeacherMemory] = useState<VoiceRecallStructuredMemory>(() => emptyTeacherMemory(route.learningGoal));
   const [speechPlaying, setSpeechPlaying] = useState(false);
+  const [replayingTurnId, setReplayingTurnId] = useState<string>();
+  const [ttsCacheBytes, setTtsCacheBytes] = useState(0);
   const [capturing, setCapturing] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -222,10 +224,21 @@ export const VoiceRecallWorkspace = ({
   const stopCaptureRef = useRef<() => Promise<void>>(async () => undefined);
   const liveAsrRef = useRef<LiveAsrTask>();
   const activePlaybackRef = useRef<VoiceRecallTurnLocal | undefined>();
+  const ttsAudioCacheRef = useRef(new Map<string, Array<{ chunk: Uint8Array; segmentId?: string }>>());
   const [autoBlocked, setAutoBlockedState] = useState(false);
   const autoBlockedRef = useRef(false);
   const asrRetryRef = useRef(0);
   const setAutoBlocked = (blocked: boolean) => { autoBlockedRef.current = blocked; setAutoBlockedState(blocked); };
+  const clearTtsAudioCache = (updateUi = true) => {
+    ttsAudioCacheRef.current.clear();
+    if (updateUi) setTtsCacheBytes(0);
+  };
+  const cacheTtsAudio = (turnId: string, audio: Array<{ chunk: Uint8Array; segmentId?: string }>) => {
+    if (!audio.length) return;
+    const cached = audio.map(({ chunk, segmentId }) => ({ chunk: chunk.slice(), segmentId }));
+    ttsAudioCacheRef.current.set(turnId, cached);
+    setTtsCacheBytes([...ttsAudioCacheRef.current.values()].reduce((total, chunks) => total + chunks.reduce((sum, item) => sum + item.chunk.byteLength, 0), 0));
+  };
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("armed");
   const installPlayback = (production: ProductionVoiceSession) => runtime.setPlaybackSink(playbackSinkFactory(production, () => {
     if (runtime.snapshot?.status !== "speaking") return;
@@ -324,7 +337,7 @@ export const VoiceRecallWorkspace = ({
     void restore().catch((error) => { if (active) setMessage(describeVoiceError(error)); });
     return () => { active = false; };
   }, [route.screen, route.sessionId, runtime]);
-  useEffect(() => () => { void runtime.disposeView(); }, [runtime]);
+  useEffect(() => () => { clearTtsAudioCache(false); void runtime.disposeView(); }, [runtime]);
 
   const startSession = async (nextRoute: VoiceRecallNavigationRoute, mode: "scope-practice" | "free-topic") => {
     if (!disclosureConfirmed || busy) return;
@@ -335,6 +348,8 @@ export const VoiceRecallWorkspace = ({
       // and "history saved" flag must not leak into this one.
       setTranscript("");
       setTeacherDraft("");
+      setReplayingTurnId(undefined);
+      clearTtsAudioCache();
       setAutoBlocked(false);
       setHistorySaved(false);
       setMessage("");
@@ -707,6 +722,7 @@ export const VoiceRecallWorkspace = ({
       await runtime.commitTurn(turn, generation, nextMemory);
       committed = true;
       assertCurrent();
+      cacheTtsAudio(turn.id, bufferedAudio);
       activePlaybackRef.current = turn;
       for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
       await runtime.waitForPlayback();
@@ -820,6 +836,7 @@ export const VoiceRecallWorkspace = ({
         voice: session.ttsVoice,
         events: { onAudio: (chunk, _audioGeneration, segmentId) => { bufferedAudio.push({ chunk, segmentId }); } },
       });
+      cacheTtsAudio(pendingTurn.id, bufferedAudio);
       if (!runtime.isCurrentOperation(generation)) throw new DOMException("播放已取消", "AbortError");
       for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
       await runtime.waitForPlayback();
@@ -842,6 +859,47 @@ export const VoiceRecallWorkspace = ({
     }
   };
 
+  const replayAssistantTurn = async (turn: VoiceRecallTurnLocal) => {
+    const session = sessionRef.current;
+    const text = turn.teacherText.trim();
+    if (!session || !text || replayingTurnId || busy || !["listening", "speaking"].includes(runtime.snapshot?.status ?? "")) return;
+    setReplayingTurnId(turn.id);
+    setBusy(true);
+    setMessage("");
+    setSpeechPlaying(false);
+    const bufferedAudio: Array<{ chunk: Uint8Array; segmentId?: string }> = [];
+    try {
+      if (runtime.snapshot?.status === "speaking") markPlaybackInterrupted();
+      await runtime.cancelActiveTurn();
+      if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
+      if (runtime.snapshot?.status === "thinking") runtime.dispatch({ type: "CANCEL_TURN" });
+      runtime.dispatch({ type: "BEGIN_TEACHER_TURN" });
+      const cachedAudio = ttsAudioCacheRef.current.get(turn.id);
+      if (cachedAudio) bufferedAudio.push(...cachedAudio);
+      else {
+        await runtime.speakText({
+          rate: speechRate,
+          pipeline: session.pipeline,
+          text,
+          voice: session.ttsVoice,
+          events: { onAudio: (chunk, _generation, segmentId) => { bufferedAudio.push({ chunk, segmentId }); } },
+        });
+        cacheTtsAudio(turn.id, bufferedAudio);
+      }
+      runtime.dispatch({ type: "LLM_REPLIED", teacherText: text });
+      for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
+      await runtime.waitForPlayback();
+      runtime.dispatch({ type: "PLAYBACK_FINISHED" });
+    } catch (error) {
+      if (runtime.snapshot?.status === "thinking") runtime.dispatch({ type: "CANCEL_TURN" });
+      else if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
+      setMessage(describeVoiceError(error));
+    } finally {
+      setReplayingTurnId(undefined);
+      setBusy(false);
+    }
+  };
+
   const finish = async () => {
     if (!route.sessionId) return;
     setBusy(true);
@@ -851,6 +909,7 @@ export const VoiceRecallWorkspace = ({
       frameQueueRef.current = undefined;
       setCapturing(false);
       await runtime.end();
+      clearTtsAudioCache();
       setTranscript("");
       setTeacherDraft("");
       setTranscriptEditorOpen(false);
@@ -880,6 +939,7 @@ export const VoiceRecallWorkspace = ({
     frameQueueRef.current = undefined;
     setCapturing(false);
     await runtime.end();
+    clearTtsAudioCache();
     onBack();
   };
 
@@ -1046,7 +1106,7 @@ export const VoiceRecallWorkspace = ({
       return;
     }
     if (state.status === "paused") {
-      void runtime.end().then(onBack);
+      void runtime.end().then(() => { clearTtsAudioCache(); onBack(); });
       return;
     }
     onBack();
@@ -1159,6 +1219,7 @@ export const VoiceRecallWorkspace = ({
         speechRate={speechRate}
         onSpeechRateChange={(rate) => { setSpeechRate(rate); window.localStorage.setItem("study-journal.voice-recall.rate", String(rate)); }}
         turns={turns}
+        replayingTurnId={replayingTurnId}
         hasCurrentReply={Boolean(teacherDraft)}
         state={state}
         theme={visualTheme}
@@ -1200,6 +1261,9 @@ export const VoiceRecallWorkspace = ({
         onFinishReturn={() => { void finishAndReturn(); }}
         pendingPlayback={Boolean(pendingPlaybackTurn)}
         onContinuePlayback={() => { void continuePendingPlayback(); }}
+        onReplayAssistant={(turn) => { void replayAssistantTurn(turn); }}
+        ttsCacheBytes={ttsCacheBytes}
+        onClearTtsCache={clearTtsAudioCache}
       />
       <MotionPresence present={detailsOpen} variant="drawer" className="vr-details-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsOpen(false); }}><aside className="vr-details" aria-label="通话详情" role="dialog" aria-modal="true"><header><strong>通话详情</strong><button className="vr-icon-button" type="button" aria-label="关闭详情" onClick={() => setDetailsOpen(false)}><X /></button></header><dl><div><dt>资料</dt><dd>{selectedRecords.length ? `${selectedRecords.length} 条日志` : "自由主题"}</dd></div>{materialStats && materialStats.totalRecords > 0 && <div><dt>本轮发送</dt><dd>{materialStats.sentRecords < materialStats.totalRecords ? `${materialStats.sentRecords} / ${materialStats.totalRecords} 条` : `${materialStats.totalRecords} 条`} · {materialStats.sentChars} / {materialStats.totalChars} 字</dd></div>}<div><dt>输入方式</dt><dd>{selectedMode.label}</dd></div><div><dt>状态</dt><dd>{voiceRecallStatusCopy[state.status]}</dd></div></dl>{materialStats?.reasons.length ? <p className="vr-details-note">{materialStats.reasons.join(" ")}</p> : null}{providerSummary && <p className="vr-details-note">{providerSummary.asr} · {providerSummary.llm} · {providerSummary.tts}</p>}<details><summary>本机诊断（不含语音正文或密钥）</summary><pre>{JSON.stringify({ capture: { ...detectorRef.current.metrics, ...runtime.captureDiagnostics }, stages: voiceStageSnapshot().slice(-30), turns: voiceTurnObservationSnapshot().slice(-20) }, null, 2)}</pre></details></aside></MotionPresence>
       <MotionPresence present={backOpen} variant="sheet" className="vr-sheet-backdrop" role="presentation"><VoiceRecallExitSheet onPause={() => { void runtime.pause().then(() => onRouteChange({ ...route, screen: "start", sessionId: undefined })); setBackOpen(false); }} onEnd={() => { void finish(); setBackOpen(false); }} onContinue={() => setBackOpen(false)} /></MotionPresence>

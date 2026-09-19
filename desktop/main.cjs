@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } = require("electron");
 const { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
@@ -6,6 +6,7 @@ const { randomUUID, createHmac, createHash } = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { recognizePaddleOcr } = require("./ocr.cjs");
+const { buildDesktopContextMenuTemplate } = require("./contextMenu.cjs");
 
 const APP_SCHEME = "study-journal";
 const APP_HOST = "app";
@@ -1002,6 +1003,11 @@ const createMainWindow = () => {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.webContents.on("context-menu", (event, params) => {
+    event.preventDefault();
+    const menu = Menu.buildFromTemplate(buildDesktopContextMenuTemplate(params));
+    menu.popup({ window: mainWindow });
+  });
   mainWindow.on("minimize", () => {
     if (voiceCaptureActive) {
       voiceCaptureActive = false;

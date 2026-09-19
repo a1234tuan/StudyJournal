@@ -43,4 +43,35 @@ describe("VoiceRecallPipeline natural text response", () => {
     expect(spoken.join("")).toBe(result.teacherText);
     expect(result).not.toHaveProperty("decision");
   });
+
+  it("re-synthesizes an existing reply without calling the LLM", async () => {
+    const spoken: string[] = [];
+    const llm = new ScriptedLlm("不应被调用");
+    const tts: TtsStreamAdapter = {
+      profileId: "collecting",
+      async *synthesize(request) {
+        spoken.push(request.text);
+        yield { type: "usage" as const, characters: request.text.length };
+        yield { type: "audio" as const, chunk: new Uint8Array([1, 2, 3]), format: { encoding: "pcm-s16le" as const, sampleRate: 16_000, channelCount: 1 as const } };
+        yield { type: "completed" as const };
+      },
+    };
+    const pipeline = new VoiceRecallPipeline(asr, llm, tts);
+    const chunks: Uint8Array[] = [];
+    const usage = await pipeline.speakText({
+      sessionId: "session",
+      turnId: "turn",
+      operationId: "replay",
+      text: "请再播放一次。",
+      voice: "test",
+      generation: 0,
+      signal: new AbortController().signal,
+      events: { onAudio: (chunk) => { chunks.push(chunk); } },
+    });
+
+    expect(spoken).toEqual(["请再播放一次。"]);
+    expect(chunks).toHaveLength(1);
+    expect(usage.ttsCharacters).toBe(7);
+    expect(llm.calls).toHaveLength(0);
+  });
 });

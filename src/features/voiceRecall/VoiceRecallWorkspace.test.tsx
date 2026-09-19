@@ -203,6 +203,14 @@ describe("VoiceRecallWorkspace", () => {
     await waitFor(async () => expect(await repository.listTurns((await repository.listResumableSessions())[0].id)).toEqual([
       expect.objectContaining({ confirmedText: "这是人工确认后的正式回答", sequence: 0 }),
     ]));
+    const replay = vi.spyOn(VoiceRecallPipeline.prototype, "speakText");
+    fireEvent.click(screen.getByRole("button", { name: "再次播放学习助教回复" }));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    expect(replay).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "清理本次通话缓存" }));
+    fireEvent.click(screen.getByRole("button", { name: "再次播放学习助教回复" }));
+    await waitFor(() => expect(replay).toHaveBeenCalledWith(expect.objectContaining({ text: expect.any(String) })));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
     fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
 
     await screen.findByRole("heading", { name: "本次复述摘要" });

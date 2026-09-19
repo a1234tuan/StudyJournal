@@ -99,6 +99,18 @@ export interface VoiceRecallStartViewProps {
   providerSetup?: VoiceRecallProviderSetup;
 }
 
+const formatAudioBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+export const VoiceRecallAudioPolicy = ({ compact = false, cacheBytes = 0, onClear }: { compact?: boolean; cacheBytes?: number; onClear?: () => void }) => (
+  <section className={`vr-audio-policy ${compact ? "is-compact" : ""}`} aria-label="语音输出留存">
+    <div>
+      <strong>语音输出留存</strong>
+      <p>{cacheBytes ? `本次通话临时缓存 ${formatAudioBytes(cacheBytes)}；重复播放直接复用缓存，不会重复请求 TTS。通话结束或离开页面自动释放。` : "本次通话暂未缓存音频；缓存只存在内存，不写入设备存储。缓存未命中时首次重播可能产生一次 TTS 用量。"}</p>
+    </div>
+    <button type="button" disabled={!cacheBytes || !onClear} onClick={onClear} title={cacheBytes ? "立即释放本次通话的临时音频" : "当前没有可清理的临时音频"}>清理本次通话缓存</button>
+  </section>
+);
+
 export const VoiceRecallStartView = ({
   theme,
   knowledgeMode,
@@ -166,6 +178,7 @@ export const VoiceRecallStartView = ({
     </section>
     <details className="vr-advanced-details">
       <summary><span>更多设置</span><small>当前：{voiceRecallModeOptions.find((mode) => mode.id === inputMode)?.label ?? "自动轮次"}</small></summary>
+      <VoiceRecallAudioPolicy compact />
     </details>
 
     {providerSetup && <VoiceProviderSettings setup={providerSetup} />}
@@ -185,6 +198,7 @@ export interface VoiceRecallCallViewProps {
   speechRate?: number;
   onSpeechRateChange?: (rate: number) => void;
   turns?: readonly import("./localTypes").VoiceRecallTurnLocal[];
+  replayingTurnId?: string;
   hasCurrentReply?: boolean;
   state: VoiceRecallState;
   theme: VoiceRecallVisualTheme;
@@ -221,6 +235,9 @@ export interface VoiceRecallCallViewProps {
   onFinishReturn?: () => void;
   pendingPlayback?: boolean;
   onContinuePlayback?: () => void;
+  onReplayAssistant?: (turn: import("./localTypes").VoiceRecallTurnLocal) => void;
+  ttsCacheBytes?: number;
+  onClearTtsCache?: () => void;
 }
 
 export interface VoiceRecallHistoryViewProps {
@@ -236,7 +253,8 @@ export interface VoiceRecallHistoryViewProps {
 export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onOpenSession, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
   <main className="vr-shell vr-history page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机通话历史</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
-    <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>摘要不会进入云同步。需要跨设备保留时，请整理为正式日志。</p></section>
+    <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>这里是你主动选择保留的摘要和用量记录：不会自动继续会话、不会作为 AI 上下文，也不会进入云同步或备份。需要跨设备保留时，请整理为正式日志。</p></section>
+    <VoiceRecallAudioPolicy />
     <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><div className="vr-history-actions">{item.sessionId && onOpenSession && <button type="button" onClick={() => onOpenSession(item)}>打开通话</button>}<button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></div></article>)}</section>
     {onLoadMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更多</button>}
   </main>
@@ -312,6 +330,10 @@ export const VoiceRecallCallView = ({
   onFinishReturn,
   pendingPlayback = false,
   onContinuePlayback,
+  onReplayAssistant,
+  replayingTurnId,
+  ttsCacheBytes = 0,
+  onClearTtsCache,
 }: VoiceRecallCallViewProps) => {
   const MainControlIcon = mainControl.icon;
   return (
@@ -324,12 +346,13 @@ export const VoiceRecallCallView = ({
 
       <section className="vr-conversation" aria-live="polite">
         <div className="vr-call-context"><span><BookOpen />{contextLabel}</span><span>{questionLabel}</span></div>
-        <VoiceTranscript turns={captionsVisible ? turns : []} revision={transcript + title}>
+        <VoiceTranscript turns={captionsVisible ? turns : []} revision={transcript + title} onReplayAssistant={onReplayAssistant} replayingTurnId={replayingTurnId}>
           <div className="vr-dialogue">
             {captionsVisible && (transcript || state.transcript !== turns.at(-1)?.confirmedText) && <p className="vr-user-turn"><span>{transcript || state.transcript ? "你" : "提示"}</span>{transcript || state.transcript || (active ? "正在识别你的回答…" : "先不看笔记，直接从记忆里回答。")}</p>}
             {(!turns.length || hasCurrentReply) && <div className="vr-assistant-turn"><span>学习助教</span><h1>{state.status === "ended" ? "这次复述到这里" : title}</h1></div>}
           </div>
         </VoiceTranscript>
+        <VoiceRecallAudioPolicy compact cacheBytes={ttsCacheBytes} onClear={onClearTtsCache} />
         {state.userMuted && <p className="vr-gate-message"><MicOff />你已静音，系统不会自动解除</p>}
         {!state.userMuted && state.systemCaptureGate && <p className="vr-gate-message"><Volume2 />教师播放中，麦克风暂时关闭</p>}
         {state.status === "failed" && <p className="vr-error-message">网络连接已中断。已确认的文本仍保留在本机。</p>}

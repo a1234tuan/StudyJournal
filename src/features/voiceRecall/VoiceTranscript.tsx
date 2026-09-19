@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { VoiceRecallTurnLocal } from "./localTypes";
 
-export const VoiceTranscript = ({ turns, revision, children }: { turns: readonly VoiceRecallTurnLocal[]; revision: string; children: ReactNode }) => {
+export const VoiceTranscript = ({ turns, revision, children, onReplayAssistant, replayingTurnId }: {
+  turns: readonly VoiceRecallTurnLocal[];
+  revision: string;
+  children: ReactNode;
+  onReplayAssistant?: (turn: VoiceRecallTurnLocal) => void;
+  replayingTurnId?: string;
+}) => {
   const container = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const [unread, setUnread] = useState(false);
@@ -20,7 +26,7 @@ export const VoiceTranscript = ({ turns, revision, children }: { turns: readonly
     }}>
       {turns.map((turn) => <article key={turn.id} className="vr-transcript-turn">
         <p className="vr-user-turn"><span>你</span>{turn.confirmedText ?? turn.providerFinalText}</p>
-        <p className="vr-assistant-turn"><span>学习助教</span>{turn.teacherText}</p>
+        {onReplayAssistant && turn.teacherText.trim() ? <button type="button" className={`vr-assistant-turn vr-assistant-replay ${replayingTurnId === turn.id ? "is-replaying" : ""}`} disabled={Boolean(replayingTurnId)} aria-label={replayingTurnId === turn.id ? "正在重新播放学习助教回复" : "再次播放学习助教回复"} title="点击再次播放" onClick={() => onReplayAssistant(turn)}><span>{replayingTurnId === turn.id ? "学习助教 · 正在播放" : "学习助教 · 点击重播"}</span>{replayingTurnId === turn.id ? "正在重新播放…" : turn.teacherText}</button> : <p className="vr-assistant-turn"><span>学习助教</span>{turn.teacherText}</p>}
         {turn.status !== "completed" && <small>{turn.status === "cancelled" ? "已取消" : "本轮未完成"}</small>}
       </article>)}
       {children}

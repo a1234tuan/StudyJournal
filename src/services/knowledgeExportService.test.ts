@@ -7,6 +7,9 @@ import type { Asset, ExportKind, StorageSnapshot } from "../types";
 import {
   createKnowledgeJsonPayload,
   createPlainText,
+  createReadableRecordHtml,
+  createReadableRecordMarkdown,
+  createReadableRecordPlainText,
   createSubjectMarkdownZip,
   exportKnowledge,
 } from "./knowledgeExportService";
@@ -141,6 +144,8 @@ const structuredContentHtml = [
   '<record-sticky-board data-json=\'{"title":"便签板","collapsedTypes":[],"notes":[{"id":"note1","type":"question","text":"AI 是否能读到"}]}\'></record-sticky-board>',
   '<record-collapse data-title="折叠块" data-summary="复习提示"><p>折叠正文</p></record-collapse>',
   '<record-highlight-block data-tone="pink"><p><strong>浅粉重点</strong></p><ul><li>导出可读</li></ul></record-highlight-block>',
+  '<record-asset data-asset-id="a1" data-kind="image" data-title="树截图"></record-asset>',
+  '<record-formula data-formula-id="f1" data-title="复杂度" data-latex="T(n)=O(n)"></record-formula>',
 ].join("");
 
 const structuredSnapshot: StorageSnapshot = {
@@ -223,6 +228,27 @@ describe("knowledge export", () => {
     expect(text).toContain("2026-06-21｜数据结构｜树");
     expect(text).toContain("标签：树、重点");
     expect(text).toContain("图片文字");
+  });
+
+  it("exports one record as readable Markdown, HTML and plain text", () => {
+    const record = structuredSnapshot.payload.blocks.find((block) => block.id === "r1");
+    if (!record || record.type !== "record") throw new Error("fixture record missing");
+
+    const markdown = createReadableRecordMarkdown(record, structuredSnapshot.assets);
+    const html = createReadableRecordHtml(record, structuredSnapshot.assets);
+    const text = createReadableRecordPlainText(record, structuredSnapshot.assets);
+
+    expect(markdown).toContain("# 树");
+    expect(markdown).toContain("- 日期：2026-06-21");
+    expect(markdown).toContain("### 结构图");
+    expect(markdown).toContain("<summary>折叠块 · 复习提示</summary>");
+    expect(markdown).toContain("T(n)=O(n)");
+    expect(markdown).toContain("**图片：树截图**");
+    expect(html).toContain("<h1>树</h1>");
+    expect(html).toContain("结构图");
+    expect(text).toContain("树");
+    expect(text).toContain("折叠正文");
+    expect(text).toContain("二叉树遍历 OCR 文本");
   });
 
   it("round-trips full backup assets, OCR metadata and custom block HTML", async () => {

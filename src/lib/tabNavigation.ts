@@ -14,6 +14,7 @@ export const MORE_SUB_ROUTE_VALUES = [
   "aiTools",
   "aiExport",
   "ocrSettings",
+  "ocrDashboard",
   "recordings",
   "podcasts",
   "templates",

@@ -31,6 +31,7 @@ import {
   stopNativeAudioRecording,
 } from "../services/nativeAudioRecorder";
 import { useRestoreInProgress } from "../services/restoreLockService";
+import type { ReadableRecordExportFormat } from "../services/knowledgeExportService";
 import { registerDesktopFlushHandler } from "../services/desktopLifecycleService";
 import {
   extractDecisionBlocks,
@@ -66,6 +67,7 @@ interface RecordEditorPageProps {
   onResetReview?: (recordId: string) => Promise<void> | void;
   onRemoveReview?: (recordId: string) => Promise<void> | void;
   onExportRecord?: (recordId: string) => Promise<string> | string;
+  onExportReadableRecord?: (recordId: string, format: ReadableRecordExportFormat) => Promise<string> | string;
   onOpenVoiceRecall?: (record: RecordBlock) => void;
   isNewRecord?: boolean;
   onListDecisionBlockArchives?: (recordId: string) => Promise<DecisionBlockArchive[]>;
@@ -202,6 +204,7 @@ export const RecordEditorPage = ({
   onResetReview,
   onRemoveReview,
   onExportRecord,
+  onExportReadableRecord,
   onOpenVoiceRecall,
   isNewRecord = false,
   onListDecisionBlockArchives,
@@ -240,6 +243,7 @@ export const RecordEditorPage = ({
   const [wideContent, setWideContent] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [readableExportFormat, setReadableExportFormat] = useState<ReadableRecordExportFormat>("markdown");
   const pendingDecisionBlockRemovalsRef = useRef<Map<string, PendingDecisionBlockRemoval>>(new Map());
   const restoredDecisionBlocksRef = useRef(new Map<string, string>());
   const [restorableDecisionBlocks, setRestorableDecisionBlocks] = useState<RestorableDecisionBlock[]>([]);
@@ -747,6 +751,22 @@ export const RecordEditorPage = ({
     }
   }, [exporting, onExportRecord, record.id]);
 
+  const exportReadableCurrentRecord = useCallback(async () => {
+    if (!onExportReadableRecord || exporting) {
+      return;
+    }
+    setExporting(true);
+    setExportMessage(null);
+    try {
+      setExportMessage(await onExportReadableRecord(record.id, readableExportFormat));
+    } catch (error) {
+      setExportMessage(formatUiError(error, "generic"));
+    } finally {
+      setExporting(false);
+      setMoreActionsOpen(false);
+    }
+  }, [exporting, onExportReadableRecord, readableExportFormat, record.id]);
+
   useEffect(() => () => {
     void stopRecordingIntoDraft();
   }, [stopRecordingIntoDraft]);
@@ -983,8 +1003,29 @@ export const RecordEditorPage = ({
                   {onExportRecord && (
                     <button type="button" onClick={() => void exportCurrentRecord()} disabled={exporting || interactionLocked}>
                       <Download size={16} />
-                      {exporting ? "导出中..." : "导出此日志"}
+                      {exporting ? "导出中..." : "导出日志互通包（JSON）"}
                     </button>
+                  )}
+                  {onExportReadableRecord && (
+                    <div className="record-readable-export-control">
+                      <label>
+                        <span>可读导出格式</span>
+                        <select
+                          aria-label="可读导出格式"
+                          value={readableExportFormat}
+                          onChange={(event) => setReadableExportFormat(event.target.value as ReadableRecordExportFormat)}
+                          disabled={exporting || interactionLocked}
+                        >
+                          <option value="markdown">Markdown</option>
+                          <option value="html">HTML</option>
+                          <option value="plain-text">纯文本</option>
+                        </select>
+                      </label>
+                      <button type="button" onClick={() => void exportReadableCurrentRecord()} disabled={exporting || interactionLocked}>
+                        <Download size={16} />
+                        导出可读内容
+                      </button>
+                    </div>
                   )}
                   <button type="button" onClick={() => void Promise.resolve(toggleFavorite()).finally(closeMoreActions)} disabled={saving || interactionLocked}>
                     <Star size={16} fill={record.favorite ? "currentColor" : "none"} />
@@ -1081,8 +1122,29 @@ export const RecordEditorPage = ({
                   {onExportRecord && (
                     <button type="button" onClick={() => void exportCurrentRecord()} disabled={exporting}>
                       <Download size={16} />
-                      {exporting ? "导出中..." : "导出此日志"}
+                      {exporting ? "导出中..." : "导出日志互通包（JSON）"}
                     </button>
+                  )}
+                  {onExportReadableRecord && (
+                    <div className="record-readable-export-control">
+                      <label>
+                        <span>可读导出格式</span>
+                        <select
+                          aria-label="可读导出格式"
+                          value={readableExportFormat}
+                          onChange={(event) => setReadableExportFormat(event.target.value as ReadableRecordExportFormat)}
+                          disabled={exporting}
+                        >
+                          <option value="markdown">Markdown</option>
+                          <option value="html">HTML</option>
+                          <option value="plain-text">纯文本</option>
+                        </select>
+                      </label>
+                      <button type="button" onClick={() => void exportReadableCurrentRecord()} disabled={exporting}>
+                        <Download size={16} />
+                        导出可读内容
+                      </button>
+                    </div>
                   )}
                   {onOpenVoiceRecall && (
                     <button type="button" onClick={() => { onOpenVoiceRecall(record); closeMoreActions(); }}>
