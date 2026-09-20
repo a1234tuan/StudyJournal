@@ -17,23 +17,44 @@ describe("voice activity endpoint", () => {
     detector.push(frame(3000, 400));
     expect(detector.push(frame(0, 300))).toBe(false);
     detector.push(frame(3000, 400));
-    expect(detector.push(frame(0, 3900))).toBe(false);
+    expect(detector.push(frame(0, 2100))).toBe(false);
     expect(detector.push(frame(0))).toBe(true);
+    expect(detector.metrics.endpointReason).toBe("no-transcript");
     expect(detector.push(frame(0))).toBe(false);
   });
-  it("uses two seconds only with a complete partial", () => {
+  it("ends quickly after stable strong punctuation", () => {
     const detector = new VoiceActivityEndpoint();
-    detector.updatePartial("TCP 提供可靠传输。");
     detector.push(frame(3000, 400));
-    expect(detector.push(frame(0, 1900))).toBe(false);
+    detector.updateTranscript("TCP 提供可靠传输。", "final");
+    expect(detector.push(frame(0, 600))).toBe(false);
     expect(detector.push(frame(0))).toBe(true);
+    expect(detector.metrics.endpointReason).toBe("strong-punctuation");
+  });
+  it("uses a short provider-final threshold without punctuation", () => {
+    const detector = new VoiceActivityEndpoint();
+    detector.push(frame(3000, 400));
+    detector.updateTranscript("TCP 提供可靠传输", "final");
+    expect(detector.push(frame(0, 800))).toBe(false);
+    expect(detector.push(frame(0))).toBe(true);
+    expect(detector.metrics.endpointReason).toBe("provider-final");
+  });
+  it("ends on stable partial text while keeping a brief breath open", () => {
+    const detector = new VoiceActivityEndpoint();
+    detector.push(frame(3000, 400));
+    detector.updatePartial("TCP 提供可靠传输");
+    expect(detector.push(frame(0, 500))).toBe(false);
+    detector.push(frame(3000, 100));
+    expect(detector.push(frame(0, 1000))).toBe(false);
+    expect(detector.push(frame(0, 100))).toBe(true);
+    expect(detector.metrics.endpointReason).toBe("stable-text");
   });
   it("extends incomplete utterances and validates format", () => {
     const detector = new VoiceActivityEndpoint();
     detector.updatePartial("主要是因为");
     detector.push(frame(3000, 400));
-    expect(detector.push(frame(0, 2000))).toBe(false);
-    expect(detector.push(frame(0, 2000))).toBe(true);
+    expect(detector.push(frame(0, 1700))).toBe(false);
+    expect(detector.push(frame(0, 100))).toBe(true);
+    expect(detector.metrics.endpointReason).toBe("continuation");
     expect(() => new VoiceActivityEndpoint().push({ ...frame(0), data: new Uint8Array(3) })).toThrow();
   });
 });

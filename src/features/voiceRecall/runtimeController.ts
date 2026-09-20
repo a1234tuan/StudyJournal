@@ -216,8 +216,9 @@ export class VoiceRecallRuntimeController {
   private async withUsage<Result extends { usage: import("./providerRuntime").VoiceUsageTotals }>(
     sessionId: string,
     execute: (operationId: string, observe: (usage: Partial<import("./providerRuntime").VoiceUsageTotals>) => void) => Promise<Result>,
+    requestedOperationId?: string,
   ) {
-    const operationId = crypto.randomUUID();
+    const operationId = requestedOperationId ?? crypto.randomUUID();
     this.currentOperationId = operationId;
     let observed: Partial<import("./providerRuntime").VoiceUsageTotals> = {};
     let pending = Promise.resolve();
@@ -274,6 +275,7 @@ export class VoiceRecallRuntimeController {
     pipeline: VoiceRecallPipeline;
     messages: readonly VoiceTeacherMessage[];
     voice: string;
+    operationId?: string;
     events?: Pick<VoiceRecallPipelineEvents, "onTeacherToken" | "onAudio">;
     deferPlayback?: boolean;
   }) {
@@ -300,7 +302,7 @@ export class VoiceRecallRuntimeController {
         onAudio: (chunk, generation, segmentId) => { if (!turnSignal.aborted) return input.events?.onAudio?.(chunk, generation, segmentId); },
         },
         deferPlayback: input.deferPlayback,
-      }));
+      }), input.operationId);
     if (turnSignal.aborted) throw new DOMException("语音轮次已取消", "AbortError");
     return result;
   }

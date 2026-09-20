@@ -201,7 +201,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
 
     await waitFor(async () => expect(await repository.listTurns((await repository.listResumableSessions())[0].id)).toEqual([
-      expect.objectContaining({ confirmedText: "这是人工确认后的正式回答", sequence: 0 }),
+      expect.objectContaining({ confirmedText: "这是人工确认后的正式回答", sequence: 0, status: "completed", playbackStatus: "completed" }),
     ]));
     const replay = vi.spyOn(VoiceRecallPipeline.prototype, "speakText");
     fireEvent.click(screen.getByRole("button", { name: "再次播放学习助教回复" }));

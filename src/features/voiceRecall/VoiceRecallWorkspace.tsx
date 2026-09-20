@@ -69,11 +69,13 @@ import {
   type VoiceProviderEditableConfig,
 } from "./providerProfiles";
 import "./voiceRecallWorkspace.css";
-import { VoiceActivityEndpoint, type CapturePhase } from "./voiceActivity";
-import { recordVoiceStage, recordVoiceTurnObservation, voiceStageSnapshot, voiceTurnObservationSnapshot } from "./diagnostics";
+import { VoiceActivityEndpoint, type CapturePhase, type VoiceEndpointReason } from "./voiceActivity";
+import { recordVoiceStage, recordVoiceTurnObservation, voiceOperationLatency, voiceStageSnapshot, voiceTurnObservationSnapshot } from "./diagnostics";
 
 const INPUT_MODES = voiceRecallModeOptions.map((mode) => ({ ...mode, detail: mode.note }));
 type LiveAsrTask = { promise: Promise<void>; result?: Awaited<ReturnType<VoiceRecallRuntimeController["transcribeTurn"]>>; error?: unknown };
+type CachedTtsAudio = { chunks: Array<{ chunk: Uint8Array; segmentId?: string }>; complete: boolean };
+type CaptureLatency = { lastVoiceToEndpointMs?: number; endpointToAsrFinalMs?: number; endpointReason?: VoiceEndpointReason };
 
 const emptyUsage = {
   capturedSeconds: 0,
@@ -224,7 +226,10 @@ export const VoiceRecallWorkspace = ({
   const stopCaptureRef = useRef<() => Promise<void>>(async () => undefined);
   const liveAsrRef = useRef<LiveAsrTask>();
   const activePlaybackRef = useRef<VoiceRecallTurnLocal | undefined>();
-  const ttsAudioCacheRef = useRef(new Map<string, Array<{ chunk: Uint8Array; segmentId?: string }>>());
+  const activePlaybackPersistedRef = useRef(false);
+  const ttsAudioCacheRef = useRef(new Map<string, CachedTtsAudio>());
+  const captureStoppedAtRef = useRef<number>();
+  const captureLatencyRef = useRef<CaptureLatency>({});
   const [autoBlocked, setAutoBlockedState] = useState(false);
   const autoBlockedRef = useRef(false);
   const asrRetryRef = useRef(0);
@@ -233,11 +238,28 @@ export const VoiceRecallWorkspace = ({
     ttsAudioCacheRef.current.clear();
     if (updateUi) setTtsCacheBytes(0);
   };
-  const cacheTtsAudio = (turnId: string, audio: Array<{ chunk: Uint8Array; segmentId?: string }>) => {
-    if (!audio.length) return;
-    const cached = audio.map(({ chunk, segmentId }) => ({ chunk: chunk.slice(), segmentId }));
-    ttsAudioCacheRef.current.set(turnId, cached);
-    setTtsCacheBytes([...ttsAudioCacheRef.current.values()].reduce((total, chunks) => total + chunks.reduce((sum, item) => sum + item.chunk.byteLength, 0), 0));
+  const refreshTtsCacheBytes = () => {
+    setTtsCacheBytes([...ttsAudioCacheRef.current.values()].reduce((total, entry) => total + entry.chunks.reduce((sum, item) => sum + item.chunk.byteLength, 0), 0));
+  };
+  const beginTtsAudio = (turnId: string) => {
+    ttsAudioCacheRef.current.set(turnId, { chunks: [], complete: false });
+    refreshTtsCacheBytes();
+  };
+  const appendTtsAudio = (turnId: string, chunk: Uint8Array, segmentId?: string) => {
+    const entry = ttsAudioCacheRef.current.get(turnId) ?? { chunks: [], complete: false };
+    entry.chunks.push({ chunk: chunk.slice(), segmentId });
+    entry.complete = false;
+    ttsAudioCacheRef.current.set(turnId, entry);
+    refreshTtsCacheBytes();
+  };
+  const completeTtsAudio = (turnId: string) => {
+    const entry = ttsAudioCacheRef.current.get(turnId);
+    if (entry?.chunks.length) entry.complete = true;
+  };
+  const discardIncompleteTtsAudio = (turnId: string) => {
+    if (ttsAudioCacheRef.current.get(turnId)?.complete !== false) return;
+    ttsAudioCacheRef.current.delete(turnId);
+    refreshTtsCacheBytes();
   };
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("armed");
   const installPlayback = (production: ProductionVoiceSession) => runtime.setPlaybackSink(playbackSinkFactory(production, () => {
@@ -430,7 +452,15 @@ export const VoiceRecallWorkspace = ({
     captureStartingRef.current = true;
     setAutoBlocked(false);
     setMessage("");
-    if (!frameQueueRef.current) { framesRef.current = 0; recordingSecondsRef.current = 0; detectorRef.current = new VoiceActivityEndpoint(); liveAsrRef.current = undefined; preRollRef.current = []; }
+    if (!frameQueueRef.current) {
+      framesRef.current = 0;
+      recordingSecondsRef.current = 0;
+      detectorRef.current = new VoiceActivityEndpoint();
+      liveAsrRef.current = undefined;
+      preRollRef.current = [];
+      captureStoppedAtRef.current = undefined;
+      captureLatencyRef.current = {};
+    }
     try {
       if (runtime.snapshot?.status === "paused") resume();
       if (runtime.snapshot?.status === "listening" && !runtime.snapshot.captureRequested) {
@@ -471,7 +501,7 @@ export const VoiceRecallWorkspace = ({
             liveAsrRef.current = task;
             task.promise = runtime.transcribeTurn({ pipeline: session.pipeline, frames: queue, format: session.asrFormat, onEvent: (event) => {
               if (runtime.isCurrentOperation(generation) && (event.type === "partial" || event.type === "final")) {
-                detectorRef.current.updatePartial(event.text);
+                detectorRef.current.updateTranscript(event.text, event.type);
                 setTranscript(event.text);
               }
             } }).then((result) => { task.result = result; }, (error) => { task.error = error; if (runtime.isCurrentOperation(generation)) void stopCaptureRef.current(); });
@@ -511,6 +541,11 @@ export const VoiceRecallWorkspace = ({
     setTranscribing(true);
     try {
     await runtime.stopCapture();
+    captureStoppedAtRef.current = performance.now();
+    captureLatencyRef.current = {
+      lastVoiceToEndpointMs: detectorRef.current.metrics.endpointSilenceMs,
+      endpointReason: detectorRef.current.metrics.endpointReason,
+    };
     setCapturing(false);
     queue?.close();
     if (!runtime.isCurrentOperation(generation) || runtime.snapshot?.status !== "listening") return;
@@ -558,6 +593,9 @@ export const VoiceRecallWorkspace = ({
       if (!runtime.isCurrentOperation(generation)) return;
       asrRetryRef.current = 0;
       asrFinalRef.current = result.transcript;
+      captureLatencyRef.current.endpointToAsrFinalMs = captureStoppedAtRef.current === undefined
+        ? undefined
+        : Math.max(0, performance.now() - captureStoppedAtRef.current);
       setTranscript(result.transcript);
       if (automatic && !runtime.snapshot?.userMuted && !autoBlockedRef.current) {
         setTranscriptEditorOpen(false);
@@ -623,6 +661,7 @@ export const VoiceRecallWorkspace = ({
     let storedMemory: VoiceRecallStructuredMemory | undefined;
     let committed = false;
     let streamedReply = "";
+    let turn: VoiceRecallTurnLocal | undefined;
     submittingRef.current = true;
     setBusy(true);
     setMessage("");
@@ -673,43 +712,18 @@ export const VoiceRecallWorkspace = ({
       setMaterialStats(turnBuild.materialPlan.stats);
 
       let replyStarted = false;
-      const bufferedAudio: Array<{ chunk: Uint8Array; segmentId?: string }> = [];
-      setSpeechPlaying(false);
-      setTeacherDraft("");
-      const result = await runtime.respondTurn({
-        rate: speechRate,
-        pipeline: session.pipeline,
-        messages,
-        deferPlayback: true,
-        voice: session.ttsVoice,
-        events: {
-          onTeacherToken: (token) => {
-            streamedReply += token;
-            if (!replyStarted) {
-              replyStarted = true;
-              runtime.dispatch({ type: "LLM_REPLIED", teacherText: token });
-            }
-            setTeacherDraft((draft) => draft + token);
-          },
-          onAudio: (chunk, _generation, segmentId) => { bufferedAudio.push({ chunk, segmentId }); },
-        },
-      });
-      if (!replyStarted) runtime.dispatch({ type: "LLM_REPLIED", teacherText: result.teacherText });
+      const operationId = crypto.randomUUID();
       const nextMemory = stored.memory;
       const now = new Date().toISOString();
       const asrFinal = asrFinalRef.current;
-      const turn: VoiceRecallTurnLocal = {
+      turn = {
         id: crypto.randomUUID(),
         sessionId: route.sessionId,
         sequence: stored.checkpoint.nextSequence,
-        operationId: result.operationId,
-        usage: result.observedUsage,
-        usageSources: Object.fromEntries(Object.keys(result.observedUsage).map((metric) => [metric, metric === "ttsCharacters" ? "local-estimate" : "provider-reported"])),
-        status: "completed",
-        teacherText: result.teacherText,
-        assistantText: result.teacherText,
+        operationId,
+        status: "finalizing",
+        teacherText: "",
         playedText: "",
-        pendingText: result.teacherText,
         playbackStatus: "pending",
         providerFinalText: asrFinal,
         cleanText: confirmedText,
@@ -719,12 +733,52 @@ export const VoiceRecallWorkspace = ({
         createdAt: now,
         updatedAt: now,
       };
+      activePlaybackPersistedRef.current = false;
+      activePlaybackRef.current = turn;
+      setSpeechPlaying(false);
+      setTeacherDraft("");
+      const result = await runtime.respondTurn({
+        rate: speechRate,
+        pipeline: session.pipeline,
+        messages,
+        operationId,
+        voice: session.ttsVoice,
+        events: {
+          onTeacherToken: (token) => {
+            streamedReply += token;
+            if (turn) {
+              turn = { ...turn, teacherText: streamedReply, assistantText: streamedReply, pendingText: streamedReply };
+              activePlaybackRef.current = turn;
+            }
+            if (!replyStarted) {
+              replyStarted = true;
+              runtime.dispatch({ type: "LLM_REPLIED", teacherText: token });
+            }
+            setTeacherDraft((draft) => draft + token);
+          },
+          onAudio: (chunk, _generation, segmentId) => {
+            appendTtsAudio(turn!.id, chunk, segmentId);
+            if (!runtime.enqueueAudio(chunk, segmentId)) throw new DOMException("播放已取消", "AbortError");
+          },
+        },
+      });
+      if (!replyStarted) runtime.dispatch({ type: "LLM_REPLIED", teacherText: result.teacherText });
+      assertCurrent();
+      completeTtsAudio(turn.id);
+      turn = {
+        ...turn,
+        usage: result.observedUsage,
+        usageSources: Object.fromEntries(Object.keys(result.observedUsage).map((metric) => [metric, metric === "ttsCharacters" ? "local-estimate" : "provider-reported"])),
+        status: "completed",
+        teacherText: result.teacherText,
+        assistantText: result.teacherText,
+        pendingText: result.teacherText,
+        updatedAt: new Date().toISOString(),
+      };
+      activePlaybackRef.current = turn;
       await runtime.commitTurn(turn, generation, nextMemory);
       committed = true;
-      assertCurrent();
-      cacheTtsAudio(turn.id, bufferedAudio);
-      activePlaybackRef.current = turn;
-      for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
+      activePlaybackPersistedRef.current = true;
       await runtime.waitForPlayback();
       assertCurrent();
       runtime.dispatch({ type: "PLAYBACK_FINISHED" });
@@ -737,11 +791,14 @@ export const VoiceRecallWorkspace = ({
         updatedAt: new Date().toISOString(),
       };
       await runtime.updateTurn(completedTurn);
+      const latency = voiceOperationLatency(result.operationId, turnStartedAt);
       recordVoiceTurnObservation({
         operationId: result.operationId,
         inputTokens: result.observedUsage.llmInputTokens,
         outputTokens: result.observedUsage.llmOutputTokens,
         llmDurationMs: performance.now() - turnStartedAt,
+        ...latency,
+        ...captureLatencyRef.current,
         replyCharacters: result.teacherText.length,
         playedCharacters: result.teacherText.length,
         endsWithQuestion: /[?？]$/.test(result.teacherText.trim()),
@@ -750,6 +807,7 @@ export const VoiceRecallWorkspace = ({
         playbackStatus: "completed",
       });
       activePlaybackRef.current = undefined;
+      activePlaybackPersistedRef.current = false;
       setTeacherMemory(nextMemory);
       setTranscript("");
       setTeacherDraft("");
@@ -757,6 +815,47 @@ export const VoiceRecallWorkspace = ({
       assertCurrent();
       await reloadTurns();
     } catch (error) {
+      if (committed && turn) {
+        discardIncompleteTtsAudio(turn.id);
+        const activeTurn = activePlaybackRef.current?.id === turn.id ? activePlaybackRef.current : turn;
+        if (activeTurn.playbackStatus !== "interrupted") {
+          const cancelled = error instanceof DOMException && error.name === "AbortError";
+          const failedReply = streamedReply.trim();
+          const settledTurn: VoiceRecallTurnLocal = {
+            ...activeTurn,
+            status: cancelled ? "cancelled" : "failed",
+            teacherText: failedReply,
+            assistantText: failedReply || undefined,
+            pendingText: failedReply || undefined,
+            playbackStatus: cancelled ? "interrupted" : "failed",
+            updatedAt: new Date().toISOString(),
+            errorCode: describeVoiceError(error),
+          };
+          try {
+            await runtime.updateTurn(settledTurn);
+            recordVoiceTurnObservation({
+              operationId: settledTurn.operationId,
+              inputTokens: settledTurn.usage?.llmInputTokens,
+              outputTokens: settledTurn.usage?.llmOutputTokens,
+              llmDurationMs: performance.now() - turnStartedAt,
+              ...voiceOperationLatency(settledTurn.operationId, turnStartedAt),
+              ...captureLatencyRef.current,
+              replyCharacters: failedReply.length,
+              playedCharacters: 0,
+              endsWithQuestion: /[?？]$/.test(failedReply),
+              interrupted: cancelled,
+              asrRetries: asrRetryRef.current,
+              errorCode: describeVoiceError(error),
+              playbackStatus: settledTurn.playbackStatus,
+            });
+            await reloadTurns();
+          } catch {
+            // Preserve the provider/playback error if settling local state also fails.
+          }
+        }
+        if (activePlaybackRef.current?.id === turn.id) activePlaybackRef.current = undefined;
+        activePlaybackPersistedRef.current = false;
+      }
       if (!committed && storedSequence !== undefined && runtime.activeSessionId === route.sessionId && runtime.isCurrentOperation(generation)) {
         const now = new Date().toISOString();
         const failedReply = streamedReply.trim();
@@ -797,6 +896,11 @@ export const VoiceRecallWorkspace = ({
           // Keep the original provider error if local persistence also fails.
         }
       }
+      if (!committed && turn) {
+        discardIncompleteTtsAudio(turn.id);
+        if (activePlaybackRef.current?.id === turn.id) activePlaybackRef.current = undefined;
+        activePlaybackPersistedRef.current = false;
+      }
       if (!runtime.isCurrentOperation(generation)) {
         if (runtime.activeSessionId === route.sessionId && !["paused", "ended", "ending"].includes(runtime.snapshot?.status ?? "")) { setTranscript(confirmedText); setTranscriptEditorOpen(true); }
         return;
@@ -822,23 +926,26 @@ export const VoiceRecallWorkspace = ({
     if (!pendingTurn || !session || busy || runtime.snapshot?.status !== "listening") return;
     const pendingText = pendingTurn.pendingText!.trim();
     const generation = runtime.operationGeneration;
-    const bufferedAudio: Array<{ chunk: Uint8Array; segmentId?: string }> = [];
     setBusy(true);
     setMessage("");
     try {
       runtime.dispatch({ type: "BEGIN_TEACHER_TURN" });
       runtime.dispatch({ type: "LLM_REPLIED", teacherText: pendingText });
       activePlaybackRef.current = pendingTurn;
+      activePlaybackPersistedRef.current = true;
+      beginTtsAudio(pendingTurn.id);
       await runtime.speakText({
         rate: speechRate,
         pipeline: session.pipeline,
         text: pendingText,
         voice: session.ttsVoice,
-        events: { onAudio: (chunk, _audioGeneration, segmentId) => { bufferedAudio.push({ chunk, segmentId }); } },
+        events: { onAudio: (chunk, _audioGeneration, segmentId) => {
+          appendTtsAudio(pendingTurn.id, chunk, segmentId);
+          if (!runtime.enqueueAudio(chunk, segmentId)) throw new DOMException("播放已取消", "AbortError");
+        } },
       });
-      cacheTtsAudio(pendingTurn.id, bufferedAudio);
+      completeTtsAudio(pendingTurn.id);
       if (!runtime.isCurrentOperation(generation)) throw new DOMException("播放已取消", "AbortError");
-      for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
       await runtime.waitForPlayback();
       if (!runtime.isCurrentOperation(generation)) throw new DOMException("播放已取消", "AbortError");
       runtime.dispatch({ type: "PLAYBACK_FINISHED" });
@@ -851,10 +958,14 @@ export const VoiceRecallWorkspace = ({
         updatedAt: new Date().toISOString(),
       });
       activePlaybackRef.current = undefined;
+      activePlaybackPersistedRef.current = false;
       await reloadTurns();
     } catch (error) {
       if (runtime.isCurrentOperation(generation)) setMessage(describeVoiceError(error));
     } finally {
+      discardIncompleteTtsAudio(pendingTurn.id);
+      if (activePlaybackRef.current?.id === pendingTurn.id) activePlaybackRef.current = undefined;
+      activePlaybackPersistedRef.current = false;
       if (runtime.isCurrentOperation(generation)) setBusy(false);
     }
   };
@@ -867,27 +978,32 @@ export const VoiceRecallWorkspace = ({
     setBusy(true);
     setMessage("");
     setSpeechPlaying(false);
-    const bufferedAudio: Array<{ chunk: Uint8Array; segmentId?: string }> = [];
     try {
       if (runtime.snapshot?.status === "speaking") markPlaybackInterrupted();
       await runtime.cancelActiveTurn();
       if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
       if (runtime.snapshot?.status === "thinking") runtime.dispatch({ type: "CANCEL_TURN" });
       runtime.dispatch({ type: "BEGIN_TEACHER_TURN" });
+      activePlaybackPersistedRef.current = true;
       const cachedAudio = ttsAudioCacheRef.current.get(turn.id);
-      if (cachedAudio) bufferedAudio.push(...cachedAudio);
+      runtime.dispatch({ type: "LLM_REPLIED", teacherText: text });
+      if (cachedAudio?.complete) {
+        for (const audio of cachedAudio.chunks) runtime.enqueueAudio(audio.chunk, audio.segmentId);
+      }
       else {
+        beginTtsAudio(turn.id);
         await runtime.speakText({
           rate: speechRate,
           pipeline: session.pipeline,
           text,
           voice: session.ttsVoice,
-          events: { onAudio: (chunk, _generation, segmentId) => { bufferedAudio.push({ chunk, segmentId }); } },
+          events: { onAudio: (chunk, _generation, segmentId) => {
+            appendTtsAudio(turn.id, chunk, segmentId);
+            if (!runtime.enqueueAudio(chunk, segmentId)) throw new DOMException("播放已取消", "AbortError");
+          } },
         });
-        cacheTtsAudio(turn.id, bufferedAudio);
+        completeTtsAudio(turn.id);
       }
-      runtime.dispatch({ type: "LLM_REPLIED", teacherText: text });
-      for (const audio of bufferedAudio) runtime.enqueueAudio(audio.chunk, audio.segmentId);
       await runtime.waitForPlayback();
       runtime.dispatch({ type: "PLAYBACK_FINISHED" });
     } catch (error) {
@@ -895,6 +1011,7 @@ export const VoiceRecallWorkspace = ({
       else if (runtime.snapshot?.status === "speaking") runtime.dispatch({ type: "INTERRUPT_AND_LISTEN" });
       setMessage(describeVoiceError(error));
     } finally {
+      activePlaybackPersistedRef.current = false;
       setReplayingTurnId(undefined);
       setBusy(false);
     }
@@ -1076,13 +1193,32 @@ export const VoiceRecallWorkspace = ({
     const turn = activePlaybackRef.current;
     if (!turn) return;
     const pendingText = turn.pendingText ?? turn.assistantText ?? turn.teacherText;
-    void runtime.updateTurn({
+    const interruptedTurn: VoiceRecallTurnLocal = {
       ...turn,
       playedText: turn.playedText || "",
       pendingText,
       playbackStatus: "interrupted",
       updatedAt: new Date().toISOString(),
-    }).then(() => {
+    };
+    discardIncompleteTtsAudio(turn.id);
+    activePlaybackRef.current = interruptedTurn;
+    if (!activePlaybackPersistedRef.current) {
+      recordVoiceTurnObservation({
+        operationId: turn.operationId,
+        inputTokens: turn.usage?.llmInputTokens,
+        outputTokens: turn.usage?.llmOutputTokens,
+        replyCharacters: (turn.assistantText ?? turn.teacherText).length,
+        playedCharacters: 0,
+        endsWithQuestion: /[?？]$/.test((turn.assistantText ?? turn.teacherText).trim()),
+        interrupted: true,
+        asrRetries: asrRetryRef.current,
+        playbackStatus: "interrupted",
+      });
+      activePlaybackRef.current = undefined;
+      activePlaybackPersistedRef.current = false;
+      return;
+    }
+    void runtime.updateTurn(interruptedTurn).then(() => {
       recordVoiceTurnObservation({
         operationId: turn.operationId,
         inputTokens: turn.usage?.llmInputTokens,
@@ -1097,6 +1233,7 @@ export const VoiceRecallWorkspace = ({
       return reloadTurns();
     }).finally(() => {
       if (activePlaybackRef.current?.id === turn.id) activePlaybackRef.current = undefined;
+      activePlaybackPersistedRef.current = false;
     });
   };
 

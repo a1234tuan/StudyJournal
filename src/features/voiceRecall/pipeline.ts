@@ -9,6 +9,7 @@ import type {
 } from "./contracts";
 import { SpeakableSentenceBuffer } from "./sentenceBuffer";
 import { recordVoiceStage, stageFailure } from "./diagnostics";
+import { OrderedAudioDispatcher } from "./orderedAudioDispatcher";
 import { VoiceUsageMeter, type VoiceUsageTotals } from "./providerRuntime";
 
 export interface VoiceRecallPipelineResult {
@@ -110,6 +111,11 @@ export class VoiceRecallPipeline {
     let sentenceIndex = 0;
     let failure: unknown;
     const ttsTasks: Promise<void>[] = [];
+    const audio = new OrderedAudioDispatcher(async (item) => {
+      if (!input.deferPlayback) await input.events?.waitForAudioCapacity?.();
+      controller.signal.throwIfAborted();
+      await input.events?.onAudio?.(item.chunk, item.generation, item.segmentId);
+    });
     let activeTts = 0;
     const ttsWaiters: Array<() => void> = [];
     const acquireTtsSlot = async () => {
@@ -119,10 +125,10 @@ export class VoiceRecallPipeline {
     const releaseTtsSlot = () => { activeTts -= 1; ttsWaiters.shift()?.(); };
     const speak = (text: string) => {
       const index = sentenceIndex++;
+      audio.begin(index);
       const task = (async () => {
         await acquireTtsSlot();
         try {
-          if (!input.deferPlayback) await input.events?.waitForAudioCapacity?.();
           controller.signal.throwIfAborted();
           const segmentId = input.operationId + ":tts:" + index;
           recordVoiceStage(segmentId, "tts", "start");
@@ -135,12 +141,17 @@ export class VoiceRecallPipeline {
               input.events?.onUsage?.({ ttsCharacters: usage.snapshot().ttsCharacters });
             }
             controller.signal.throwIfAborted();
-            if (event.type === "audio") { recordVoiceStage(segmentId, "tts", "audio-ready"); await input.events?.onAudio?.(event.chunk, input.generation, segmentId); }
+            if (event.type === "audio") {
+              recordVoiceStage(segmentId, "tts", "audio-ready");
+              await audio.push(index, { chunk: event.chunk, generation: input.generation, segmentId });
+            }
           }
+          await audio.complete(index);
           recordVoiceStage(segmentId, "tts", "completed");
         } catch (error: unknown) {
           recordVoiceStage(input.operationId + ":tts:" + index, "tts", input.signal.aborted ? "cancelled" : "failed");
           failure ??= stageFailure("tts", error);
+          audio.fail(failure);
           controller.abort(error);
         } finally { releaseTtsSlot(); }
       })();
@@ -187,6 +198,7 @@ export class VoiceRecallPipeline {
       if (trailing) speak(trailing);
       await Promise.all(ttsTasks);
       if (failure) throw failure;
+      await audio.finish();
       controller.signal.throwIfAborted();
       return { teacherText, usage: usage.snapshot() };
     } catch (error) {

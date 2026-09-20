@@ -17,6 +17,10 @@ export interface VoiceTurnObservation {
   llmDurationMs?: number;
   firstTokenDelayMs?: number;
   firstAudioDelayMs?: number;
+  audioReadyToPlaybackMs?: number;
+  lastVoiceToEndpointMs?: number;
+  endpointToAsrFinalMs?: number;
+  endpointReason?: import("./voiceActivity").VoiceEndpointReason;
   playbackDurationMs?: number;
   replyCharacters: number;
   playedCharacters: number;
@@ -32,6 +36,19 @@ export const recordVoiceTurnObservation = (observation: VoiceTurnObservation) =>
   if (turnObservations.length > 256) turnObservations.splice(0, turnObservations.length - 256);
 };
 export const voiceTurnObservationSnapshot = () => turnObservations.map((item) => ({ ...item }));
+export const voiceOperationLatency = (operationId: string, responseStartedAt: number) => {
+  const operationEvents = events.filter((event) => event.operationId === operationId || event.operationId.startsWith(`${operationId}:tts:`));
+  const at = (stage: VoiceStage, event: VoiceStageEvent) => operationEvents.find((item) => item.stage === stage && item.event === event)?.monotonicMs;
+  const llmStarted = at("llm", "start") ?? responseStartedAt;
+  const firstToken = at("llm", "first-token");
+  const firstAudio = at("tts", "audio-ready");
+  const playbackStarted = at("playback", "start");
+  return {
+    firstTokenDelayMs: firstToken === undefined ? undefined : Math.max(0, firstToken - llmStarted),
+    firstAudioDelayMs: firstAudio === undefined ? undefined : Math.max(0, firstAudio - responseStartedAt),
+    audioReadyToPlaybackMs: firstAudio === undefined || playbackStarted === undefined ? undefined : Math.max(0, playbackStarted - firstAudio),
+  };
+};
 export class VoiceStageError extends Error {
   constructor(readonly stage: VoiceStage, cause: unknown) { super(`${labels[stage]}没有完成`, { cause }); this.name = "VoiceStageError"; }
 }
