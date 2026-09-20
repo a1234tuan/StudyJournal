@@ -16,6 +16,7 @@ import "./styles/components.css";
 import "./styles/pages.css";
 import "./styles/motion.css";
 import "./styles/visual-v2.css";
+import "./styles/subject-radial-picker.css";
 
 const startApplication = async () => {
   if (isVoiceRecallPrototypeRequest()) {

@@ -50,6 +50,7 @@ import { CloudSyncButton } from "./components/CloudSyncButton";
 import { CloudSyncConflictDialog } from "./components/CloudSyncConflictDialog";
 import { CloudSyncStatusToast } from "./components/CloudSyncStatusToast";
 import { MotionPresence, ViewportOverlayProvider } from "./components/MotionPresence";
+import { SubjectRadialPicker } from "./components/SubjectRadialPicker";
 import { PlaybackProvider } from "./components/PlaybackProvider";
 import type { AiKnowledgeScope, RecordBlock, Subject } from "./types";
 import { buildAiKnowledgeContextPackAsync, type AiRecordReviewContext } from "./services/aiContextService";
@@ -275,6 +276,7 @@ export const App = () => {
   const [visualTheme, setVisualTheme] = useState<VisualTheme>(() => readVisualTheme());
   const [navigationMotion, setNavigationMotion] = useState<NavigationMotionIntent>("none");
   const [viewportOverlayHost, setViewportOverlayHost] = useState<HTMLDivElement | null>(null);
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const lastBackPressRef = useRef(0);
   const backToastTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef<NavigationState>({ activeTab, tabMemory, activeAiSessionId });
@@ -709,16 +711,12 @@ export const App = () => {
     commitNavigation({ ...current, activeTab: targetTab, tabMemory: nextMemory }, { scrollToTop: true, motion: "forward" });
   }, [app.createRecordBlock, commitNavigation]);
 
-  const createRecordFromGlobalAction = useCallback(async () => {
-    const subject = app.activeSubjects[0]?.name;
-    if (!subject) {
-      switchTab("today");
-      return;
-    }
+  const createRecordFromSubjectPicker = useCallback(async (subject: Subject) => {
     const created = await app.createRecordBlock(todayISO(), subject);
     newlyCreatedRecordIdsRef.current.add(created.id);
+    setSubjectPickerOpen(false);
     openRecordInTab(created, activeTab, undefined, true);
-  }, [activeTab, app.activeSubjects, app.createRecordBlock, openRecordInTab, switchTab]);
+  }, [activeTab, app.createRecordBlock, openRecordInTab]);
 
   const setCurrentRecordEditing = useCallback((recordEditing: boolean) => {
     updateNavigationState((current) => ({
@@ -877,6 +875,10 @@ export const App = () => {
       if (document.querySelector(".image-lightbox")) {
         return;
       }
+      if (subjectPickerOpen) {
+        setSubjectPickerOpen(false);
+        return;
+      }
 
       // Immersive sessions report depth 0, but Back should leave the session
       // rather than dump the user on 今天 with no explanation.
@@ -927,7 +929,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, popCurrentTabDepth, switchTab, tabMemory, updateNavigationState]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, popCurrentTabDepth, subjectPickerOpen, switchTab, tabMemory, updateNavigationState]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -2023,6 +2025,16 @@ export const App = () => {
       </MotionPresence>
       <CloudSyncConflictDialog onRestored={app.refresh} />
       <CloudSyncStatusToast />
+      <SubjectRadialPicker
+        open={subjectPickerOpen}
+        subjects={app.activeSubjects}
+        onClose={() => setSubjectPickerOpen(false)}
+        onSelect={createRecordFromSubjectPicker}
+        onManageSubjects={() => {
+          setSubjectPickerOpen(false);
+          switchTab("categories");
+        }}
+      />
       <nav className="bottom-nav">
         {bottomNavItems.map((item, index) => {
           const Icon = item.icon;
@@ -2043,7 +2055,15 @@ export const App = () => {
           );
           return index === 2 ? (
             <div className="bottom-nav-pair" key={item.tab}>
-              <button type="button" className="bottom-nav-create" onClick={() => void createRecordFromGlobalAction()} aria-label="新建学习日志" title="新建学习日志"><Plus size={25} /></button>
+              <button
+                type="button"
+                className="bottom-nav-create"
+                onClick={() => setSubjectPickerOpen((open) => !open)}
+                aria-label={subjectPickerOpen ? "关闭新建菜单" : "打开新建日志菜单"}
+                aria-expanded={subjectPickerOpen}
+                aria-haspopup="dialog"
+                title={subjectPickerOpen ? "关闭新建菜单" : "打开新建日志菜单"}
+              ><Plus size={25} /></button>
               {itemButton}
             </div>
           ) : itemButton;
