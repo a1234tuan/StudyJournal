@@ -42,23 +42,24 @@ describe("Stage 7 delayed verification orchestrator", () => {
     expect(verification).not.toHaveProperty("verificationOutcome");
   });
 
-  it("regenerates an exact historical question for a verification task", async () => {
+  it.each(["queued", "completed"] as const)("regenerates historical questions and uses delayed-first for a %s verification", async (verificationStatus) => {
     const snapshot = completeCoachTestSnapshot();
     const verificationTask: AdaptiveReviewTask = {
       ...coachTestTask,
       id: "verification-task",
       status: "current",
+      loopVersion: "closed-loop-v2",
       priorityTier: "due-verification",
       startedAt: undefined,
       endedAt: undefined,
       idempotencyKey: "verification-task",
     };
     snapshot.adaptiveReviewTasks.push(verificationTask);
-    snapshot.delayedVerifications[0] = { ...coachTestVerification, taskId: verificationTask.id, status: "queued", lastVerifiedAt: undefined, verificationOutcome: undefined };
+    snapshot.delayedVerifications[0] = { ...coachTestVerification, taskId: verificationTask.id, status: verificationStatus, lastVerifiedAt: undefined, verificationOutcome: undefined, concludedAt: undefined, nextVerificationDueAt: "2026-09-07T07:00:00.000Z" };
     const transitionTask = vi.fn(async (id: string, status: AdaptiveReviewTask["status"], updatedAt: string) => {
       const index = snapshot.adaptiveReviewTasks.findIndex((task) => task.id === id);
       snapshot.adaptiveReviewTasks[index] = { ...snapshot.adaptiveReviewTasks[index], status, updatedAt };
-      snapshot.delayedVerifications[0] = { ...snapshot.delayedVerifications[0], status: "in-progress", updatedAt };
+      snapshot.delayedVerifications[0] = { ...snapshot.delayedVerifications[0], status: verificationStatus === "completed" ? "completed" : "in-progress", updatedAt };
       return snapshot.adaptiveReviewTasks[index];
     });
     const addQuizTurn = vi.fn(async (turn) => turn);
@@ -88,6 +89,7 @@ describe("Stage 7 delayed verification orchestrator", () => {
     const result = await orchestrator.generateQuizTurn({ taskId: verificationTask.id, decisionBlockContent: "source", provider: "test", model: "fast", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy-v1", operationId: "verify" });
 
     expect(result.question).toBe("Explain why duplicate enqueueing happens when a node is marked late.");
+    expect(result.phase).toBe("delayed-first");
     expect(generateTurn).toHaveBeenCalledTimes(2);
     // The rejection reason now names which previous question it matched, so the
     // record distinguishes an exact repeat from a near-repeat.
@@ -198,7 +200,7 @@ describe("Stage 7 delayed verification orchestrator", () => {
     expect(unsettled.detachVerificationTask).toHaveBeenCalledWith(coachTestVerification.id, now);
     expect(unsettled.queueVerification).toHaveBeenCalledTimes(1);
     expect(unsettled.queueVerification.mock.calls[0][1]).toMatchObject({
-      id: `verification-task:${coachTestVerification.id}`,
+      id: `verification-task:${coachTestVerification.id}:recheck:2026-09-07T07:00:00.000Z`,
       priorityTier: "due-verification",
       status: "waiting",
     });

@@ -372,7 +372,9 @@ export const exportCloudSync = async (snapshot: StorageSnapshot): Promise<CloudS
 };
 
 const values = <T>(entities: CloudSyncEntity[], type: CloudSyncEntityType) =>
-  entities.filter((entity) => entity.entityType === type && !entity.deleted).map((entity) => entity.payload as unknown as T);
+  entities.filter((entity) => entity.entityType === type && (
+    !entity.deleted || (typeof entity.payload.id === "string" && typeof entity.payload.deletedAt === "string")
+  )).map((entity) => entity.payload as unknown as T);
 
 const coachValues = <T extends { id: string }>(entities: CloudSyncEntity[], type: CloudSyncEntityType) =>
   entities

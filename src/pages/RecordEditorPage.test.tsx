@@ -197,25 +197,25 @@ const renderEditor = (overrides: Partial<React.ComponentProps<typeof RecordEdito
   const onSave = vi.fn().mockResolvedValue(record);
   const onSaveDraft = vi.fn(async (draft: RecordDraft) => draft);
   const onDeleteDraft = vi.fn().mockResolvedValue(undefined);
-  const view = render(
-    <RecordEditorPage
-      record={record}
-      initialEditing
-      onBack={vi.fn()}
-      onSave={onSave}
-      onDelete={vi.fn()}
-      onToggleFavorite={vi.fn()}
-      onAddAsset={vi.fn().mockResolvedValue(asset)}
-      subjects={subjects}
-      onGetDraft={onGetDraft}
-      onSaveDraft={onSaveDraft}
-      onDeleteDraft={onDeleteDraft}
-      {...overrides}
-    />,
-  );
+  const props: React.ComponentProps<typeof RecordEditorPage> = {
+    record,
+    initialEditing: true,
+    onBack: vi.fn(),
+    onSave,
+    onDelete: vi.fn(),
+    onToggleFavorite: vi.fn(),
+    onAddAsset: vi.fn().mockResolvedValue(asset),
+    subjects,
+    onGetDraft,
+    onSaveDraft,
+    onDeleteDraft,
+    ...overrides,
+  };
+  const view = render(<RecordEditorPage {...props} />);
 
   const saveButton = () => view.container.querySelector(".record-action-row .primary-button") as HTMLButtonElement;
-  return { ...view, onGetDraft, onSave, onSaveDraft, onDeleteDraft, saveButton };
+  const rerenderRecord = (nextRecord: RecordBlock) => view.rerender(<RecordEditorPage {...props} record={nextRecord} />);
+  return { ...view, onGetDraft, onSave, onSaveDraft, onDeleteDraft, saveButton, rerenderRecord };
 };
 
 afterEach(() => {
@@ -409,6 +409,45 @@ describe("RecordEditorPage", () => {
     expect(onSaveDraft).not.toHaveBeenCalled();
   });
 
+  it("adopts a passive same-record refresh without saving the old draft", async () => {
+    const { onGetDraft, onSaveDraft, rerenderRecord } = renderEditor();
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    rerenderRecord({ ...record, title: "远端更新", updatedAt: "2026-06-21T00:02:00.000Z" });
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "记录标题" })).toHaveValue("远端更新"));
+    expect(onSaveDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps the raw formal base separate from editor normalization", async () => {
+    const legacyRecord = { ...record, mistakeRefs: ["legacy-reference"] };
+    const { onGetDraft, onSave, onSaveDraft, saveButton } = renderEditor({ record: legacyRecord });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+    expect(onSaveDraft).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "explicit edit" } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][1]).toMatchObject({ expectedRecord: legacyRecord });
+  });
+
+  it("keeps local draft persistence on its original base and refuses a stale formal save", async () => {
+    const { onGetDraft, onSaveDraft, onSave, rerenderRecord, saveButton } = renderEditor();
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "本机草稿" } });
+    rerenderRecord({ ...record, title: "远端更新", updatedAt: "2026-06-21T00:02:00.000Z" });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(screen.getByRole("textbox", { name: "记录标题" })).toHaveValue("本机草稿");
+    expect(onSaveDraft).toHaveBeenCalledWith(expect.objectContaining({ baseUpdatedAt: record.updatedAt, draft: expect.objectContaining({ title: "本机草稿" }) }));
+    await act(async () => { fireEvent.click(saveButton()); });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByText("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。")).toBeInTheDocument();
+  });
+
   it("returns immediately while a draft save is still in flight", async () => {
     const draftSave = deferred<RecordDraft>();
     let savedDraft!: RecordDraft;
@@ -435,6 +474,42 @@ describe("RecordEditorPage", () => {
       draftSave.resolve(savedDraft);
       await draftSave.promise;
     });
+  });
+
+  it("persists freshly typed content when returning synchronously unmounts the editor", async () => {
+    let unmountEditor = () => undefined as void;
+    const onBack = vi.fn(() => unmountEditor());
+    const { onGetDraft, onSaveDraft, unmount } = renderEditor({ onBack });
+    unmountEditor = unmount;
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "must survive immediate return" } });
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ title: "must survive immediate return" }) })));
+  });
+
+  it("rejects a remote refresh arriving while formal save waits for a local draft flush", async () => {
+    const gate = deferred<void>();
+    const onSaveDraft = vi.fn(async (next: RecordDraft) => { await gate.promise; return next; });
+    const { onGetDraft, onSave, rerenderRecord, saveButton } = renderEditor({ onSaveDraft });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalledWith(record.id));
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "local pending" } });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledOnce());
+    fireEvent.click(saveButton());
+    rerenderRecord({ ...record, title: "remote during wait", updatedAt: "2026-06-21T00:03:00.000Z" });
+    await act(async () => { gate.resolve(); await gate.promise; });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onSaveDraft.mock.calls.at(-1)?.[0].baseUpdatedAt).toBe(record.updatedAt);
+    expect(screen.getByRole("textbox", { name: "记录标题" })).toHaveValue("local pending");
+  });
+
+  it("uses the latest passive record when an initial draft read finishes late", async () => {
+    const gate = deferred<RecordDraft | undefined>();
+    const onGetDraft = vi.fn(() => gate.promise);
+    const { onSaveDraft, rerenderRecord } = renderEditor({ onGetDraft });
+    rerenderRecord({ ...record, title: "remote while loading", updatedAt: "2026-06-21T00:03:00.000Z" });
+    await act(async () => { gate.resolve(undefined); await gate.promise; });
+    expect(screen.getByRole("textbox", { name: "记录标题" })).toHaveValue("remote while loading");
+    expect(onSaveDraft).not.toHaveBeenCalled();
   });
 
   // The plan-reclaim job deletes empty records, and "no draft row on disk" is only
@@ -744,6 +819,7 @@ describe("RecordEditorPage", () => {
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0][1]).toEqual({
+      expectedRecord: decisionRecord,
       decisionBlockRemovals: [{
         decisionBlockId: "block-1",
         reason: "deleted",

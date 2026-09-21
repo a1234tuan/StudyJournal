@@ -111,7 +111,7 @@ describe("Stage 6 quiz orchestrator", () => {
     await orchestrator.skipQuizTurn(displayed.id, "skip-op");
     await orchestrator.generateQuizTurn({ taskId: task.id, decisionBlockContent: "source", provider: "test", model: "mock", promptVersion: "quiz-v1", qualityPromptVersion: "quality-v1", policyVersion: "policy", operationId: "next-op" });
 
-    expect(commitQuizAnswer).toHaveBeenCalledWith(expect.objectContaining({ answerText: "[skipped]", assessment: "unreliable" }), expect.objectContaining({ answerAssessment: "unreliable", reason: "skipped" }));
+    expect(commitQuizAnswer).toHaveBeenCalledWith(expect.objectContaining({ answerText: "[skipped]", assessment: "unreliable" }), expect.objectContaining({ answerAssessment: "unreliable", reason: "skipped" }), undefined, expect.objectContaining({ turn: displayed, task: expect.objectContaining({ status: "in-progress" }) }));
     expect(generateTurn).toHaveBeenCalledWith(expect.objectContaining({ requestedStrategy: "prerequisite-check" }), undefined);
   });
 
@@ -146,6 +146,7 @@ describe("Stage 6 quiz orchestrator", () => {
       expect.objectContaining({ assessment: "unreliable" }),
       expect.objectContaining({ answerAssessment: "unreliable", reason: expect.stringMatching(/^unreliable:/) }),
       undefined,
+      expect.objectContaining({ turn: expect.objectContaining({ status: "displayed" }), task: expect.objectContaining({ status: "in-progress" }) }),
     );
     // And it drives nothing: no mastery decision, no task outcome, no branch strategy at all —
     // in particular not the `partial` branch's strategy.

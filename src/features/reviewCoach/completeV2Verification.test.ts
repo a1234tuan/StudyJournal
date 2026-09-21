@@ -3,9 +3,11 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { StudyJournalDatabase } from "../../db/database";
+import { hashValue, syncHashPayload } from "../../services/cloudSyncModel";
 import type { AdaptiveQuizTurn, DelayedVerification, JudgmentMechanism, ReferenceOrigin } from "./domain";
 import { closedLoopV2Fixtures } from "./learningLoopFixtures";
 import { DexieReviewCoachRepository } from "./repository";
+import { ReviewCoachOrchestrator, verificationTaskIdentity } from "./orchestrator";
 import { coachTestBlock, coachTestStamp, completeCoachTestSnapshot } from "./reviewCoachTestFixtures";
 
 Dexie.dependencies.indexedDB = indexedDB;
@@ -416,6 +418,96 @@ describe("completeV2Verification", () => {
       await repository.completeV2Verification(task.id, "2026-09-17T08:00:00.000Z");
       await expect(repository.detachVerificationTask("verification-v2-1", "2026-09-17T09:00:00.000Z"))
         .rejects.toThrow("already has a settled conclusion");
+    });
+
+    it("keeps the active recheck linked across refreshes and derives distinct stable IDs for later windows", async () => {
+      const { task, turn } = await seed();
+      await repository.completeV2Verification(task.id, "2026-09-17T08:00:00.000Z");
+      const verification = (await database.delayedVerifications.get("verification-v2-1"))!;
+      let clockNow = verification.nextVerificationDueAt!;
+      const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "unused" }, clock: { now: () => clockNow } });
+      expect(await orchestrator.refreshDueVerifications()).toBe(1);
+      const first = (await database.delayedVerifications.get(verification.id))!;
+      expect(first.taskId).toBeDefined();
+      const firstTask = (await database.adaptiveReviewTasks.get(first.taskId!))!;
+      const mutation = await database.cloudSyncMutation.toArray();
+      clockNow = new Date(Date.parse(clockNow) + 3600000).toISOString();
+      expect(await orchestrator.refreshDueVerifications()).toBe(0);
+      expect(await database.delayedVerifications.get(verification.id)).toEqual(first);
+      expect(firstTask.id).toBe(verificationTaskIdentity(verification));
+      expect(await database.cloudSyncMutation.toArray()).toEqual(mutation);
+      expect(await repository.detachVerificationTask(verification.id, clockNow)).toEqual(first);
+      await repository.transitionTask(firstTask.id, "current", clockNow);
+      await repository.transitionTask(firstTask.id, "in-progress", clockNow);
+      expect((await database.delayedVerifications.get(verification.id))?.status).toBe("completed");
+      const recheckTurn = { ...turn, id: `${firstTask.id}:turn`, taskId: firstTask.id, idempotencyKey: `${firstTask.id}:turn` };
+      await database.adaptiveQuizTurns.add(recheckTurn);
+      await database.taskOutcomeEvents.add(verificationEvent(firstTask.id, recheckTurn.id, "answer-assessment", { answerAssessment: "correct" }));
+      await repository.completeV2Verification(firstTask.id, clockNow);
+      const completed = (await database.delayedVerifications.get(verification.id))!;
+      expect(completed.evidenceTurnId).toBe(recheckTurn.id);
+      expect(completed.nextVerificationDueAt! > clockNow).toBe(true);
+      clockNow = completed.nextVerificationDueAt!;
+      expect(await orchestrator.refreshDueVerifications()).toBe(1);
+      const second = (await database.delayedVerifications.get(verification.id))!;
+      expect(second.taskId).not.toBe(firstTask.id);
+      expect(second.taskId).toBe(verificationTaskIdentity(completed));
+      expect((await database.adaptiveReviewTasks.get(firstTask.id))?.status).toBe("completed");
+      expect(await database.adaptiveQuizTurns.get(recheckTurn.id)).toEqual(recheckTurn);
+      const secondMutation = await database.cloudSyncMutation.toArray();
+      expect(await orchestrator.refreshDueVerifications()).toBe(0);
+      expect(await database.cloudSyncMutation.toArray()).toEqual(secondMutation);
+      const newWindow = { ...verification, nextVerificationDueAt: "2026-10-01T00:00:00.000Z" };
+      expect(verificationTaskIdentity(newWindow)).not.toBe(firstTask.id);
+      expect(verificationTaskIdentity({ ...newWindow, updatedAt: clockNow })).toBe(verificationTaskIdentity(newWindow));
+      expect((await database.adaptiveReviewTasks.get(task.id))?.status).toBe("completed");
+    });
+    it("produces matching sync content for two devices refreshing the same recheck at different times", async () => {
+      const refreshAt = async (delayHours: number) => {
+        await resetDatabase();
+        const { task } = await seed();
+        await repository.completeV2Verification(task.id, "2026-09-17T08:00:00.000Z");
+        const verification = (await database.delayedVerifications.get("verification-v2-1"))!;
+        const now = new Date(Date.parse(verification.nextVerificationDueAt!) + delayHours * 3600000).toISOString();
+        const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "unused" }, clock: { now: () => now } });
+        await orchestrator.refreshDueVerifications();
+        const queued = (await database.delayedVerifications.get(verification.id))!;
+        const queuedTask = (await database.adaptiveReviewTasks.get(queued.taskId!))!;
+        return {
+          verification: await hashValue(syncHashPayload("delayed-verification", queued)),
+          task: await hashValue(syncHashPayload("adaptive-review-task", queuedTask)),
+        };
+      };
+      expect(await refreshAt(1)).toEqual(await refreshAt(2));
+    });
+
+    it.each(["deferred", "abandoned"] as const)("preserves recheck evidence when a learner chooses %s", async (status) => {
+      const { task } = await seed();
+      await repository.completeV2Verification(task.id, "2026-09-17T08:00:00.000Z");
+      const verification = (await database.delayedVerifications.get("verification-v2-1"))!;
+      const clockNow = verification.nextVerificationDueAt!;
+      const orchestrator = new ReviewCoachOrchestrator({ repository, ids: { next: () => "unused" }, clock: { now: () => clockNow } });
+      await orchestrator.refreshDueVerifications();
+      const queued = (await database.delayedVerifications.get(verification.id))!;
+      const taskId = queued.taskId!;
+      await repository.transitionTask(taskId, "current", clockNow);
+      await repository.transitionTask(taskId, "in-progress", clockNow);
+      const disposition = { ...verificationEvent(taskId, "", "task-disposition"), turnId: undefined, disposition: status };
+      await repository.commitTaskOutcome(taskId, [disposition], status, clockNow, "2026-10-01T00:00:00.000Z");
+      expect(await database.delayedVerifications.get(verification.id)).toEqual(queued);
+      const mutation = await database.cloudSyncMutation.toArray();
+      expect(await orchestrator.refreshDueVerifications()).toBe(status === "deferred" ? 0 : 1);
+      const refreshed = (await database.delayedVerifications.get(verification.id))!;
+      expect(refreshed.evidenceTurnId).toBe(verification.evidenceTurnId);
+      expect((await database.adaptiveReviewTasks.get(taskId))?.status).toBe(status);
+      expect(await database.taskOutcomeEvents.get(disposition.id)).toEqual(disposition);
+      if (status === "deferred") {
+        expect(refreshed.taskId).toBe(taskId);
+        expect(await database.cloudSyncMutation.toArray()).toEqual(mutation);
+      } else {
+        expect(refreshed.taskId).toBe(`${taskId}:retry:1`);
+        expect(await orchestrator.refreshDueVerifications()).toBe(0);
+      }
     });
 
     it("re-opens an unsettled verification by clearing the stale task link only", async () => {

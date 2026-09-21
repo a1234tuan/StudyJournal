@@ -297,16 +297,21 @@ const cloudSyncMutationEpoch = async (): Promise<number> => {
   return record?.epoch ?? 0;
 };
 
+const bumpCloudSyncMutationInTransaction = async (): Promise<number> => {
+  const table = (db as typeof db & { cloudSyncMutation?: typeof db.cloudSyncMutation }).cloudSyncMutation;
+  if (!table) return 0;
+  const current = await table.get("local");
+  const epoch = (current?.epoch ?? 0) + 1;
+  await table.put({ id: "local", epoch });
+  return epoch;
+};
+
 const markCloudSyncMutation = async (): Promise<number> => {
   const table = (db as typeof db & { cloudSyncMutation?: typeof db.cloudSyncMutation }).cloudSyncMutation;
   if (!table) return 0;
-  const write = async () => {
-    const current = await table.get("local");
-    const epoch = (current?.epoch ?? 0) + 1;
-    await table.put({ id: "local", epoch });
-    return epoch;
-  };
-  return typeof db.transaction === "function" ? db.transaction("rw", table, write) : write();
+  return typeof db.transaction === "function"
+    ? db.transaction("rw", table, bumpCloudSyncMutationInTransaction)
+    : bumpCloudSyncMutationInTransaction();
 };
 
 const isSuccessfulRecordReviewRating = (rating: RecordReviewRating): boolean => {
@@ -1069,10 +1074,14 @@ export class DexieStorageAdapter implements StorageAdapter {
       ),
     );
     if (hasDecisionBlockWork && saved.type === "record" && preparedDecisionBlocks && db.decisionBlocks) {
-      await new DexieReviewCoachRepository(db).saveRecordWithDecisionBlocks(saved, preparedDecisionBlocks, !isUnchangedBlock);
+      await new DexieReviewCoachRepository(db).saveRecordWithDecisionBlocks(saved, preparedDecisionBlocks, !isUnchangedBlock, options.expectedRecord);
     } else {
-      if (!isUnchangedBlock || saved.type === "studySession") await markCloudSyncMutation();
-      await db.transaction("rw", db.blocks, db.recordDrafts, async () => {
+      await db.transaction("rw", [db.blocks, db.recordDrafts, db.cloudSyncMutation], async () => {
+        const current = options.expectedRecord ? await db.blocks.get(saved.id) : undefined;
+        if (options.expectedRecord && (!current || !deepEqualIgnoring(current, options.expectedRecord, []))) {
+          throw new Error("正式内容已更新，请核对本机草稿后再保存。");
+        }
+        if (!isUnchangedBlock || saved.type === "studySession") await bumpCloudSyncMutationInTransaction();
         await db.blocks.put(saved);
         if (saved.type === "record") {
           await db.recordDrafts.delete(saved.id);
@@ -1777,10 +1786,14 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async saveDailyPlan(plan: DailyPlan): Promise<DailyPlan> {
-    const saved = touch(plan);
-    await markCloudSyncMutation();
-    await db.dailyPlans.put(saved);
-    return saved;
+    return db.transaction("rw", db.dailyPlans, db.cloudSyncMutation, async () => {
+      const current = await db.dailyPlans.get(plan.id);
+      if (current && deepEqualIgnoring(current, plan, ["updatedAt"])) return current;
+      const saved = touch(plan);
+      await bumpCloudSyncMutationInTransaction();
+      await db.dailyPlans.put(saved);
+      return saved;
+    });
   }
 
   /**
@@ -1791,12 +1804,13 @@ export class DexieStorageAdapter implements StorageAdapter {
    * restoring the log later still reads as fulfilment. Deleting never cascades.
    */
   async deleteDailyPlan(id: string): Promise<void> {
-    const plan = await db.dailyPlans.get(id);
-    if (!plan || plan.deletedAt) {
-      return;
-    }
-    await markCloudSyncMutation();
-    await db.dailyPlans.put({ ...plan, deletedAt: nowISO(), updatedAt: nowISO() });
+    await db.transaction("rw", db.dailyPlans, db.cloudSyncMutation, async () => {
+      const plan = await db.dailyPlans.get(id);
+      if (!plan || plan.deletedAt) return;
+      const now = nowISO();
+      await bumpCloudSyncMutationInTransaction();
+      await db.dailyPlans.put({ ...plan, deletedAt: now, updatedAt: now });
+    });
   }
 
   /**
@@ -1808,12 +1822,12 @@ export class DexieStorageAdapter implements StorageAdapter {
    * never lost content.
    */
   async linkPlanRecord(planId: string, recordId?: string): Promise<void> {
-    const plan = await db.dailyPlans.get(planId);
-    if (!plan || plan.linkedRecordId === recordId) {
-      return;
-    }
-    await markCloudSyncMutation();
-    await db.dailyPlans.put({ ...plan, linkedRecordId: recordId, updatedAt: nowISO() });
+    await db.transaction("rw", db.dailyPlans, db.cloudSyncMutation, async () => {
+      const plan = await db.dailyPlans.get(planId);
+      if (!plan || plan.deletedAt || plan.linkedRecordId === recordId) return;
+      await bumpCloudSyncMutationInTransaction();
+      await db.dailyPlans.put({ ...plan, linkedRecordId: recordId, updatedAt: nowISO() });
+    });
   }
 
   /**
@@ -1847,14 +1861,13 @@ export class DexieStorageAdapter implements StorageAdapter {
       return [];
     }
 
-    await markCloudSyncMutation();
     const reclaimed: string[] = [];
     // One transaction covering the delete scope plus `dailyPlans`. Dexie
     // serialises overlapping read-write transactions, so a `flushDraft` write
     // cannot land between reading `recordDrafts` and deleting the record - that
     // interleaving is exactly the bug this closes. Widening the scope here is
     // what lets the purge body be reused instead of nested.
-    await db.transaction("rw", [...this.blockPurgeStores(), db.dailyPlans], async () => {
+    await db.transaction("rw", [...this.blockPurgeStores(), db.dailyPlans, db.cloudSyncMutation], async () => {
       const assets = await db.assets.toArray();
       const doomed: Block[] = [];
       for (const recordId of candidates) {
@@ -1877,6 +1890,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       if (doomed.length === 0) {
         return;
       }
+      await bumpCloudSyncMutationInTransaction();
       await this.purgeBlockRows(doomed);
       // Only live plans get written back; writing to a soft-deleted row would
       // produce a pointless mutation and a pointless cloud-sync delta.

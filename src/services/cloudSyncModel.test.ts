@@ -195,16 +195,13 @@ describe("cloud sync model", () => {
     const exported = await exportCloudSync(withPlans);
     const planEntities = exported.entities.filter((entity) => entity.entityType === "daily-plan");
 
-    // Both rows travel, and the deleted one travels as a tombstone with no
-    // payload - that is what lets a deletion reach the other devices.
     expect(planEntities.map((entity) => entity.key)).toEqual(["daily-plan:plan-1", "daily-plan:plan-deleted"]);
     expect(planEntities[0].deleted).toBe(false);
     expect(planEntities[0].payload).toMatchObject({ title: "进程调度 10 题", linkedRecordId: "record-1" });
     expect(planEntities[1].deleted).toBe(true);
 
     const restored = materializeCloudSyncSnapshot(exported.entities, exported.reviewEvents, exported.assetBlobs);
-    // The materialized table holds live rows only - the same rule blocks follow.
-    expect(restored.payload.dailyPlans).toEqual([plans[0]]);
+    expect(restored.payload.dailyPlans).toEqual(plans);
     expect(restored.payload.manifest.counts.dailyPlans).toBe(1);
   });
 

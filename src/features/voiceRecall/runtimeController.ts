@@ -382,7 +382,18 @@ export class VoiceRecallRuntimeController {
     let attempt = 0;
     while (attempt < 3) {
       try {
-        await this.repository.putSession(this.session);
+        const session: VoiceRecallSessionLocal | undefined = this.session;
+        if (!session) return;
+        const persisted = await this.repository.putSession(session, { allowCreate: false });
+        if (!persisted && this.session?.id === session.id) {
+          await this.cancelActiveTurn();
+          this.focus.stop();
+          this.cancellation.cancelSession();
+          this.productionSession = undefined;
+          this.session = undefined;
+          this.state = undefined;
+          this.emit();
+        }
         return;
       } catch (error) {
         attempt += 1;

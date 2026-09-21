@@ -1178,6 +1178,7 @@ export interface StorageAdapter {
 }
 
 export interface RecordSaveOptions {
+  expectedRecord?: RecordBlock;
   decisionBlockRemovals?: Array<{
     decisionBlockId: EntityId;
     reason: "deleted" | "converted-to-plain";

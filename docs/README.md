@@ -4,6 +4,8 @@
 
 ## 当前接入与验收
 
+- [学习助教同步写入修复](cloud-sync-coach-write-boundaries-2026-09-21.md)：v0.2.5 后的角色绑定、启动选任务、队列幂等、反馈自动执行/旧回调和复查任务关联修复；区分首轮手机安装与后续未部署源码，以及真实账号验证边界。
+- [云同步收敛专项修复](cloud-sync-convergence-fixes-2026-09-21.md)：软删除保留、事务 mutation、未知/部分提交核对、隐藏修订保护、助教旧回调、编辑草稿与语音恢复生命周期；含隔离回归和未部署边界。
 - [语音服务配置](voice-recall-provider-configuration.md)：设备本机凭据、ASR/LLM/TTS 选择、平台限制和排障入口。
 - [语音实现基线](realtime-voice-recall-implementation.md)：运行态、两段 TTS 预取、缓存重播、同步与隐私边界。
 - [TTS Android 真机验收](voice-recall-tts-device-validation-2026-09-21.md)：Qwen Audio 3.1/3.0、豆包 2.0 的真实播放证据及仍未验证项。

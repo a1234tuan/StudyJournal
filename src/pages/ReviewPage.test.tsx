@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordBlock, RecordReviewLog, RecordReviewRating, RecordReviewState, RecordReviewStats, RecordReviewUndoToken, SubjectConfig } from "../types";
 import type { AnalysisQueueItem, DecisionBlockFeedback } from "../features/reviewCoach/domain";
 import { createInitialReviewLibraryState } from "../lib/tabNavigation";
+import { coachTestInterpretation } from "../features/reviewCoach/reviewCoachTestFixtures";
 
 const richTextEditorMock = vi.hoisted(() => ({
   props: [] as any[],
@@ -840,6 +841,28 @@ describe("ReviewPage", () => {
 
     expect(screen.getByText("旧版整条日志评价（1）").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("- 上次把页表和 TLB 关系理顺了")).toBeInTheDocument();
+  });
+
+  it.each([undefined, "pending", "running", "failed", "succeeded"] as const)("requires an explicit click to resume %s feedback interpretation", async (status) => {
+    const onRetryFeedbackInterpretation = vi.fn().mockResolvedValue(undefined);
+    const feedback = decisionBlockFeedback();
+    renderReviewPage({
+      records: records.map((item) => item.id === "active" ? withDecisionBlock(item) : item),
+      mode: "queue", dueReviews: [review("active")], reviewStates: [review("active")],
+      decisionBlockFeedback: [feedback], analysisQueueItems: [analysisQueueItem()],
+      feedbackInterpretations: status ? [{ ...coachTestInterpretation, feedbackId: feedback.id, decisionBlockId: feedback.decisionBlockId, status }] : [],
+      queueIds: ["active"], currentRecordId: "active", onRetryFeedbackInterpretation,
+    });
+    fireEvent.click(screen.getByText("1 条历史评论"));
+    expect(onRetryFeedbackInterpretation).not.toHaveBeenCalled();
+    if (status === "succeeded") {
+      expect(screen.queryByRole("button", { name: /^(开始|继续|重试)整理$/ })).not.toBeInTheDocument();
+      return;
+    }
+    const label = status === "failed" ? "重试整理" : status ? "继续整理" : "开始整理";
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(onRetryFeedbackInterpretation).toHaveBeenCalledWith(feedback.id));
+    expect(onRetryFeedbackInterpretation).toHaveBeenCalledTimes(1);
   });
 
   it("manages queued block feedback and explicitly links legacy evaluations", async () => {

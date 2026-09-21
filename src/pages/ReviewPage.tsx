@@ -1104,6 +1104,7 @@ export const ReviewPage = ({
                               <div>
                                 {history.map((feedback) => {
                                   const queueItem = queueByFeedbackId.get(feedback.id);
+                                  const interpretation = interpretationByFeedbackId.get(feedback.id);
                                   const queueEditable = queueItem && ["eligible", "excluded", "batched"].includes(queueItem.status);
                                   return (
                                     <article key={feedback.id}>
@@ -1113,12 +1114,11 @@ export const ReviewPage = ({
                                       </div>
                                       <p>{feedback.comment}</p>
                                       {(() => {
-                                        const interpretation = interpretationByFeedbackId.get(feedback.id);
                                         if (!interpretation) return null;
                                         const statusLabel = interpretation.status === "succeeded"
                                           ? interpretation.aiGenerated ? "AI 已整理，待确认" : "已确认"
                                           : interpretation.status === "insufficient-context" ? "需要补充背景"
-                                            : interpretation.status === "failed" ? "整理失败，可稍后重试" : "整理中";
+                                            : interpretation.status === "failed" ? "整理失败，可稍后重试" : "整理尚未完成";
                                         return (
                                           <div className="decision-block-feedback-interpretation">
                                             <small>快速模型：{statusLabel}</small>
@@ -1159,14 +1159,17 @@ export const ReviewPage = ({
                                                 </button>
                                               </div>
                                             )}
-                                            {interpretation.status === "failed" && onRetryFeedbackInterpretation && (
-                                              <button type="button" onClick={() => void runFeedbackAction(`${feedback.id}:interpretation-retry`, () => onRetryFeedbackInterpretation(feedback.id))} disabled={Boolean(feedbackActionId)}>
-                                                重试整理
-                                              </button>
-                                            )}
                                           </div>
                                         );
                                       })()}
+                                      {onRetryFeedbackInterpretation && (interpretation?.status === "failed" || (queueItem?.status === "eligible" && (!interpretation || ["pending", "running"].includes(interpretation.status)))) && (
+                                        <div className="decision-block-feedback-interpretation">
+                                          <small>同步不会自动启动整理，可在需要时手动继续。</small>
+                                          <button type="button" onClick={() => void runFeedbackAction(`${feedback.id}:interpretation-retry`, () => onRetryFeedbackInterpretation(feedback.id))} disabled={Boolean(feedbackActionId)}>
+                                            {interpretation?.status === "failed" ? "重试整理" : interpretation ? "继续整理" : "开始整理"}
+                                          </button>
+                                        </div>
+                                      )}
                                       {queueEditable && (
                                         <div className="decision-block-queue-controls">
                                           <textarea

@@ -64,6 +64,55 @@ const draftFor = (recordId: string): RecordDraft => ({
 });
 
 describe("daily plan CRUD", () => {
+  it("rolls back both the mutation epoch and plan when the plan write fails", async () => {
+    const before = await adapter.getCloudSyncMutationEpoch();
+    database.dailyPlans.hook("creating", () => { throw new Error("synthetic plan write failure"); });
+    await expect(adapter.saveDailyPlan(plan({ id: "rollback" }))).rejects.toThrow("synthetic plan write failure");
+    expect(await database.dailyPlans.get("rollback")).toBeUndefined();
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+  });
+
+  it("stores the row and epoch inside the same transaction", async () => {
+    const scopes: string[][] = [];
+    database.dailyPlans.hook("creating", (_key, _row, transaction) => { scopes.push(transaction.storeNames); });
+    await adapter.saveDailyPlan(plan({ id: "atomic" }));
+    expect(scopes).toEqual([expect.arrayContaining(["dailyPlans", "cloudSyncMutation"])]);
+  });
+
+  it("does not mutate unchanged plans or relink deleted plans", async () => {
+    const saved = await adapter.saveDailyPlan(plan({ id: "no-op" }));
+    const before = await adapter.getCloudSyncMutationEpoch();
+    expect(await adapter.saveDailyPlan({ ...saved, updatedAt: "2026-09-21T12:00:00.000Z" })).toEqual(saved);
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+    await adapter.deleteDailyPlan(saved.id);
+    const deleted = await database.dailyPlans.get(saved.id);
+    const afterDelete = await adapter.getCloudSyncMutationEpoch();
+    await adapter.linkPlanRecord(saved.id, "late-record");
+    await adapter.deleteDailyPlan(saved.id);
+    expect(await database.dailyPlans.get(saved.id)).toEqual(deleted);
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(afterDelete);
+  });
+
+  it("rejects a stale editor base within the record transaction and preserves its draft", async () => {
+    const base = record("stale-record", "<p>base</p>");
+    const remote = { ...base, contentHtml: "<p>remote</p>" };
+    await database.blocks.put(remote);
+    await database.recordDrafts.put(draftFor(base.id));
+    const before = await adapter.getCloudSyncMutationEpoch();
+    await expect(adapter.saveBlock({ ...base, title: "local edit" }, { expectedRecord: base })).rejects.toThrow();
+    expect(await database.blocks.get(base.id)).toEqual(remote);
+    expect(await database.recordDrafts.get(base.id)).toBeDefined();
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+  });
+
+  it("rolls back the mutation epoch when a record write fails", async () => {
+    const before = await adapter.getCloudSyncMutationEpoch();
+    database.blocks.hook("creating", () => { throw new Error("synthetic record write failure"); });
+    await expect(adapter.saveBlock(record("rollback-record", "<p>content</p>"))).rejects.toThrow("synthetic record write failure");
+    expect(await database.blocks.get("rollback-record")).toBeUndefined();
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+  });
+
   it("saves, lists and reads plans back in date then order sequence", async () => {
     await adapter.saveDailyPlan(plan({ id: "p2", date: "2026-09-16", order: 1 }));
     await adapter.saveDailyPlan(plan({ id: "p1", date: "2026-09-16", order: 0 }));

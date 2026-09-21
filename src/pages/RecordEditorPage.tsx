@@ -224,6 +224,9 @@ export const RecordEditorPage = ({
   const [tagInput, setTagInput] = useState("");
   const [editingTagIndex, setEditingTagIndex] = useState<number | null>(null);
   const recordIdRef = useRef(record.id);
+  const formalRecordRef = useRef<RecordBlock>(structuredClone(record));
+  const latestRecordRef = useRef(record);
+  latestRecordRef.current = record;
   const draftRef = useRef<RecordBlock>(cloneRecord(record));
   const draftLoadingRef = useRef(true);
   const draftLoadSequenceRef = useRef(0);
@@ -234,6 +237,7 @@ export const RecordEditorPage = ({
   const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const committingRef = useRef(false);
   const ignoreEditorChangesRef = useRef(false);
+  const remoteRecordChangedRef = useRef(false);
   const pendingAssetTasksRef = useRef<Set<Promise<void>>>(new Set());
   const leavingRef = useRef(false);
   const stoppingRecordingRef = useRef<Promise<void> | null>(null);
@@ -315,6 +319,7 @@ export const RecordEditorPage = ({
 
   const flushDraft = useCallback(
     async (nextDraft = draftRef.current, options: { force?: boolean } = {}) => {
+      const baseRecord = formalRecordRef.current;
       const decisionBlockOptions = draftDecisionBlockOptions(
         pendingDecisionBlockRemovalsRef.current,
         restoredDecisionBlocksRef.current,
@@ -322,20 +327,20 @@ export const RecordEditorPage = ({
       const hasDecisionBlockIntent = Boolean(
         decisionBlockOptions.decisionBlockRemovals?.length || decisionBlockOptions.restoredDecisionBlocks?.length,
       );
-      if (restoreLocked || draftLoadingRef.current || (!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, record) && !hasDecisionBlockIntent)) {
+      if (restoreLocked || draftLoadingRef.current || (!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
         return;
       }
 
       const task = draftSaveQueueRef.current.then(async () => {
-        if (draftLoadingRef.current || (!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, record) && !hasDecisionBlockIntent)) {
+        if ((!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
           return;
         }
         setDraftSaveStatus("saving");
         try {
           await onSaveDraft({
-            id: record.id,
-            recordId: record.id,
-            baseUpdatedAt: record.updatedAt,
+            id: baseRecord.id,
+            recordId: baseRecord.id,
+            baseUpdatedAt: baseRecord.updatedAt,
             draft: cloneRecord(nextDraft),
             ...decisionBlockOptions,
             updatedAt: nowISO(),
@@ -354,7 +359,7 @@ export const RecordEditorPage = ({
       draftSaveQueueRef.current = task.catch(() => undefined);
       await task;
     },
-    [onSaveDraft, record, restoreLocked],
+    [onSaveDraft, restoreLocked],
   );
 
   /**
@@ -386,7 +391,7 @@ export const RecordEditorPage = ({
   const scheduleDraftSave = useCallback(
     (nextDraft: RecordBlock) => {
       draftRef.current = nextDraft;
-      if (draftLoadingRef.current || restoreLocked || committingRef.current || ignoreEditorChangesRef.current || !hasDraftChanges(nextDraft, record)) {
+      if (draftLoadingRef.current || restoreLocked || committingRef.current || ignoreEditorChangesRef.current || !hasDraftChanges(nextDraft, cloneRecord(formalRecordRef.current))) {
         return;
       }
       if (saveTimerRef.current) {
@@ -441,6 +446,29 @@ export const RecordEditorPage = ({
   );
 
   useEffect(() => {
+    const previousRecord = formalRecordRef.current;
+    if (previousRecord.id === record.id && (previousRecord.updatedAt !== record.updatedAt || hasDraftChanges(previousRecord, record)) && !draftLoadingRef.current) {
+      if (committingRef.current && !hasDraftChanges(draftRef.current, cloneRecord(record))) {
+        remoteRecordChangedRef.current = false;
+      } else {
+        const hasDecisionBlockIntent = pendingDecisionBlockRemovalsRef.current.size > 0 || restoredDecisionBlocksRef.current.size > 0;
+        if (hasDraftChanges(draftRef.current, cloneRecord(previousRecord)) || hasDecisionBlockIntent) {
+          remoteRecordChangedRef.current = true;
+          setSaveError("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。");
+          return;
+        } else {
+          const clean = cloneRecord(record);
+          remoteRecordChangedRef.current = false;
+          cancelScheduledDraftSave();
+          draftRef.current = clean;
+          setDraft(clean);
+        }
+      }
+    }
+    formalRecordRef.current = structuredClone(record);
+  }, [cancelScheduledDraftSave, record]);
+
+  useEffect(() => {
     if (!restoreLocked) {
       return;
     }
@@ -456,6 +484,8 @@ export const RecordEditorPage = ({
     const loadingRecord = record;
     const loadSequence = ++draftLoadSequenceRef.current;
     const loadingRecordId = loadingRecord.id;
+    formalRecordRef.current = structuredClone(loadingRecord);
+    remoteRecordChangedRef.current = false;
     draftLoadingRef.current = true;
     setDraftLoading(true);
     cancelScheduledDraftSave();
@@ -481,6 +511,8 @@ export const RecordEditorPage = ({
       }
       if (!loadStartedDuringCommit && !committingRef.current && storedDraft && storedDraft.updatedAt > loadingRecord.updatedAt) {
         const restored = cloneRecord(storedDraft.draft);
+        formalRecordRef.current = { ...structuredClone(loadingRecord), updatedAt: storedDraft.baseUpdatedAt };
+        remoteRecordChangedRef.current = storedDraft.baseUpdatedAt !== loadingRecord.updatedAt;
         pendingDecisionBlockRemovalsRef.current = new Map(
           (storedDraft.decisionBlockRemovals ?? []).map((removal) => [removal.decisionBlockId, removal]),
         );
@@ -495,7 +527,8 @@ export const RecordEditorPage = ({
         setDraftRestored(true);
         return;
       }
-      const clean = cloneRecord(loadingRecord);
+      const clean = cloneRecord(latestRecordRef.current.id === loadingRecordId ? latestRecordRef.current : loadingRecord);
+      formalRecordRef.current = structuredClone(latestRecordRef.current.id === loadingRecordId ? latestRecordRef.current : loadingRecord);
       pendingDecisionBlockRemovalsRef.current.clear();
       restoredDecisionBlocksRef.current.clear();
       setDraft(clean);
@@ -718,10 +751,11 @@ export const RecordEditorPage = ({
     }
     leavingRef.current = true;
     editorRef.current?.commands.cancelMarkdownPasteConversion?.();
+    const pendingDraft = flushDraftDetached();
     void (async () => {
       try {
         await stopRecordingIntoDraft();
-        await flushDraftDetached();
+        await pendingDraft;
       } catch {
         // Returning must not depend on a recorder or storage operation completing.
       } finally {
@@ -786,6 +820,14 @@ export const RecordEditorPage = ({
       await waitForPendingAssets();
       await waitForDraftSaves();
 
+      if (remoteRecordChangedRef.current || latestRecordRef.current.updatedAt !== formalRecordRef.current.updatedAt || hasDraftChanges(latestRecordRef.current, formalRecordRef.current)) {
+        committingRef.current = false;
+        ignoreEditorChangesRef.current = false;
+        await flushDraftDetached(draftRef.current, { force: true });
+        setSaveError("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。");
+        return;
+      }
+
       const editor = editorRef.current;
       draftToSave = syncEditableRecord({
         ...applyTagInput(draftRef.current),
@@ -804,6 +846,7 @@ export const RecordEditorPage = ({
       }
 
       await onSave(draftToSave, {
+        expectedRecord: formalRecordRef.current,
         decisionBlockRemovals: Array.from(pendingDecisionBlockRemovalsRef.current.values()),
         restoredDecisionBlocks: Array.from(restoredDecisionBlocksRef.current, ([decisionBlockId, contentHtml]) => ({ decisionBlockId, contentHtml })),
       });
@@ -838,6 +881,8 @@ export const RecordEditorPage = ({
     await waitForDraftSaves();
     await onDeleteDraft(record.id);
     const clean = cloneRecord(record);
+    formalRecordRef.current = structuredClone(record);
+    remoteRecordChangedRef.current = false;
     pendingDecisionBlockRemovalsRef.current.clear();
     restoredDecisionBlocksRef.current.clear();
     setDraft(clean);

@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from "../db/defaults";
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT } from "../features/reviewCoach/domain";
 import { completeCoachTestSnapshot } from "../features/reviewCoach/reviewCoachTestFixtures";
 import type { CloudSyncLedgerRecord, DailyPlan, RecordBlock, RecordReviewLog, StorageSnapshot } from "../types";
-import { NON_CONFLICTING_ENTITY_TYPES, exportCloudSync, findConflictingChanges } from "./cloudSyncModel";
+import { NON_CONFLICTING_ENTITY_TYPES, exportCloudSync, findConflictingChanges, materializeCloudSyncSnapshot, mergeCloudSyncEntities } from "./cloudSyncModel";
 
 vi.mock("./firebase", () => ({
   firebaseAuth: { currentUser: null },
@@ -68,6 +68,46 @@ const ledgerFor = (exported: Awaited<ReturnType<typeof exportCloudSync>>, revisi
 ];
 
 describe("two-device incremental sync protocol", () => {
+  it("pulls completed coach tasks and evidence without reviving the waiting task on the second sync", async () => {
+    const completed = completeCoachTestSnapshot();
+    const waiting = structuredClone(completed);
+    waiting.adaptiveReviewTasks = waiting.adaptiveReviewTasks.map((task) => ({ ...task, status: "waiting", startedAt: undefined, endedAt: undefined }));
+    waiting.adaptiveQuizTurns = [];
+    waiting.taskOutcomeEvents = [];
+    waiting.delayedVerifications = [];
+    const baseline = await exportCloudSync(snapshot({ reviewCoach: waiting }));
+    const phone = await exportCloudSync(snapshot({ reviewCoach: completed }));
+    const localChanges = await deriveLocalCloudChanges(baseline, ledgerFor(baseline));
+    const phoneChanges = await deriveLocalCloudChanges(phone, ledgerFor(baseline));
+    expect(findConflictingChanges(localChanges.entities, phoneChanges.entities)).toEqual([]);
+    const merged = mergeCloudSyncEntities(baseline.entities, phoneChanges.entities);
+    const restored = materializeCloudSyncSnapshot(merged, phone.reviewEvents, phone.assetBlobs);
+    expect(restored.payload.reviewCoach?.adaptiveReviewTasks).toEqual(completed.adaptiveReviewTasks);
+    expect(restored.payload.reviewCoach?.taskOutcomeEvents).toEqual(completed.taskOutcomeEvents);
+    expect(restored.payload.reviewCoach?.analysisQueueItems[0].status).toBe("consumed");
+    const second = await exportCloudSync(restored);
+    expect(await deriveLocalCloudChanges(second, ledgerFor(phone, 2))).toEqual({ entities: [], events: [] });
+  });
+
+  it("still blocks divergent analysis progress and genuine role policy edits", async () => {
+    const first = completeCoachTestSnapshot();
+    first.aiRoleConfigs = [{
+      id: "ai-role:answer-evaluator", role: "answer-evaluator", providerId: "provider", model: "model",
+      enabled: true, promptVersion: "prompt", policyVersion: "policy", schemaVersion: 1,
+      timeoutMs: 60000, maxRetries: 0, maxConcurrency: 1, createdAt: stamp, updatedAt: stamp,
+    }];
+    const second = structuredClone(first);
+    second.analysisQueueItems[0] = { ...second.analysisQueueItems[0], status: "eligible", batchId: undefined, consumedAt: undefined };
+    second.aiRoleConfigs[0].timeoutMs = 90000;
+    const desktop = await exportCloudSync(snapshot({ reviewCoach: first }));
+    const phone = await exportCloudSync(snapshot({ reviewCoach: second }));
+    expect(NON_CONFLICTING_ENTITY_TYPES.has("analysis-queue-item")).toBe(false);
+    expect(NON_CONFLICTING_ENTITY_TYPES.has("ai-role-config")).toBe(false);
+    expect(findConflictingChanges(desktop.entities, phone.entities)).toEqual([
+      { key: "analysis-queue-item:queue-1", entityType: "analysis-queue-item" },
+      { key: "ai-role-config:ai-role:answer-evaluator", entityType: "ai-role-config" },
+    ]);
+  });
   it("keeps device-local AI and TTS profiles out of two-device sync", async () => {
     const desktopSettings = {
       ...structuredClone(DEFAULT_SETTINGS),

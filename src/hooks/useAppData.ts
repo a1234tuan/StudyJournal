@@ -98,6 +98,7 @@ export const useAppData = () => {
     () => typeof document === "undefined" || (document.visibilityState === "visible" && navigator.onLine),
   );
   const interpretationAbortControllersRef = useRef(new Set<AbortController>());
+  const localInterpretationFeedbackIdsRef = useRef(new Set<string>());
 
   const refresh = useCallback(async () => {
     const [entryList, blockList, templateList, currentSettings, assetList, deletedList, reviewList, dueReviews, reviewLogs, reviewStats, podcastList, currentAutoBackupState, coachSnapshot, allInterpretations, planList, deletedPlanList, draftList] = await Promise.all([
@@ -192,11 +193,16 @@ export const useAppData = () => {
       },
     });
     try {
-      await processFeedbackInterpretationQueue(
+      const results = await processFeedbackInterpretationQueue(
         orchestrator,
         jobs.map((job) => ({ ...job, signal: abortController.signal })),
         { maxConcurrency: 1 },
       );
+      for (const result of results) {
+        if (result && ["succeeded", "insufficient-context", "failed"].includes(result.status)) {
+          localInterpretationFeedbackIdsRef.current.delete(result.feedbackId);
+        }
+      }
     } finally {
       interpretationAbortControllersRef.current.delete(abortController);
       await refresh();
@@ -213,7 +219,6 @@ export const useAppData = () => {
       if (reviewCoachRepository.areProjectionsCurrent && !(await reviewCoachRepository.areProjectionsCurrent())) await reviewCoachRepository.rebuildProjections();
       const refreshedVerifications = await reviewCoachOrchestrator.refreshDueVerifications();
       if (refreshedVerifications > 0) await markAutoBackupDirty("review-coach-delayed-verification-refresh");
-      await reviewCoachOrchestrator.selectNextTask();
       await refresh();
       setInitialized(true);
       await storage.purgeExpiredDeletedBlocks(30);
@@ -253,7 +258,13 @@ export const useAppData = () => {
   useEffect(() => {
     if (!initialized) return;
     const interpretationsByFeedbackId = new Map(reviewCoachSnapshot.feedbackInterpretations.map((item) => [item.feedbackId, item]));
+    for (const feedbackId of localInterpretationFeedbackIdsRef.current) {
+      if (["succeeded", "insufficient-context"].includes(interpretationsByFeedbackId.get(feedbackId)?.status ?? "")) {
+        localInterpretationFeedbackIdsRef.current.delete(feedbackId);
+      }
+    }
     const pendingIds = reviewCoachSnapshot.analysisQueueItems
+      .filter((item) => localInterpretationFeedbackIdsRef.current.has(item.feedbackId))
       .filter((item) => item.status === "eligible" && !["succeeded", "insufficient-context", "failed"].includes(interpretationsByFeedbackId.get(item.feedbackId)?.status ?? ""))
       .map((item) => item.feedbackId);
     if (pendingIds.length > 0) void runFeedbackInterpretations(pendingIds).catch(() => undefined);
@@ -489,10 +500,11 @@ export const useAppData = () => {
       const result = feedback && feedback.length > 0
         ? await storage.rateRecordReview(recordId, rating, undefined, undefined, feedback)
         : await storage.rateRecordReview(recordId, rating);
+      const feedbackIds = result?.undoToken.decisionBlockFeedbackIds ?? [];
+      feedbackIds.forEach((feedbackId) => localInterpretationFeedbackIdsRef.current.add(feedbackId));
       await refresh();
       if (result) {
         await markAutoBackupDirty("record-review-rate");
-        const feedbackIds = result.undoToken.decisionBlockFeedbackIds ?? [];
         if (feedbackIds.length > 0) void runFeedbackInterpretations(feedbackIds).catch(() => undefined);
       }
       return result;
@@ -520,21 +532,6 @@ export const useAppData = () => {
     const provider = getCurrentAiProvider(currentSettings.ai);
     const apiKey = provider ? (await storage.getAiSecret?.(provider.id))?.apiKey : undefined;
     if (!provider || !apiKey?.trim()) throw new ActionableError("请先在设置中配置当前 AI 供应商和 API Key。");
-    const stamp = nowISO();
-    const currentRoleConfig = reviewCoachSnapshot.aiRoleConfigs.find((item) => item.role === "session-planner" && !item.deletedAt);
-    await reviewCoachRepository.saveAiRoleConfig({
-      id: currentRoleConfig?.id ?? "ai-role:session-planner",
-      role: "session-planner",
-      providerId: provider.id,
-      model: provider.model,
-      enabled: true,
-      ...defaultSessionPlanningMetadata,
-      timeoutMs: 90_000,
-      maxRetries: 1,
-      maxConcurrency: 1,
-      createdAt: currentRoleConfig?.createdAt ?? stamp,
-      updatedAt: stamp,
-    });
     const controller = new AbortController();
     interpretationAbortControllersRef.current.add(controller);
     const gateway = createSessionPlanningGateway({ provider, apiKey, timeoutMs: 90_000 });
@@ -571,7 +568,7 @@ export const useAppData = () => {
       interpretationAbortControllersRef.current.delete(controller);
       await refresh();
     }
-  }, [refresh, reviewCoachSnapshot.aiRoleConfigs]);
+  }, [refresh]);
 
   const runExclusiveDeepAnalysis = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
     if (deepAnalysisInFlightRef.current) return deepAnalysisInFlightRef.current as Promise<T>;
@@ -640,25 +637,12 @@ export const useAppData = () => {
     const provider = getCurrentAiProvider(currentSettings.ai);
     const apiKey = provider ? (await storage.getAiSecret?.(provider.id))?.apiKey : undefined;
     if (!provider || !apiKey?.trim()) throw new ActionableError("请先在设置中配置当前 AI 供应商和 API Key。");
-    const stamp = nowISO();
-    const roleSpecs = [
-      { role: "turn-generator" as const, promptVersion: defaultQuizExecutionMetadata.quizTurnPromptVersion },
-      { role: "question-quality-reviewer" as const, promptVersion: defaultQuizExecutionMetadata.questionQualityPromptVersion },
-      { role: "answer-evaluator" as const, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion },
-    ];
-    const roleTimeouts: Partial<Record<typeof roleSpecs[number]["role"], number>> = {};
-    for (const spec of roleSpecs) {
-      const existing = reviewCoachSnapshot.aiRoleConfigs.find((item) => item.role === spec.role && !item.deletedAt);
-      // The persisted timeout is authoritative so the stored config is not a lie.
-      const timeoutMs = existing?.timeoutMs ?? 60_000;
-      roleTimeouts[spec.role] = timeoutMs;
-      await reviewCoachRepository.saveAiRoleConfig({
-        id: existing?.id ?? `ai-role:${spec.role}`, role: spec.role, providerId: provider.id, model: provider.model, enabled: true,
-        promptVersion: spec.promptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, schemaVersion: defaultQuizExecutionMetadata.schemaVersion,
-        // Quiz calls are single-attempt; the orchestrator's second pass is a
-        // question-quality regeneration, not a network retry.
-        timeoutMs, maxRetries: 0, maxConcurrency: 1, createdAt: existing?.createdAt ?? stamp, updatedAt: stamp,
-      });
+    const snapshot = await reviewCoachRepository.getFormalSnapshot();
+    const roles = ["turn-generator", "question-quality-reviewer", "answer-evaluator"] as const;
+    const roleTimeouts: Partial<Record<typeof roles[number], number>> = {};
+    for (const role of roles) {
+      const existing = snapshot.aiRoleConfigs.find((item) => item.role === role && !item.deletedAt);
+      roleTimeouts[role] = existing?.timeoutMs ?? 60_000;
     }
     const gateway = createQuizExecutionGateway({ provider, apiKey, roleTimeouts });
     return {
@@ -672,7 +656,7 @@ export const useAppData = () => {
         },
       }),
     };
-  }, [reviewCoachSnapshot.aiRoleConfigs]);
+  }, []);
 
   const generateAdaptiveQuizTurn = useCallback(async (taskId: string, signal?: AbortSignal) => {
     const task = reviewCoachSnapshot.adaptiveReviewTasks.find((item) => item.id === taskId);
@@ -867,6 +851,7 @@ export const useAppData = () => {
   }, [refresh]);
 
   const retryFeedbackInterpretation = useCallback(async (feedbackId: string) => {
+    localInterpretationFeedbackIdsRef.current.add(feedbackId);
     await runFeedbackInterpretations([feedbackId], true);
     return reviewCoachRepository.getFormalSnapshot();
   }, [runFeedbackInterpretations]);

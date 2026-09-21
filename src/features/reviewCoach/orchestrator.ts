@@ -61,6 +61,17 @@ import {
 import { checkVariantEligibility, normalizeQuestion, targetFormStatusFor } from "./variantPolicy";
 import type { AiChatAttachment } from "../../types";
 
+export const verificationTaskIdentity = (verification: DelayedVerification, tasks: readonly AdaptiveReviewTask[] = []): string => {
+  const baseId = verification.status === "completed" && verification.nextVerificationDueAt
+    ? `verification-task:${verification.id}:recheck:${verification.nextVerificationDueAt}`
+    : `verification-task:${verification.id}`;
+  const existingIds = new Set(tasks.map((task) => task.id));
+  let candidate = baseId;
+  let attempt = 0;
+  while (existingIds.has(candidate)) candidate = `${baseId}:retry:${++attempt}`;
+  return candidate;
+};
+
 export interface ReviewCoachAiGateway {
   interpretFeedback(input: unknown, signal?: AbortSignal): Promise<FeedbackInterpretationAiCallResult>;
   planSession(input: unknown, signal?: AbortSignal): Promise<SessionPlanningAiCallResult>;
@@ -369,12 +380,13 @@ export class ReviewCoachOrchestrator {
     };
     if (interpretation.status !== "pending" && interpretation.status !== "running") {
       interpretation = { ...interpretation, ...metadata, status: "pending", updatedAt: stamp, errorCode: undefined };
-      await this.dependencies.repository.saveFeedbackInterpretation(interpretation);
+      await this.dependencies.repository.saveFeedbackInterpretation(interpretation, current ?? null);
     } else if (!current) {
-      await this.dependencies.repository.saveFeedbackInterpretation(interpretation);
+      await this.dependencies.repository.saveFeedbackInterpretation(interpretation, null);
     }
+    const previousInterpretation = interpretation;
     interpretation = { ...interpretation, ...metadata, status: "running", updatedAt: this.dependencies.clock.now(), errorCode: undefined };
-    await this.dependencies.repository.saveFeedbackInterpretation(interpretation);
+    await this.dependencies.repository.saveFeedbackInterpretation(interpretation, previousInterpretation);
 
     const maxRetries = Math.max(0, Math.min(3, Math.floor(input.maxRetries ?? 2)));
     const feedbackById = new Map(snapshot.decisionBlockFeedback.map((item) => [item.id, item]));
@@ -419,7 +431,7 @@ export class ReviewCoachOrchestrator {
         const next: FeedbackInterpretation = response.status === "insufficient-context"
           ? { ...interpretation, ...callMetadata, status: "insufficient-context", missingInformation: response.missingInformation, actionability: "unclear", confidence: undefined, updatedAt: this.dependencies.clock.now() }
           : { ...interpretation, ...callMetadata, status: "succeeded", actionability: response.actionability, difficultyType: response.difficultyType, stuckAt: response.stuckAt, userHypothesis: response.userHypothesis, preferredPractice: response.preferredPractice, missingInformation: response.missingInformation, confidence: response.confidence, updatedAt: this.dependencies.clock.now() };
-        return this.dependencies.repository.saveFeedbackInterpretation(next);
+        return this.dependencies.repository.saveFeedbackInterpretation(next, interpretation);
       } catch (error) {
         if (input.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
           return this.dependencies.repository.saveFeedbackInterpretation({
@@ -428,7 +440,7 @@ export class ReviewCoachOrchestrator {
             attemptCount: attempt,
             updatedAt: this.dependencies.clock.now(),
             errorCode: undefined,
-          });
+          }, interpretation);
         }
         lastError = error;
         // A bad key, wrong Base URL or schema mismatch will fail identically on
@@ -443,7 +455,7 @@ export class ReviewCoachOrchestrator {
       errorCode: analysisFailureCode(lastError),
       updatedAt: this.dependencies.clock.now(),
     };
-    return this.dependencies.repository.saveFeedbackInterpretation(failed);
+    return this.dependencies.repository.saveFeedbackInterpretation(failed, interpretation);
   }
 
   async confirmFeedbackInterpretation(
@@ -542,12 +554,14 @@ export class ReviewCoachOrchestrator {
       if (subBatch.status === "succeeded") continue;
       const blocks = [...new Set(subBatch.inputRefs.map((ref) => ref.decisionBlockId))].map((id) => blockById.get(id)).filter((item): item is AnalysisPlanningBlock => Boolean(item));
       if (blocks.length === 0) throw new Error("冻结批次中的决策块上下文缺失。");
+      const previousBatch = batch;
       batch = {
         ...batch,
         updatedAt: this.dependencies.clock.now(),
         subBatches: batch.subBatches.map((item, itemIndex) => itemIndex === index ? { ...item, status: "running", errorCode: undefined } : item),
       };
-      batch = await this.dependencies.repository.updateAnalysisBatch(batch);
+      batch = await this.dependencies.repository.updateAnalysisBatch(batch, previousBatch);
+      const runningBatchVersion = batch;
       let lastError: unknown;
       let completed = false;
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -586,7 +600,7 @@ export class ReviewCoachOrchestrator {
           validateBlueprintCandidates(call.response.blueprints, blocks, input.allowCrossBlockSupport);
           summaries.push(call.response.summary);
           for (const candidate of call.response.blueprints) {
-            const persisted = await this.persistAnalysisCandidate(batch, candidate, blockById.get(candidate.mainDecisionBlockId)!, input);
+            const persisted = await this.persistAnalysisCandidate(batch, candidate, blockById.get(candidate.mainDecisionBlockId)!, input, runningBatchVersion);
             if (!blueprints.some((item) => item.id === persisted.blueprint.id)) blueprints.push(persisted.blueprint);
             if (!tasks.some((item) => item.id === persisted.task.id)) tasks.push(persisted.task);
           }
@@ -604,7 +618,7 @@ export class ReviewCoachOrchestrator {
               errorCode: undefined,
             } : item),
           };
-          batch = await this.dependencies.repository.updateAnalysisBatch(batch);
+          batch = await this.dependencies.repository.updateAnalysisBatch(batch, runningBatchVersion);
           completed = true;
           break;
         } catch (error) {
@@ -615,7 +629,7 @@ export class ReviewCoachOrchestrator {
               updatedAt: this.dependencies.clock.now(),
               subBatches: batch.subBatches.map((item, itemIndex) => itemIndex === index ? { ...item, status: "pending", errorCode: undefined } : item),
             };
-            batch = await this.dependencies.repository.updateAnalysisBatch(batch);
+            batch = await this.dependencies.repository.updateAnalysisBatch(batch, runningBatchVersion);
             return { batch, blueprints, tasks, paused: true };
           }
           lastError = error;
@@ -633,13 +647,14 @@ export class ReviewCoachOrchestrator {
             errorCode: analysisFailureCode(lastError),
           } : item),
         };
-        batch = await this.dependencies.repository.updateAnalysisBatch(batch);
+        batch = await this.dependencies.repository.updateAnalysisBatch(batch, runningBatchVersion);
       }
     }
 
     const succeededCount = batch.subBatches.filter((item) => item.status === "succeeded").length;
     const finalStatus = succeededCount === batch.subBatches.length ? "succeeded" : succeededCount > 0 ? "partial" : "failed";
     const successfulSubBatches = batch.subBatches.filter((item) => item.status === "succeeded");
+    const finalBatchVersion = batch;
     batch = await this.dependencies.repository.updateAnalysisBatch({
       ...batch,
       status: finalStatus,
@@ -650,7 +665,7 @@ export class ReviewCoachOrchestrator {
       completedAt: this.dependencies.clock.now(),
       updatedAt: this.dependencies.clock.now(),
       errorCode: finalStatus === "failed" ? "all-sub-batches-failed" : undefined,
-    });
+    }, finalBatchVersion);
 
     await this.selectNextTask();
     return { batch, blueprints, tasks, paused: false };
@@ -661,6 +676,7 @@ export class ReviewCoachOrchestrator {
     candidate: SessionBlueprintAiCandidate,
     block: AnalysisPlanningBlock,
     input: AnalyzeFeedbackInput,
+    expectedBatchUpdatedAt?: AnalysisBatch,
   ): Promise<{ blueprint: SessionBlueprint; task: AdaptiveReviewTask }> {
     const stamp = this.dependencies.clock.now();
     const blueprint = await this.dependencies.repository.acceptBlueprint({
@@ -702,7 +718,7 @@ export class ReviewCoachOrchestrator {
         } : {}),
         createdAt: stamp,
         updatedAt: stamp,
-      });
+      }, expectedBatchUpdatedAt);
     const task = await this.dependencies.repository.createTask({
         id: this.dependencies.ids.next(),
         blueprintId: blueprint.id,
@@ -716,7 +732,7 @@ export class ReviewCoachOrchestrator {
         ...(blueprint.loopVersion ? { loopVersion: blueprint.loopVersion } : {}),
         createdAt: stamp,
         updatedAt: stamp,
-      });
+      }, expectedBatchUpdatedAt);
     return { blueprint, task };
   }
 
@@ -798,7 +814,8 @@ export class ReviewCoachOrchestrator {
           : "本次训练已达到蓝图轮次上限，请提交本次结果。",
       );
     }
-    const verification = snapshot.delayedVerifications.find((item) => item.taskId === task!.id && ["queued", "in-progress"].includes(item.status));
+    const verification = snapshot.delayedVerifications.find((item) => item.taskId === task!.id
+      && (["queued", "in-progress"].includes(item.status) || isVerificationRecheckDue(item, this.dependencies.clock.now())));
     const sourceOutcome = verification ? snapshot.taskOutcomeEvents.find((item) => item.id === verification.sourceOutcomeEventId) : undefined;
     const sourceTurns = sourceOutcome ? snapshot.adaptiveQuizTurns.filter((item) => item.taskId === sourceOutcome.taskId && item.status !== "invalid" && !item.deletedAt) : [];
     const previousTurns = verification ? [...sourceTurns, ...turns] : turns;
@@ -1070,7 +1087,7 @@ export class ReviewCoachOrchestrator {
       occurredAt: stamp,
       idempotencyKey: `answer:${input.operationId}`, createdAt: stamp, updatedAt: stamp,
     };
-    return this.dependencies.repository.commitQuizAnswer(answered, outcome, input.signal);
+    return this.dependencies.repository.commitQuizAnswer(answered, outcome, input.signal, { turn, task });
   }
 
   async skipQuizTurn(turnId: string, operationId: string): Promise<AdaptiveQuizTurn> {
@@ -1083,7 +1100,7 @@ export class ReviewCoachOrchestrator {
       id: this.dependencies.ids.next(), taskId: task.id, turnId: turn.id, decisionBlockId: task.decisionBlockId, recordId: task.recordId, contentVersion: task.contentVersion,
       kind: "answer-assessment", answerAssessment: "unreliable", reason: "skipped", occurredAt: stamp,
       idempotencyKey: `answer-skipped:${operationId}`, createdAt: stamp, updatedAt: stamp,
-    });
+    }, undefined, { turn, task });
   }
 
   async reportInvalidQuestion(turnId: string, reason: string, operationId: string): Promise<AdaptiveReviewTask> {
@@ -1402,8 +1419,8 @@ export class ReviewCoachOrchestrator {
       // pass below creates a fresh task instead of short-circuiting back to the
       // finished one. The verification keeps its `completed` status; the open
       // conclusion is what makes it due again.
-      await this.dependencies.repository.detachVerificationTask(verification.id, now);
-      reopened += 1;
+      const detached = await this.dependencies.repository.detachVerificationTask(verification.id, now);
+      if (verification.taskId && !detached.taskId) reopened += 1;
     }
     if (reopened > 0) snapshot = await this.dependencies.repository.getFormalSnapshot();
     const openTargets = new Set(snapshot.adaptiveReviewTasks
@@ -1426,9 +1443,10 @@ export class ReviewCoachOrchestrator {
       const source = snapshot.taskOutcomeEvents.find((item) => item.id === verification.sourceOutcomeEventId);
       const sourceTask = source ? snapshot.adaptiveReviewTasks.find((item) => item.id === source.taskId) : undefined;
       if (!sourceTask) continue;
+      const taskIdentity = verificationTaskIdentity(verification, snapshot.adaptiveReviewTasks);
       await this.dependencies.repository.queueVerification(verification.id, {
-        id: `verification-task:${verification.id}`, blueprintId: sourceTask.blueprintId, decisionBlockId: verification.decisionBlockId, recordId: verification.recordId, contentVersion: verification.contentVersion,
-        status: "waiting", priorityTier: "due-verification", queuedAt: dueAt, idempotencyKey: `verification-task:${verification.id}`, createdAt: dueAt, updatedAt: now,
+        id: taskIdentity, blueprintId: sourceTask.blueprintId, decisionBlockId: verification.decisionBlockId, recordId: verification.recordId, contentVersion: verification.contentVersion,
+        status: "waiting", priorityTier: "due-verification", queuedAt: dueAt, idempotencyKey: taskIdentity, createdAt: dueAt, updatedAt: now,
         // Carried over from the verification. Without it the queued task looks
         // like a v1 attempt, so the page takes the v1 subjective-completion path
         // and `completeV2DelayedVerification` never gets a UI caller.

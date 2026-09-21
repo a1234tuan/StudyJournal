@@ -309,8 +309,13 @@ describe("ReviewCoachOrchestrator", () => {
       getFormalSnapshot: vi.fn(async () => snapshot()),
       createAnalysisBatch: vi.fn(async (next: AnalysisBatch) => { batch ??= next; return batch; }),
       transitionAnalysisBatch: vi.fn(async (_id: string, status: AnalysisBatch["status"], updatedAt: string) => { batch = { ...batch!, status, updatedAt }; return batch; }),
-      updateAnalysisBatch: vi.fn(async (next: AnalysisBatch) => { batch = next; return next; }),
-      acceptBlueprint: vi.fn(async (next: SessionBlueprint) => {
+      updateAnalysisBatch: vi.fn(async (next: AnalysisBatch, expected?: AnalysisBatch) => {
+        if (expected && JSON.stringify(expected) !== JSON.stringify(batch)) throw new Error("stale-analysis-batch");
+        batch = next;
+        return next;
+      }),
+      acceptBlueprint: vi.fn(async (next: SessionBlueprint, expected?: AnalysisBatch) => {
+        if (expected && JSON.stringify(expected) !== JSON.stringify(batch)) throw new Error("stale-analysis-batch");
         const existing = blueprints.find((item) => item.idempotencyKey === next.idempotencyKey);
         if (existing) return existing;
         blueprints.push(next);
@@ -344,6 +349,33 @@ describe("ReviewCoachOrchestrator", () => {
     expect(result.batch).toMatchObject({ status: "succeeded", totalTokens: 900 });
     expect(store.blueprints).toHaveLength(1);
     expect(store.getTasks()).toMatchObject([{ status: "current", priorityTier: "consolidation" }]);
+  });
+
+  it.each(["success", "failure", "cancel"] as const)("rejects an old planning %s callback after the running batch changes", async (completion) => {
+    const store = deepAnalysisRepository();
+    let nextId = 0;
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const planSession = vi.fn(async () => {
+      await gate;
+      if (completion === "failure") throw new Error("synthetic provider failure");
+      if (completion === "cancel") throw new DOMException("cancelled", "AbortError");
+      return { response: { status: "ok" as const, summary: "old result", blueprints: [blueprintCandidate("block-1")] } };
+    });
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository: store.repository, ids: { next: () => "generated-" + ++nextId }, clock: { now: () => new Date(Date.parse(stamp) + nextId * 1000).toISOString() },
+      aiGateway: { interpretFeedback: vi.fn(), planSession, generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+    const pending = orchestrator.analyzeFeedback({ blocks: [planningBlock("block-1")], maxInputTokens: 1000, allowCrossBlockSupport: false, provider: "test", model: "deep", promptVersion: "p", policyVersion: "policy", schemaVersion: 1, operationId: "operation", maxRetries: 0 });
+    const rejected = expect(pending).rejects.toThrow("stale-analysis-batch");
+    await vi.waitFor(() => expect(planSession).toHaveBeenCalledOnce());
+    const remote = { ...store.getBatch()!, finalSummary: "remote batch" };
+    await store.calls.updateAnalysisBatch(remote);
+    finish();
+    await rejected;
+    expect(store.getBatch()).toEqual(remote);
+    expect(store.blueprints).toHaveLength(0);
+    expect(store.getTasks()).toHaveLength(0);
   });
 
   /** B-2 fixture: a block whose objective answer evidence is (or is not) usable. */

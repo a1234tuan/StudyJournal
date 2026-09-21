@@ -3,6 +3,7 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudyJournalDatabase } from "../../db/database";
+import { hashValue, syncHashPayload } from "../../services/cloudSyncModel";
 import type { RecordBlock } from "../../types";
 import type { AdaptiveReviewTask, DecisionBlock } from "./domain";
 import { DexieReviewCoachRepository, purgeReviewCoachFactsForRecord, restoreReviewCoachFormalSnapshot, reviewCoachFormalTables, reviewCoachRestoreTables } from "./repository";
@@ -24,6 +25,7 @@ import {
 } from "./reviewCoachTestFixtures";
 import { ReviewCoachValidationError } from "./validation";
 import { prepareDecisionBlockContentForSave } from "./decisionBlockContent";
+import { ReviewCoachOrchestrator } from "./orchestrator";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -59,6 +61,115 @@ describe("DexieReviewCoachRepository", () => {
     const name = database.name;
     database.close();
     await Dexie.delete(name);
+  });
+
+  it.each(["eligible", "excluded", "batched", "consumed", "deleted"] as const)("does not rewrite %s queue state or sync hashes on a repeated transition", async (status) => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    const item = {
+      ...coachTestQueueItem, status,
+      excludedAt: status === "excluded" ? coachTestStamp : undefined,
+      deletedAt: status === "deleted" ? coachTestStamp : undefined,
+    };
+    await database.analysisQueueItems.put(item);
+    const mutationBefore = await database.cloudSyncMutation.toArray();
+    const hashBefore = await hashValue(syncHashPayload("analysis-queue-item", item));
+    const returned = await repository.transitionQueueItem(item.id, status, "2026-09-21T10:00:00.000Z", status === "batched" ? item.batchId : undefined);
+    expect(returned).toEqual(item);
+    expect(await database.analysisQueueItems.get(item.id)).toEqual(item);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutationBefore);
+    expect(await hashValue(syncHashPayload("analysis-queue-item", returned))).toBe(hashBefore);
+  });
+
+  it("does not mark an unchanged analysis note or already clean eligible queue as a mutation", async () => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    const item = { ...coachTestQueueItem, status: "eligible" as const, batchId: undefined, consumedAt: undefined, analysisNote: "keep the evidence" };
+    await database.analysisQueueItems.put(item);
+    const mutationBefore = await database.cloudSyncMutation.toArray();
+    expect(await repository.updateQueueItemAnalysisNote(item.id, "  keep the evidence  ", "2026-09-21T10:00:00.000Z")).toEqual(item);
+    expect(await repository.requeueAnalysisQueueItem(item.id, "2026-09-21T10:00:00.000Z")).toEqual(item);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutationBefore);
+  });
+
+  it("still records genuine queue edits and explicit retries of consumed work", async () => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    await database.analysisQueueItems.put(coachTestQueueItem);
+    const stamp = "2026-09-21T10:00:00.000Z";
+    const requeued = await repository.requeueAnalysisQueueItem(coachTestQueueItem.id, stamp);
+    expect(requeued).toMatchObject({ status: "eligible", updatedAt: stamp });
+    expect(requeued.batchId).toBeUndefined();
+    expect(requeued.consumedAt).toBeUndefined();
+    const mutationBefore = await database.cloudSyncMutation.toArray();
+    const edited = await repository.updateQueueItemAnalysisNote(coachTestQueueItem.id, " new user note ", stamp);
+    expect(edited.analysisNote).toBe("new user note");
+    expect(await database.cloudSyncMutation.toArray()).not.toEqual(mutationBefore);
+    const excluded = await repository.transitionQueueItem(coachTestQueueItem.id, "excluded", stamp);
+    expect(excluded).toMatchObject({ status: "excluded", excludedAt: stamp });
+  });
+
+  it("preserves terminal task and verification evidence timestamps on identical retries", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, snapshot));
+    const task = (await database.adaptiveReviewTasks.get(coachTestTask.id))!;
+    const verification = (await database.delayedVerifications.get(coachTestVerification.id))!;
+    const mutation = await database.cloudSyncMutation.toArray();
+    expect(await repository.transitionTask(task.id, task.status, "2026-09-21T10:00:00.000Z")).toEqual(task);
+    expect(await repository.transitionVerification(verification.id, verification.status, "2026-09-21T10:00:00.000Z", verification.verificationOutcome)).toEqual(verification);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutation);
+    const changedReason = await repository.transitionTask(task.id, task.status, "2026-09-21T10:00:00.000Z", "explicit reason");
+    expect(changedReason.terminalReason).toBe("explicit reason");
+    expect(changedReason.endedAt).toBe(task.endedAt);
+  });
+
+  it.each(["succeeded", "pending", "failed"] as const)("rejects a stale %s response after a synced interpretation replaces its request", async (status) => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    const running = { ...coachTestInterpretation, status: "running" as const };
+    await database.feedbackInterpretations.put(running);
+    const remote = { ...coachTestInterpretation, userConfirmedAt: "2026-09-21T09:00:00.000Z", stuckAt: "synced user correction" };
+    await database.feedbackInterpretations.put(remote);
+    const mutation = await database.cloudSyncMutation.toArray();
+    await expect(repository.saveFeedbackInterpretation({ ...running, status, updatedAt: "2026-09-21T10:00:00.000Z" }, running)).rejects.toMatchObject({ code: "stale-feedback-interpretation" });
+    expect(await database.feedbackInterpretations.get(remote.id)).toEqual(remote);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutation);
+  });
+
+  it("accepts a current interpretation response but never resurrects a removed request", async () => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    const running = { ...coachTestInterpretation, status: "running" as const };
+    await database.feedbackInterpretations.put(running);
+    expect(await repository.saveFeedbackInterpretation(coachTestInterpretation, running)).toEqual(coachTestInterpretation);
+    await database.feedbackInterpretations.delete(running.id);
+    const mutation = await database.cloudSyncMutation.toArray();
+    await expect(repository.saveFeedbackInterpretation(coachTestInterpretation, running)).rejects.toMatchObject({ code: "stale-feedback-interpretation" });
+    expect(await database.feedbackInterpretations.count()).toBe(0);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutation);
+    const pending = { ...running, status: "pending" as const };
+    expect(await repository.saveFeedbackInterpretation(pending, null)).toEqual(pending);
+    await expect(repository.saveFeedbackInterpretation(pending, null)).rejects.toMatchObject({ code: "stale-feedback-interpretation" });
+  });
+  it.each(["success", "failure", "abort"] as const)("does not overwrite a synced result when an old AI request ends with %s", async (ending) => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    await database.feedbackInterpretations.put({ ...coachTestInterpretation, status: "pending" });
+    const controller = new AbortController();
+    const remote = { ...coachTestInterpretation, stuckAt: "synced answer", userConfirmedAt: "2026-09-21T09:00:00.000Z" };
+    let mutationAfterSync: unknown;
+    const interpretFeedback = vi.fn(async () => {
+      await database.feedbackInterpretations.put(remote);
+      mutationAfterSync = await database.cloudSyncMutation.toArray();
+      if (ending === "abort") {
+        controller.abort();
+        throw new DOMException("cancelled", "AbortError");
+      }
+      if (ending === "failure") throw new Error("provider failed");
+      return { response: { status: "ok" as const, actionability: "needs_training" as const, difficultyType: "procedure" as const, stuckAt: "stale answer", userHypothesis: null, preferredPractice: null, missingInformation: [], confidence: 0.9 } };
+    });
+    const orchestrator = new ReviewCoachOrchestrator({
+      repository, ids: { next: () => "unused" }, clock: { now: () => "2026-09-21T10:00:00.000Z" },
+      aiGateway: { interpretFeedback, planSession: vi.fn(), generateTurn: vi.fn(), reviewQuestion: vi.fn(), evaluateAnswer: vi.fn() },
+    });
+    await expect(orchestrator.interpretFeedback({ feedbackId: coachTestFeedback.id, decisionBlockContent: "source", provider: "test", model: "test", promptVersion: "test", policyVersion: "test", schemaVersion: 1, signal: controller.signal })).rejects.toMatchObject({ code: "stale-feedback-interpretation" });
+    expect(interpretFeedback).toHaveBeenCalledTimes(1);
+    expect(await database.feedbackInterpretations.get(remote.id)).toEqual(remote);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(mutationAfterSync);
   });
 
   it("writes feedback and its queue item atomically and retries idempotently", async () => {
@@ -443,6 +554,57 @@ describe("DexieReviewCoachRepository", () => {
     expect(switched.status).toBe("current");
     expect(await database.adaptiveReviewTasks.get("task-current")).toMatchObject({ status: "waiting", activeSlotKey: undefined });
     expect((await database.adaptiveReviewTasks.where("activeSlotKey").equals("global-current").toArray()).map((item) => item.id)).toEqual(["task-waiting"]);
+  });
+
+  it.each(["task", "turn", "deleted"] as const)("rejects an old AI answer after synchronized %s changes even with the same timestamp", async (changed) => {
+    await database.decisionBlocks.put(coachTestBlock);
+    const task = { ...coachTestTask, status: "in-progress" as const, endedAt: undefined };
+    const turn = { ...coachTestTurn, status: "displayed" as const, answeredAt: undefined, answerText: undefined, assessment: undefined };
+    await database.adaptiveReviewTasks.put(task);
+    await database.adaptiveQuizTurns.put(turn);
+    if (changed === "task") await database.adaptiveReviewTasks.put({ ...task, terminalReason: "remote-change" });
+    if (changed === "turn") await database.adaptiveQuizTurns.put({ ...turn, question: "remote-question" });
+    if (changed === "deleted") await database.adaptiveQuizTurns.delete(turn.id);
+    const before = await database.cloudSyncMutation.toArray();
+    await expect(repository.commitQuizAnswer(coachTestTurn, coachTestAnswerOutcome, undefined, { turn, task })).rejects.toBeInstanceOf(ReviewCoachValidationError);
+    expect(await database.taskOutcomeEvents.count()).toBe(0);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(before);
+  });
+
+  it("accepts a guarded answer at a later time and keeps a terminal-task retry idempotent", async () => {
+    await database.transaction("rw", reviewCoachRestoreTables(database), () => restoreReviewCoachFormalSnapshot(database, completeCoachTestSnapshot()));
+    await database.taskOutcomeEvents.clear();
+    await database.delayedVerifications.clear();
+    const task = { ...coachTestTask, status: "in-progress" as const, endedAt: undefined };
+    const turn = { ...coachTestTurn, status: "displayed" as const, answeredAt: undefined, answerText: undefined, assessment: undefined };
+    await database.adaptiveReviewTasks.put(task);
+    await database.adaptiveQuizTurns.put(turn);
+    const answered = { ...coachTestTurn, updatedAt: "2026-09-21T10:00:00.000Z" };
+    expect(await repository.commitQuizAnswer(answered, coachTestAnswerOutcome, undefined, { turn, task })).toMatchObject({ status: "answered", updatedAt: answered.updatedAt });
+    await database.adaptiveReviewTasks.put({ ...task, status: "completed" });
+    const before = await database.cloudSyncMutation.toArray();
+    expect(await repository.commitQuizAnswer(answered, coachTestAnswerOutcome, undefined, { turn, task })).toMatchObject({ status: "answered" });
+    expect(await database.taskOutcomeEvents.count()).toBe(1);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(before);
+  });
+
+  it.each(["succeeded", "failed", "confirmed"] as const)("rejects stale %s analysis callbacks without touching the remote batch", async (status) => {
+    const running = { ...coachTestBatch, status: "running" as const, completedAt: undefined };
+    const remote = { ...running, finalSummary: "remote result with unchanged timestamp" };
+    await database.analysisBatches.put(remote);
+    const before = await database.cloudSyncMutation.toArray();
+    await expect(repository.updateAnalysisBatch({ ...running, status }, running)).rejects.toMatchObject({ code: "stale-analysis-batch" });
+    expect(await database.analysisBatches.get(remote.id)).toEqual(remote);
+    expect(await database.cloudSyncMutation.toArray()).toEqual(before);
+  });
+
+  it("rejects a blueprint returned after the batch was replaced", async () => {
+    await database.decisionBlocks.put(coachTestBlock);
+    const running = { ...coachTestBatch, status: "running" as const, completedAt: undefined };
+    await database.analysisBatches.put({ ...running, finalSummary: "remote result" });
+    await expect(repository.acceptBlueprint(coachTestBlueprint, running)).rejects.toMatchObject({ code: "stale-analysis-batch" });
+    expect(await database.sessionBlueprints.count()).toBe(0);
+    expect(await database.cloudSyncMutation.count()).toBe(0);
   });
 
   it("commits answer, self-assessment, disposition, and task terminal state atomically", async () => {

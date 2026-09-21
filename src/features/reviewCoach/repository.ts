@@ -48,7 +48,7 @@ import {
 import { independenceForTurn } from "./interventionPolicy";
 import { lockedVerificationTurn } from "./variantPolicy";
 import { conclusionOutcomeForEvidence, continuesVerificationChain, verificationEvidenceStatusFor } from "./evidencePolicy";
-import { calculateVerificationFollowUpSchedule } from "./verificationPolicy";
+import { calculateVerificationFollowUpSchedule, isVerificationRecheckDue } from "./verificationPolicy";
 import type { PreparedDecisionBlockContent } from "./decisionBlockContent";
 
 export interface ReviewCoachRepository {
@@ -57,25 +57,25 @@ export interface ReviewCoachRepository {
   saveDecisionBlock(block: DecisionBlock): Promise<DecisionBlock>;
   archiveDecisionBlock(archive: DecisionBlockArchive): Promise<DecisionBlockArchive>;
   softDeleteDecisionBlock(archive: DecisionBlockArchive): Promise<DecisionBlock>;
-  saveRecordWithDecisionBlocks(record: RecordBlock, prepared: PreparedDecisionBlockContent, recordChanged?: boolean): Promise<RecordBlock>;
+  saveRecordWithDecisionBlocks(record: RecordBlock, prepared: PreparedDecisionBlockContent, recordChanged?: boolean, expectedRecord?: RecordBlock): Promise<RecordBlock>;
   listRestorableDecisionBlockArchives(recordId: string): Promise<DecisionBlockArchive[]>;
   addFeedback(feedback: DecisionBlockFeedback, queueItem?: AnalysisQueueItem): Promise<DecisionBlockFeedback>;
   deleteFeedback(feedbackId: string, deletedAt: string): Promise<DecisionBlockFeedback>;
   updateQueueItemAnalysisNote(id: string, analysisNote: string, updatedAt: string): Promise<AnalysisQueueItem>;
-  saveFeedbackInterpretation(interpretation: FeedbackInterpretation): Promise<FeedbackInterpretation>;
+  saveFeedbackInterpretation(interpretation: FeedbackInterpretation, expected?: FeedbackInterpretation | null): Promise<FeedbackInterpretation>;
   transitionQueueItem(id: string, status: AnalysisQueueStatus, updatedAt: string, batchId?: string): Promise<AnalysisQueueItem>;
   requeueAnalysisQueueItem(id: string, updatedAt: string): Promise<AnalysisQueueItem>;
   createAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch>;
   transitionAnalysisBatch(id: string, status: AnalysisBatchStatus, updatedAt: string): Promise<AnalysisBatch>;
-  updateAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch>;
-  acceptBlueprint(blueprint: SessionBlueprint): Promise<SessionBlueprint>;
-  createTask(task: AdaptiveReviewTask): Promise<AdaptiveReviewTask>;
+  updateAnalysisBatch(batch: AnalysisBatch, expected?: AnalysisBatch): Promise<AnalysisBatch>;
+  acceptBlueprint(blueprint: SessionBlueprint, expectedBatch?: AnalysisBatch): Promise<SessionBlueprint>;
+  createTask(task: AdaptiveReviewTask, expectedBatch?: AnalysisBatch): Promise<AdaptiveReviewTask>;
   transitionTask(id: string, status: AdaptiveReviewTaskStatus, updatedAt: string, reason?: string): Promise<AdaptiveReviewTask>;
   switchCurrentTask(targetTaskId: string, updatedAt: string): Promise<AdaptiveReviewTask>;
   addQuizTurn(turn: AdaptiveQuizTurn, signal?: AbortSignal): Promise<AdaptiveQuizTurn>;
   transitionQuizTurn(id: string, status: AdaptiveQuizTurnStatus, updatedAt: string): Promise<AdaptiveQuizTurn>;
   recordQuizHint(id: string, level: number, requestedAt: string): Promise<AdaptiveQuizTurn>;
-  commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal): Promise<AdaptiveQuizTurn>;
+  commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal, expected?: { turn: AdaptiveQuizTurn; task: AdaptiveReviewTask }): Promise<AdaptiveQuizTurn>;
   invalidateQuizTurn(turnId: string, event: TaskOutcomeEvent, updatedAt: string): Promise<AdaptiveReviewTask>;
   supersedeEvidence(event: TaskOutcomeEvent): Promise<TaskOutcomeEvent>;
   requeueV2Attempt(input: {
@@ -623,11 +623,14 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async saveRecordWithDecisionBlocks(record: RecordBlock, prepared: PreparedDecisionBlockContent, recordChanged = true): Promise<RecordBlock> {
+  async saveRecordWithDecisionBlocks(record: RecordBlock, prepared: PreparedDecisionBlockContent, recordChanged = true, expectedRecord?: RecordBlock): Promise<RecordBlock> {
     return this.database.transaction(
       "rw",
       [this.database.blocks, this.database.recordDrafts, this.database.cloudSyncMutation, ...formalTables(this.database)],
       async () => {
+        if (expectedRecord && !sameEntity(await this.database.blocks.get(record.id), expectedRecord)) {
+          throw new ReviewCoachValidationError("stale-record", "Record changed while editing; the local draft must be reviewed before saving.");
+        }
         const currentRows = await this.database.decisionBlocks.where("recordId").equals(record.id).toArray();
         const currentById = new Map(currentRows.map((block) => [block.id, block]));
         const nextIds = new Set(prepared.blocks.map((block) => block.decisionBlockId));
@@ -771,6 +774,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw new ReviewCoachValidationError("inactive-queue-item", `Queue item ${id} cannot be edited.`);
       }
       const normalizedNote = analysisNote.trim();
+      if ((current.analysisNote ?? "") === normalizedNote) return current;
       const next = { ...current, analysisNote: normalizedNote || undefined, updatedAt };
       await this.database.analysisQueueItems.put(next);
       await this.bumpMutation();
@@ -778,7 +782,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async saveFeedbackInterpretation(interpretation: FeedbackInterpretation): Promise<FeedbackInterpretation> {
+  async saveFeedbackInterpretation(interpretation: FeedbackInterpretation, expected?: FeedbackInterpretation | null): Promise<FeedbackInterpretation> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const feedback = await this.database.decisionBlockFeedback.get(interpretation.feedbackId);
       if (!feedback || feedback.decisionBlockId !== interpretation.decisionBlockId || feedback.contentVersion !== interpretation.contentVersion) {
@@ -786,6 +790,9 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       }
       assertCurrentDecisionBlockRef(await this.database.decisionBlocks.get(interpretation.decisionBlockId), feedback);
       const current = await this.database.feedbackInterpretations.where("feedbackId").equals(interpretation.feedbackId).first();
+      if (expected !== undefined && !sameEntity(current ?? null, expected)) {
+        throw new ReviewCoachValidationError("stale-feedback-interpretation", "Feedback interpretation changed while the request was running.");
+      }
       if (current && current.id !== interpretation.id) throw new ReviewCoachValidationError("duplicate-feedback-interpretation", "Feedback already has an interpretation.");
       if (current) transitionFeedbackInterpretation(current.status, interpretation.status);
       if (interpretation.confidence !== undefined && (interpretation.confidence < 0 || interpretation.confidence > 1)) throw new ReviewCoachValidationError("invalid-confidence", "Interpretation confidence must be between 0 and 1.");
@@ -801,6 +808,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       if (!current) throw new ReviewCoachValidationError("missing-queue-item", `Queue item ${id} does not exist.`);
       transitionAnalysisQueueItem(current.status, status);
       if (status === "batched" && !batchId) throw new ReviewCoachValidationError("missing-analysis-batch", "Batched queue item requires batchId.");
+      if (current.status === status && (status !== "batched" || current.batchId === batchId)) return current;
       const next = {
         ...current,
         status,
@@ -824,6 +832,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw new ReviewCoachValidationError("inactive-queue-item", `Queue item ${id} cannot be requeued.`);
       }
       transitionAnalysisQueueItem(current.status, "eligible");
+      if (current.status === "eligible" && !current.batchId && !current.excludedAt && !current.consumedAt && !current.deletedAt) return current;
       const next: AnalysisQueueItem = {
         ...current,
         status: "eligible",
@@ -893,10 +902,11 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async updateAnalysisBatch(batch: AnalysisBatch): Promise<AnalysisBatch> {
+  async updateAnalysisBatch(batch: AnalysisBatch, expected?: AnalysisBatch): Promise<AnalysisBatch> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const current = await this.database.analysisBatches.get(batch.id);
       if (!current) throw new ReviewCoachValidationError("missing-analysis-batch", `Analysis batch ${batch.id} does not exist.`);
+      if (expected !== undefined && !sameEntity(current, expected)) throw new ReviewCoachValidationError("stale-analysis-batch", "Analysis result was generated from an older synchronized batch.");
       if (current.inputFingerprint !== batch.inputFingerprint || JSON.stringify(current.inputRefs) !== JSON.stringify(batch.inputRefs)) {
         throw new ReviewCoachValidationError("changed-analysis-input", "Frozen analysis input cannot be changed.");
       }
@@ -938,7 +948,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async acceptBlueprint(blueprint: SessionBlueprint): Promise<SessionBlueprint> {
+  async acceptBlueprint(blueprint: SessionBlueprint, expectedBatch?: AnalysisBatch): Promise<SessionBlueprint> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const existing = await ensureIdempotentInsert(this.database.sessionBlueprints, blueprint);
       if (existing) return existing;
@@ -947,6 +957,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       assertCurrentDecisionBlockRef(await this.database.decisionBlocks.get(blueprint.decisionBlockId), blueprint);
       const batch = await this.database.analysisBatches.get(blueprint.batchId);
       if (!batch || !["running", "succeeded", "partial"].includes(batch.status)) throw new ReviewCoachValidationError("invalid-analysis-batch", "Blueprint requires a running or completed analysis batch.");
+      if (expectedBatch !== undefined && !sameEntity(batch, expectedBatch)) throw new ReviewCoachValidationError("stale-analysis-batch", "Analysis result was generated from an older synchronized batch.");
       const suppliedBlockIds = new Set(batch.inputRefs.map((ref) => ref.decisionBlockId));
       if (!suppliedBlockIds.has(blueprint.decisionBlockId) || blueprint.supportingDecisionBlockIds.some((id) => !suppliedBlockIds.has(id))) {
         throw new ReviewCoachValidationError("unsupplied-blueprint-source", "Blueprint references a decision block outside the frozen analysis input.");
@@ -964,11 +975,14 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async createTask(task: AdaptiveReviewTask): Promise<AdaptiveReviewTask> {
+  async createTask(task: AdaptiveReviewTask, expectedBatch?: AnalysisBatch): Promise<AdaptiveReviewTask> {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const existing = await ensureIdempotentInsert(this.database.adaptiveReviewTasks, task);
       if (existing) return existing;
       const blueprint = await this.database.sessionBlueprints.get(task.blueprintId);
+      if (expectedBatch && !sameEntity(await this.database.analysisBatches.get(expectedBatch.id), expectedBatch)) {
+        throw new ReviewCoachValidationError("stale-analysis-batch", "Task was generated from an older synchronized batch.");
+      }
       if (!blueprint || blueprint.status !== "accepted" || blueprint.decisionBlockId !== task.decisionBlockId || blueprint.contentVersion !== task.contentVersion) {
         throw new ReviewCoachValidationError("dangling-blueprint", "Task requires a matching accepted blueprint.");
       }
@@ -996,6 +1010,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       if (!current) throw new ReviewCoachValidationError("missing-task", `Task ${id} does not exist.`);
       transitionAdaptiveReviewTask(current.status, status);
       if (status !== "stale" && status !== "deleted") assertCurrentDecisionBlockRef(await this.database.decisionBlocks.get(current.decisionBlockId), current);
+      if (current.status === status && (reason === undefined || reason === current.terminalReason)) return current;
       const terminal = ["completed", "not-achieved", "invalid", "abandoned", "stale", "deleted"].includes(status);
       const next: AdaptiveReviewTask = {
         ...current,
@@ -1003,9 +1018,9 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         activeSlotKey: status === "current" || status === "in-progress" ? "global-current" : undefined,
         openTargetKey: isOpenTaskStatus(status) ? openTargetKeyFor(current) : undefined,
         startedAt: status === "in-progress" ? current.startedAt ?? updatedAt : current.startedAt,
-        endedAt: terminal ? updatedAt : current.endedAt,
+        endedAt: terminal && current.status !== status ? updatedAt : current.endedAt,
         terminalReason: reason ?? current.terminalReason,
-        deletedAt: status === "deleted" ? updatedAt : current.deletedAt,
+        deletedAt: status === "deleted" && current.status !== status ? updatedAt : current.deletedAt,
         updatedAt,
       };
       try {
@@ -1015,7 +1030,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         throw error;
       }
       const verification = await findVerificationForTask(this.database, id);
-      if (verification && status === "in-progress" && verification.status !== "in-progress") {
+      if (verification && status === "in-progress" && verification.status !== "in-progress" && !isVerificationRecheckDue(verification, updatedAt)) {
         let verificationStatus: DelayedVerificationStatus = verification.status;
         if (verificationStatus === "missed") verificationStatus = transitionDelayedVerification(verificationStatus, "eligible");
         if (verificationStatus === "eligible") verificationStatus = transitionDelayedVerification(verificationStatus, "queued");
@@ -1129,7 +1144,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     });
   }
 
-  async commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal): Promise<AdaptiveQuizTurn> {
+  async commitQuizAnswer(turn: AdaptiveQuizTurn, event: TaskOutcomeEvent, signal?: AbortSignal, expected?: { turn: AdaptiveQuizTurn; task: AdaptiveReviewTask }): Promise<AdaptiveQuizTurn> {
     signal?.throwIfAborted();
     assertTaskOutcomeShape(event);
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
@@ -1140,6 +1155,10 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         if (!existing) throw new ReviewCoachValidationError("incomplete-answer-retry", "Answered turn is missing its outcome event.");
         return current;
       }
+      const task = await this.database.adaptiveReviewTasks.get(current.taskId);
+      if (!task || task.status !== "in-progress") throw new ReviewCoachValidationError("inactive-task", "Quiz answers can only be committed for an in-progress task.");
+      if (expected && (!sameEntity(current, expected.turn) || !sameEntity(task, expected.task))) throw new ReviewCoachValidationError("stale-quiz-answer", "Quiz answer was generated from an older synchronized turn or task.");
+      assertCurrentDecisionBlockRef(await this.database.decisionBlocks.get(task.decisionBlockId), task);
       transitionAdaptiveQuizTurn(current.status, "answered");
       if (turn.taskId !== current.taskId || turn.sequence !== current.sequence || !turn.answerText?.trim() || !turn.assessment || event.turnId !== turn.id || event.answerAssessment !== turn.assessment) {
         throw new ReviewCoachValidationError("invalid-quiz-answer", "Quiz answer does not match its displayed turn and outcome.");
@@ -1470,7 +1489,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
         if (!existingVerification) await this.database.delayedVerifications.add(verification);
       }
       const linkedVerification = await findVerificationForTask(this.database, taskId);
-      if (linkedVerification && (status === "deferred" || status === "abandoned")) {
+      if (linkedVerification && linkedVerification.status !== "completed" && (status === "deferred" || status === "abandoned")) {
         const missedStatus = linkedVerification.status === "in-progress"
           ? transitionDelayedVerification("in-progress", "missed")
           : transitionDelayedVerification(linkedVerification.status, "missed");
@@ -1505,6 +1524,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       transitionDelayedVerification(current.status, status);
       if (status === "completed" && !outcome) throw new ReviewCoachValidationError("missing-verification-outcome", "Completed verification requires an outcome.");
       if (status !== "completed" && outcome) throw new ReviewCoachValidationError("unexpected-verification-outcome", "Only completed verification can record an outcome.");
+      if (current.status === status && (status !== "completed" || current.verificationOutcome === outcome)) return current;
       const next = {
         ...current,
         status,
@@ -1535,6 +1555,10 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       if (current.concludedAt !== undefined) {
         throw new ReviewCoachValidationError("verification-settled", `Verification ${verificationId} already has a settled conclusion.`);
       }
+      if (!current.taskId) return current;
+      const task = await this.database.adaptiveReviewTasks.get(current.taskId);
+      if (!task) throw new ReviewCoachValidationError("dangling-task", "Queued verification task is missing.");
+      if (isOpenTaskStatus(task.status)) return current;
       const next: DelayedVerification = { ...current, taskId: undefined, updatedAt };
       await this.database.delayedVerifications.put(next);
       await this.rebuildProjectionsInTransaction();
@@ -1643,7 +1667,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
     return this.database.transaction("rw", [this.database.cloudSyncMutation, ...formalTables(this.database)], async () => {
       const task = await this.database.adaptiveReviewTasks.get(taskId);
       const verification = await findVerificationForTask(this.database, taskId);
-      if (!task || task.status !== "in-progress" || !verification || verification.status !== "in-progress") {
+      if (!task || task.status !== "in-progress" || !verification || (verification.status !== "in-progress" && !isVerificationRecheckDue(verification, updatedAt))) {
         throw new ReviewCoachValidationError("inactive-verification", "Verification task is not in progress.");
       }
       if (verification.loopVersion !== "closed-loop-v2") {

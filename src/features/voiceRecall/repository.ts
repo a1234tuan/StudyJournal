@@ -49,13 +49,18 @@ export class VoiceRecallRepository {
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async putSession(session: VoiceRecallSessionLocal) {
+  async putSession(session: VoiceRecallSessionLocal, options: { allowCreate?: boolean } = {}) {
     validateSession(session);
+    let missing = false;
     await this.database.transaction("rw", this.database.voiceRecallSessions, async () => {
       const existing = await this.getSession(session.id);
+      if (!existing && options.allowCreate === false) {
+        missing = true;
+        return;
+      }
       await this.database.voiceRecallSessions.put(structuredClone({ ...session, checkpoint: existing && existing.checkpoint.nextSequence > session.checkpoint.nextSequence ? { ...session.checkpoint, nextSequence: existing.checkpoint.nextSequence, lastConfirmedText: existing.checkpoint.lastConfirmedText } : session.checkpoint, usageOperations: existing?.usageOperations ?? session.usageOperations, usageSources: existing?.usageSources ?? session.usageSources }));
     });
-    return session;
+    return missing ? undefined : session;
   }
 
   async recordUsage(sessionId: string, operationId: string, usage: Partial<import("./providerRuntime").VoiceUsageTotals>) {
