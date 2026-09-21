@@ -3,7 +3,7 @@
 ## 当前可用性
 
 - `voice-mock-cn@1`：确定性开发与自动化验收模板，不会访问真实 Provider。
-- `voice-default-cn@2`：候选模板默认组合**阿里云 Paraformer 实时 ASR**、当前 LLM 和当前 TTS。开始页可分别选择 ASR、LLM 与 TTS；默认链路已于 2026-09-09 用受控账号完成真实服务验证。豆包流式 ASR 1.0/2.0、TTS 2.0 和小模型 TTS 已完成协议与宿主预接入，真实账号权限、音色和额度仍未验证，模板保持 `candidate`。
+- `voice-default-cn@2`：候选模板默认组合**阿里云 Paraformer 实时 ASR**、当前 LLM 和当前 TTS。开始页可分别选择 ASR、LLM 与 TTS；默认链路已于 2026-09-09 用受控账号完成真实服务验证。豆包流式 ASR 1.0/2.0、TTS 2.0 和小模型 TTS 已完成协议与宿主预接入，其中 TTS 2.0 已于 2026-09-21 使用有效本机凭据完成 Android 真实播放与缓存重播；ASR、小模型 TTS、额度账单和长会话仍待验收，模板保持 `candidate`。
 - `voice-asr-aliyun-nls-shiyinshi-v1`：独立候选 ASR，使用智能语音交互 NLS SpeechTranscriber 协议和项目中发布的 16 kHz 识音石 V1。2026-09-21 已完成受控真实 WebSocket 生命周期验收；Android 真机语音、多轮、弱网和过期恢复仍未验收，不能标记为 `verified`。
 - Web：只允许 Mock、自建中继，或明确通过 `browserDirectSupported` 校验的配置。DashScope Paraformer 仍因 `Authorization` 头不能由浏览器 WebSocket 设置而禁止直连；NLS 使用 URL 中的短期 Token，可用于受控直连测试，但不应在浏览器长期保存凭据。Fish Audio preflight 仍无 CORS 许可，因此这不代表 Web 端完整 `ASR -> LLM -> TTS` 链路已经放行。
 - Desktop/Android：真实链路仍需各 Provider 的宿主传输、凭据和受控连接测试。桌面端已实现主进程 WebSocket 代理（`study-journal:voice-asr-*`）与 TTS 宿主合成；Android 端已通过 NativeVoiceAsrPlugin 接入 OkHttp WebSocket；text/binary 帧有本地服务端自动化验证，真实设备仍待验收。
@@ -26,9 +26,12 @@
 
 ## 选择建议
 
+2026-09-21 TTS 真机补充：Qwen Audio 3.1/3.0 和豆包 seed-tts-2.0 已完成受控的键盘输入 -> 真实 LLM -> TTS -> Android 播放、缓存重播验证；豆包挂断后的内存缓存清空已直接检查。百炼两款须使用独立的 Qwen Audio HTTP 协议与各自音色，不可混用 qwen3-tts-flash 的 Cherry；签名音频使用 HTTPS 下载。旧 Qwen-TTS 协议继续保留。该结论不覆盖 ASR、主观音质、额度账单或弱网验收，详见 voice-recall-tts-device-validation-2026-09-21.md。
+
 - 默认保持已验证的 DashScope Paraformer ASR + Fish Audio TTS，不自动切换供应商。
 - 识音石 V1 适合作为准确率对照和显式备选。首次使用时在阿里云项目发布 16 kHz 模型，在语音开始页选择该 ASR，并只填写项目 AppKey 与当前临时 Token。
-- 豆包 ASR/TTS 和阿里云百炼 Qwen Audio TTS 继续作为可选择候选；只有完成真实账号、真机和账单验收后才能提升状态。
+- 四个内置 ASR 只显示服务选择和所需凭据。端点、模型、Resource ID、断句、语气词过滤、数字规范化和多阈值配置使用内置稳定默认值；旧版本保存的实验覆盖值在运行时被忽略。
+- 豆包 ASR/TTS 和阿里云百炼 Qwen Audio TTS 继续作为可选择候选；Qwen Audio 3.1/3.0 与豆包 TTS 2.0 已通过受控真机播放，但只有补齐其他真实账号、真机和账单门槛后才能提升整个模板状态。
 - 智能语音交互控制台中的 NLS TTS 选择不会自动接入本应用。本轮没有增加 NLS TTS，原因是尚缺独立宿主传输、Token 刷新、格式/首音延迟和取消语义验证。
 
 官方协议：[实时语音识别 WebSocket](https://help.aliyun.com/zh/isi/developer-reference/websocket)、[Access Token 生命周期](https://help.aliyun.com/zh/isi/getting-started/obtain-an-access-token-1)。

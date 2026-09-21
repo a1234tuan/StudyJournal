@@ -7,7 +7,7 @@
 > 基线日期：2026-09-11
 > 产品边界：第一版是实时语音主动回忆，不是视频通话，也不是独立聊天中心。
 
-> 2026-09-21 可靠性跟进：Paraformer 在已有最终句但缺失 `task-finished` 时不再等待 30 秒；传输层在 1.5 秒宽限后完成，无结果等待上限缩短为 8 秒。新增 NLS 识音石 V1 候选 ASR（项目 AppKey + 24 小时临时 Token），真实 WebSocket 生命周期已通过，Android 真机仍是门槛。范围见 `docs/studyjournal-scope-unfreeze-2026-09-21-aliyun-nls-asr.md`。
+> 2026-09-21 可靠性跟进：Paraformer、NLS 和豆包在已有识别文本但缺失终止帧或连接先关闭时不再丢失转写；传输层在 1.5 秒宽限后完成，无文本等待上限为 12 秒，自动重试不再被自身的运行代数变化拦截。内置 ASR 固定使用稳定参数，配置页只保留服务和凭据。新增 NLS 识音石 V1 候选 ASR（项目 AppKey + 24 小时临时 Token），真实中文 PCM 已产出非空最终转写；Android 真机仍是门槛。范围见 `docs/studyjournal-scope-unfreeze-2026-09-21-aliyun-nls-asr.md`。
 
 ## 1. 当前已完成
 
@@ -44,7 +44,7 @@
 - `TransportAsrStreamAdapter` 把豆包/阿里云的鉴权、帧协议和宿主实现隔离在 `VoiceAsrTransport`，领域流水线不依赖 WebSocket/SSE。
 - 提供缓冲式现有 TTS Provider 降级和系统朗读兜底。
 - 提供请求超时、显式用户重试、熔断、连接测试、本机用量统计和脱敏诊断原语。
-- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 默认组合阿里云 Paraformer ASR、当前 LLM 与当前 TTS，开始页允许三阶段独立选择。默认三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包 ASR/TTS 已完成协议预接入，因没有已激活真实账号仍只作为候选。
+- 内置 `voice-mock-cn@1` 是已验证的确定性模板；`voice-default-cn@2` 默认组合阿里云 Paraformer ASR、当前 LLM 与当前 TTS，开始页允许三阶段独立选择。默认三条链路已于 2026-09-09 用受控账号验证，但在真机验收前仍保持 `candidate`。豆包 ASR/TTS 已完成协议预接入；2026-09-21 豆包 TTS 2.0 与百炼 Qwen Audio 3.1/3.0 已通过受控 Android 真机播放及缓存重播，完整模板仍只作为候选，具体证据见 `docs/voice-recall-tts-device-validation-2026-09-21.md`。
 - Web 默认只允许 Mock、自建中继或明确 `browserDirectSupported` 的配置。候选豆包、阿里云和 Fish Audio 模板禁止 Web 长期密钥直连。
 
 ### 阶段 3：生产工作区与本机历史
@@ -97,11 +97,13 @@
 | DeepSeek LLM → Fish Audio TTS | `voicePipeline.live.test.ts` 通过，3.4s 收到真实音频分片 |
 | TTS → ASR 往返 | Fish 生成「间隔复习为什么有效」→ ffmpeg 转 16k PCM → 阿里云识别出同一句，首个结果 601ms |
 | 浏览器直连 | 实测不可行：ASR 需要自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish preflight 无 CORS 头 |
-| NLS 识音石 V1（2026-09-21） | 真实临时 Token 完成建连、开始、静音 PCM、停止和完成事件；Android 真机语音尚未验收 |
+| NLS 识音石 V1（2026-09-21） | 真实临时 Token 完成建连、开始、paced 16 kHz 中文 PCM、非空最终转写、停止和完成事件；Android 真机语音尚未验收 |
 
 **已验证**：Android 真机自动听说多轮 ASR → LLM → TTS → 再监听主链。
 
-**仍未验证**：按住讲话、点击录音、字幕键盘输入、暂停/继续/结束动作、保存/整理/不保留动作；蓝牙、系统音乐、来电、后台、弱网和账单核对。
+**2026-09-21 补充验证**：键盘确认文本 -> 真实 LLM -> Qwen Audio 3.1/3.0 或豆包 TTS 2.0 -> Android 播放、缓存重播不新增请求、手动清理和结束后缓存归零；测试摘要使用“不保留并返回”。这不是麦克风 ASR 的重新验收。
+
+**仍未验证**：按住讲话、点击录音的完整麦克风流程、静音与输入法边界、暂停/继续、保存为本机历史或正式日志；蓝牙、系统音乐、来电、后台、弱网和账单核对。
 
 ## 2. 数据与隐私边界
 
@@ -134,7 +136,7 @@
 
 ## 4. 尚未完成与禁止误报
 
-- DashScope Paraformer ASR 与 Fish Audio TTS 已验证单次会话；NLS 识音石 V1 已验证真实协议生命周期但未完成 Android 真机语音验收；豆包流式 ASR 1.0/2.0、大模型 TTS 2.0 和小模型 TTS 已完成确定性协议测试及 Desktop/Android 宿主编译，但真实服务仍未验证，均保留为候选。豆包端到端实时语音需要独立会话运行时，当前不作为模块化 Provider 选项。
+- DashScope Paraformer ASR 与 Fish Audio TTS 已验证单次会话；NLS 识音石 V1 已验证真实协议生命周期但未完成 Android 真机语音验收；豆包流式 ASR 1.0/2.0、大模型 TTS 2.0 和小模型 TTS 已完成确定性协议测试及 Desktop/Android 宿主编译，其中 TTS 2.0 与百炼 Qwen Audio 3.1/3.0 已于 2026-09-21 验证真实 Android 播放，其他未验收项不因此放行，均保留为候选。豆包端到端实时语音需要独立会话运行时，当前不作为模块化 Provider 选项。
 - 语音 LLM 与 TTS 的并发、取消、长会话稳定性与真实账单仍未核对。
 - Android 尚未完成真实设备的回声消除、蓝牙、音频焦点、来电、后台、弱网和噪声语料验收。
 - 通话界面的生产视觉回归需要桌面/真机验收（Web 端不提供真实语音链路，因此 Playwright 只覆盖“未配置时拒绝启动”）。

@@ -26,7 +26,11 @@ Long-running use requires a trusted token issuer that refreshes the Token throug
 
 ## Root-cause proof
 
-The reported pause matched two nested waits: the Paraformer transport previously waited 30 seconds for `task-finished` even after receiving a valid final sentence, while the workspace remained in `finalizing-asr`. The transport now grants the terminal frame 1.5 seconds after the most recent final sentence, then completes locally if it never arrives; a no-result completion still fails after 8 seconds. A regression test first reproduced the unresolved wait and passes only with this behavior.
+The initial report matched two nested waits: the Paraformer transport waited 30 seconds for `task-finished` after receiving valid text while the workspace remained in `finalizing-asr`. The first fix was too narrow: it covered only a Paraformer final sentence, while NLS and Doubao could still lose partial text when a terminal event was absent or a WebSocket closed first; Doubao retained the full 30-second wait. The automatic retry also compared against the pre-cancellation operation generation, so it invalidated its own scheduled restart.
+
+All three transports now preserve recognized text after capture finishes, promote the latest non-empty partial only at a terminal/completion boundary, and complete after a 1.5-second grace when the provider omits its final control frame. A provider close after finish is completion when text exists, not a reason to clear the queue; a truly empty result has a 12-second diagnostic timeout. Regression tests cover partial promotion, missing terminal frames, and provider-close ordering for Paraformer, NLS, and Doubao. The retry uses the post-cancellation generation.
+
+The earlier real-account gate sent silence and proved only authentication/protocol lifecycle. The follow-up streamed a paced 16 kHz Chinese PCM utterance through the checked-in NLS transport and required a non-empty `final`; it passed in 5.3 seconds. This proves the published project can recognize real speech through the implementation, while Android physical-device capture and multi-turn behavior remain separate gates.
 
 ## Official references
 
