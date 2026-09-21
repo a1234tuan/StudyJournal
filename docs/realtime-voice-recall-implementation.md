@@ -7,6 +7,8 @@
 > 基线日期：2026-09-11
 > 产品边界：第一版是实时语音主动回忆，不是视频通话，也不是独立聊天中心。
 
+> 2026-09-21 可靠性跟进：Paraformer 在已有最终句但缺失 `task-finished` 时不再等待 30 秒；传输层在 1.5 秒宽限后完成，无结果等待上限缩短为 8 秒。新增 NLS 识音石 V1 候选 ASR（项目 AppKey + 24 小时临时 Token），真实 WebSocket 生命周期已通过，Android 真机仍是门槛。范围见 `docs/studyjournal-scope-unfreeze-2026-09-21-aliyun-nls-asr.md`。
+
 ## 1. 当前已完成
 
 ### 阶段 0：隔离原型与契约
@@ -80,6 +82,7 @@
 - `productionPipeline.ts` 把「模板 + 设备本机覆盖 + 凭据 + 平台」解析成真实管线；任一环节缺失或平台不支持时抛出可执行的中文提示，工作区**拒绝开始通话**，不再呈现模拟通话。
 - ASR 传输层按宿主分派：桌面由主进程持有 WebSocket（`study-journal:voice-asr-open/send/close` + 事件通道，渲染层通过 `desktopVoiceSocket.ts` 适配）；Android 使用 `NativeVoiceAsrPlugin`（OkHttp WebSocket，帧以 base64 过 Capacitor 桥，`androidVoiceSocket.ts` 适配）。两者共用 `bridgeVoiceSocket.ts`。
 - `aliyunAsrProtocol.ts` 实现 DashScope Paraformer 实时协议（`run-task → task-started → 音频帧 → result-generated → task-finished`），`aliyunAsrTransport.ts` 是它的 `VoiceAsrTransport` 实现；错误与超时映射为可读信息。
+- `aliyunNlsAsrProtocol.ts` 与 `aliyunNlsAsrTransport.ts` 实现智能语音交互 NLS SpeechTranscriber（`StartTranscription → TranscriptionStarted → SentenceEnd → StopTranscription → TranscriptionCompleted`）。它使用独立 AppKey/短期 Token 凭据槽，不覆盖 DashScope API Key。
 - `audioPlaybackSink.ts` 用 Web Audio 真实播放：`provider-native`（Fish MP3）走 `decodeAudioData`，`pcm-s16le` 直接转采样；`play()` 只在播放结束或被打断后 resolve，因此「说完」与「播完」不再靠标志位假装。
 - 工作区删除 `createTeacherReply` 与伪造转写；采集帧经 `AsyncQueue` 交给真实 ASR，partial 实时上屏，`finalizing-asr` 阶段承载「转写校对」，用户确认后由 `buildVoiceTeacherMessages` 组装提示词交给真实 LLM。
 - 状态真实化：波形与「正在识别」由**真实采集状态**驱动；主按钮文案与实际动作一致；连接指示改为会话状态（通话中 / 正在连接 / 已暂停 / 已断开）；披露文案显示**实际运行的模型**。
@@ -94,6 +97,7 @@
 | DeepSeek LLM → Fish Audio TTS | `voicePipeline.live.test.ts` 通过，3.4s 收到真实音频分片 |
 | TTS → ASR 往返 | Fish 生成「间隔复习为什么有效」→ ffmpeg 转 16k PCM → 阿里云识别出同一句，首个结果 601ms |
 | 浏览器直连 | 实测不可行：ASR 需要自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish preflight 无 CORS 头 |
+| NLS 识音石 V1（2026-09-21） | 真实临时 Token 完成建连、开始、静音 PCM、停止和完成事件；Android 真机语音尚未验收 |
 
 **已验证**：Android 真机自动听说多轮 ASR → LLM → TTS → 再监听主链。
 
@@ -118,7 +122,7 @@
 - 音频采集：`webVoiceCapture.ts`、`nativeVoiceCapture.ts`
 - Provider：`providerProfiles.ts`、`providerFactory.ts`、`openAiLlmStreamAdapter.ts`、`fishAudioTtsStreamAdapter.ts`、`transportAsrAdapter.ts`
 - 真实链路解析：`productionPipeline.ts`、`credentials.ts`、`runtimePlatform.ts`
-- 阿里云 ASR：`aliyunAsrProtocol.ts`、`aliyunAsrTransport.ts`
+- 阿里云 ASR：DashScope `aliyunAsrProtocol.ts` / `aliyunAsrTransport.ts`；NLS `aliyunNlsAsrProtocol.ts` / `aliyunNlsAsrTransport.ts`
 - 豆包 ASR：`doubaoAsrProtocol.ts`、`doubaoAsrTransport.ts`（SAUC V3，兼容 ASR 1.0/2.0 资源 ID 与新旧鉴权）
 - 宿主桥接：`bridgeVoiceSocket.ts`、`desktopVoiceSocket.ts`、`androidVoiceSocket.ts`
 - 播放：`audioPlaybackSink.ts`、`playbackQueue.ts`
@@ -130,7 +134,7 @@
 
 ## 4. 尚未完成与禁止误报
 
-- 阿里云 ASR 与 Fish Audio TTS 已验证单次会话；豆包流式 ASR 1.0/2.0、大模型 TTS 2.0 和小模型 TTS 已完成确定性协议测试及 Desktop/Android 宿主编译，但真实服务仍未验证，保留为候选。豆包端到端实时语音需要独立会话运行时，当前不作为模块化 Provider 选项。
+- DashScope Paraformer ASR 与 Fish Audio TTS 已验证单次会话；NLS 识音石 V1 已验证真实协议生命周期但未完成 Android 真机语音验收；豆包流式 ASR 1.0/2.0、大模型 TTS 2.0 和小模型 TTS 已完成确定性协议测试及 Desktop/Android 宿主编译，但真实服务仍未验证，均保留为候选。豆包端到端实时语音需要独立会话运行时，当前不作为模块化 Provider 选项。
 - 语音 LLM 与 TTS 的并发、取消、长会话稳定性与真实账单仍未核对。
 - Android 尚未完成真实设备的回声消除、蓝牙、音频焦点、来电、后台、弱网和噪声语料验收。
 - 通话界面的生产视觉回归需要桌面/真机验收（Web 端不提供真实语音链路，因此 Playwright 只覆盖“未配置时拒绝启动”）。

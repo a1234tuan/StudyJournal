@@ -7,6 +7,7 @@ import { resolveVoiceSecret, voiceAsrSecretId } from "./credentials";
 import { createAndroidVoiceSocketFactory } from "./androidVoiceSocket";
 import { createDesktopVoiceSocketFactory } from "./desktopVoiceSocket";
 import { createAliyunAsrTransport, type VoiceSocketFactory } from "./aliyunAsrTransport";
+import { createAliyunNlsAsrTransport } from "./aliyunNlsAsrTransport";
 import { createDoubaoAsrTransport } from "./doubaoAsrTransport";
 import { DEFAULT_ALIYUN_ASR_CONFIG } from "./aliyunAsrProtocol";
 import { VoiceRecallPipeline } from "./pipeline";
@@ -102,6 +103,24 @@ const buildAsrTransport = (
   secret: AiSecret,
 ): VoiceAsrTransport => {
   if (input.asrTransportFactory) return input.asrTransportFactory(profile, secret);
+  if (profile.providerId === "aliyun-nls") {
+    const silence = profile.recognitionOptions?.maxSentenceSilence;
+    if (silence !== undefined && (!Number.isInteger(silence) || silence < 200 || silence > 2000)) throw new VoiceConfigurationError("识音石 V1 句级静音阈值必须在 200–2000 毫秒之间。");
+    if (!secret.apiKeySecondary?.trim()) throw new VoiceConfigurationError("识音石 V1 缺少 Access Token，请在语音服务设置中填写。控制台测试 Token 仅有效 24 小时。");
+    return createAliyunNlsAsrTransport({
+      appKey: secret.apiKey,
+      accessToken: secret.apiKeySecondary,
+      socketFactory: input.socketFactory ?? (platform === "web" ? undefined : hostSocketFactory(platform)),
+      config: {
+        vocabularyId: profile.recognitionOptions?.vocabularyId,
+        maxSentenceSilence: profile.recognitionOptions?.maxSentenceSilence,
+        disfluencyRemovalEnabled: profile.recognitionOptions?.disfluencyRemovalEnabled,
+        semanticSentenceDetectionEnabled: profile.recognitionOptions?.semanticPunctuationEnabled,
+        inverseTextNormalization: profile.recognitionOptions?.inverseTextNormalizationEnabled,
+        punctuation: profile.punctuation,
+      },
+    });
+  }
   const socketFactory = input.socketFactory ?? hostSocketFactory(platform);
   if (profile.providerId === "aliyun-bailian") {
     const silence = profile.recognitionOptions?.maxSentenceSilence;
@@ -112,8 +131,8 @@ const buildAsrTransport = (
   throw new VoiceConfigurationError(`${profile.providerName} 的实时识别传输尚未接入。`);
 };
 
-/** The WebSocket must live in a privileged host: the renderer cannot set an
- * Authorization header on a browser WebSocket. */
+/** Header-authenticated WebSockets must live in a privileged host because the
+ * renderer cannot set an Authorization header on a browser WebSocket. */
 const hostSocketFactory = (platform: VoiceRuntimePlatform): VoiceSocketFactory => {
   if (platform === "android") return createAndroidVoiceSocketFactory();
   const bridge = typeof window !== "undefined" ? window.studyJournalDesktop?.voiceAsr : undefined;

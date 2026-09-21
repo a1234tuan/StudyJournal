@@ -237,6 +237,8 @@
 .vr-provider-body details, .vr-provider-body summary, .vr-provider-body label, .vr-provider-body input, .vr-provider-body select, .vr-provider-body textarea { max-width: 100%; min-width: 0; box-sizing: border-box; }
 .vr-provider-body input, .vr-provider-body select, .vr-provider-body textarea { width: 100%; }
 .vr-provider-body label { display: grid; gap: 6px; align-items: start; min-width: 0; font-size: .8rem; }
+.vr-provider-body label:has(> input[type="checkbox"]) { display: flex; gap: 8px; align-items: center; }
+.vr-provider-body input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 0; }
 .vr-provider-body select { min-height: 36px; padding: 0 9px; border: 1px solid var(--vr-line); border-radius: 6px; color: var(--vr-text); background: var(--vr-surface); }
 .vr-provider-body dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .vr-provider-body dl div { padding: 8px 9px; border: 1px solid var(--vr-line); border-radius: 6px; background: var(--vr-surface); }

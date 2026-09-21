@@ -41,4 +41,20 @@ describe("VoiceAsrCredentialSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存 ASR 凭据" }));
     await waitFor(() => expect(storageMock.saveAiSecret).toHaveBeenCalledWith("test-key", "voice-asr-aliyun", undefined));
   });
+
+  it("stores the NLS project AppKey and temporary token in an isolated local slot", async () => {
+    const profile = BUILT_IN_ASR_PROFILES.find((item) => item.id === "voice-asr-aliyun-nls-shiyinshi-v1")!;
+    render(<VoiceAsrCredentialSettings profile={profile} />);
+    const save = screen.getByRole("button", { name: "保存 ASR 凭据" });
+    fireEvent.change(screen.getByLabelText("项目 AppKey"), { target: { value: "test-app-key" } });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Access Token"), { target: { value: "test-access-token" } });
+    fireEvent.click(save);
+    await waitFor(() => expect(storageMock.saveAiSecret).toHaveBeenCalledWith(
+      "test-app-key",
+      "voice-asr-aliyun-nls",
+      "test-access-token",
+    ));
+    expect(screen.getByText(/仅有效 24 小时/)).toBeInTheDocument();
+  });
 });

@@ -24,9 +24,10 @@
 
 ## 真实 Provider 门槛
 
-以下已勾选项仅为 2026-09-09 修复前的历史单次验证，不代表本次冻结包通过验收。本次没有调用付费服务；轮换凭据、批准调用额度后须重新验证。
+2026-09-09 项目是历史单次验证，不代表本次冻结包通过验收。2026-09-21 仅使用控制台免费测试 Token 完成 NLS 协议生命周期，没有购买、升级或调用已确认的付费额度；轮换凭据、批准调用额度后仍须重新验证完整链路。
 
 - [x] 阿里云 ASR：鉴权、实时帧协议与单次会话生命周期已验证（`aliyunAsrTransport.live.test.ts`，2026-09-09）。
+- [x] 阿里云 NLS 识音石 V1：协议、独立本机凭据槽和真实临时 Token 生命周期已验证（`aliyunNlsAsrTransport.live.test.ts`，2026-09-21）；Android 真机语音仍在下方门槛中。
 - [x] DeepSeek → Fish Audio 回复链：首 token、句界流式合成与真实音频分片已验证（`voicePipeline.live.test.ts`，2026-09-09）。
 - [x] TTS → ASR 往返：Fish 生成语音经 16k PCM 后由阿里云正确识别（2026-09-09）。
 - [ ] 豆包语音：协议与宿主已预接入；需使用已开通账号分别重跑 ASR 1.0/2.0、TTS 2.0、小模型 TTS 的鉴权、音色、额度和取消验收。
@@ -51,7 +52,8 @@
 - [ ] 结束面板的暂停并离开、继续通话、结束通话。
 - [ ] 保存到本机日志、整理为日志、不保留并返回。
 - [ ] Android 物理设备上的麦克风权限、输入法、音频焦点和前台服务行为。
+- [ ] NLS 识音石 V1 的普通话语料准确率、连续多轮、Token 过期提示与弱网恢复。
 
 以上真实 Provider 与真机项目未全部通过前，不得宣称真实语音链路已经量产验收。已完成的受控账号验证只覆盖单次会话的可用性，不能替代真机、长会话与账单核对。
 
-Web 端不提供真实语音链路：实测 ASR 需要自定义 `Authorization` 头（浏览器 WebSocket 不支持），Fish Audio preflight 无 CORS 头。Web 端保持 Mock / 自建中继 / 明确 `browserDirectSupported` 的配置策略。
+Web 端完整真实语音链路仍未放行：DashScope ASR 需要自定义 `Authorization` 头，Fish Audio preflight 无 CORS 头。NLS ASR 可以用短期 Token 直连，但只代表单个识别阶段可连接；Web 端继续保持 Mock / 自建中继 / 明确 `browserDirectSupported` 的配置策略。

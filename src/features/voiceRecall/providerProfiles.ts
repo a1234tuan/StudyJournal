@@ -7,7 +7,7 @@ export type VoiceProviderTransport = "websocket" | "sse" | "http-stream" | "nati
 export interface AsrProviderProfile {
   recognitionOptions?: Partial<import("./aliyunAsrProtocol").AliyunAsrSessionConfig>;
   id: string;
-  providerId: "doubao" | "aliyun-bailian" | "openai-compatible" | "custom" | "mock";
+  providerId: "doubao" | "aliyun-bailian" | "aliyun-nls" | "openai-compatible" | "custom" | "mock";
   providerName: string;
   endpoint: string;
   transport: VoiceProviderTransport;
@@ -131,6 +131,25 @@ export const BUILT_IN_ASR_PROFILES: readonly AsrProviderProfile[] = [
     punctuation: true,
     inverseTextNormalization: true,
     browserDirectSupported: false,
+  },
+  {
+    id: "voice-asr-aliyun-nls-shiyinshi-v1",
+    providerId: "aliyun-nls",
+    providerName: "阿里云 识音石 V1 实时 ASR",
+    endpoint: "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1",
+    transport: "websocket",
+    language: "zh-CN",
+    acceptedSampleRates: [16_000],
+    acceptedFormats: ["pcm-s16le"],
+    punctuation: true,
+    inverseTextNormalization: true,
+    browserDirectSupported: true,
+    recognitionOptions: {
+      maxSentenceSilence: 800,
+      disfluencyRemovalEnabled: false,
+      semanticPunctuationEnabled: false,
+      inverseTextNormalizationEnabled: true,
+    },
   },
 ] as const;
 

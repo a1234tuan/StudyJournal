@@ -16,7 +16,7 @@ export const VoiceProviderSettings = ({ setup }: { setup: VoiceRecallProviderSet
         if (profile) change({ asrProfileId: profile.id, asrEndpoint: profile.endpoint, asrModel: profile.model ?? "", asrResourceId: profile.resourceId ?? "", asrOptions: profile.recognitionOptions });
       }}>{setup.asrProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.providerName}</option>)}</select></label>
       {selectedAsr && <VoiceAsrCredentialSettings profile={selectedAsr} />}
-      <label>模型<input value={config.asrModel} onChange={(event) => change({ asrModel: event.target.value })} /></label>
+      {selectedAsr?.providerId === "aliyun-nls" ? <p>识别模型由阿里云项目绑定；当前项目需发布为 16 kHz 识音石 V1。</p> : <label>模型<input value={config.asrModel} onChange={(event) => change({ asrModel: event.target.value })} /></label>}
       <label>服务端点<input value={config.asrEndpoint} onChange={(event) => change({ asrEndpoint: event.target.value })} /></label>
       {selectedAsr?.providerId === "doubao" && <label>Resource ID<input value={config.asrResourceId} onChange={(event) => change({ asrResourceId: event.target.value })} /></label>}
       {selectedAsr?.providerId === "aliyun-bailian" && <>
@@ -28,6 +28,14 @@ export const VoiceProviderSettings = ({ setup }: { setup: VoiceRecallProviderSet
         <label><input type="checkbox" checked={options.multiThresholdModeEnabled ?? false} onChange={(event) => changeAsr({ multiThresholdModeEnabled: event.target.checked })} />多阈值断句</label>
         <label><input type="checkbox" checked={options.inverseTextNormalizationEnabled ?? true} onChange={(event) => changeAsr({ inverseTextNormalizationEnabled: event.target.checked })} />数字规范化</label>
         <p>句级断句不等于发送。自动听说仍等待本机发言结束判断；热词列表须先在阿里云创建。</p>
+      </>}
+      {selectedAsr?.providerId === "aliyun-nls" && <>
+        <label>热词列表 ID<input value={options.vocabularyId ?? ""} onChange={(event) => changeAsr({ vocabularyId: event.target.value })} placeholder="已有阿里云词表 ID" /></label>
+        <label>句级静音（毫秒）<input type="number" min={200} max={2000} value={options.maxSentenceSilence ?? 800} onChange={(event) => changeAsr({ maxSentenceSilence: Number(event.target.value) })} /></label>
+        <label><input type="checkbox" checked={options.semanticPunctuationEnabled ?? false} onChange={(event) => changeAsr({ semanticPunctuationEnabled: event.target.checked })} />语义断句</label>
+        <label><input type="checkbox" checked={options.disfluencyRemovalEnabled ?? false} onChange={(event) => changeAsr({ disfluencyRemovalEnabled: event.target.checked })} />服务端过滤语气词（默认保留）</label>
+        <label><input type="checkbox" checked={options.inverseTextNormalizationEnabled ?? true} onChange={(event) => changeAsr({ inverseTextNormalizationEnabled: event.target.checked })} />数字规范化</label>
+        <p>Access Token 会过期；识别失败并提示鉴权时，请在本机凭据中更新。</p>
       </>}
     </details>
     <details><summary>LLM：{selectedLlm?.providerName ?? "未配置"}</summary>

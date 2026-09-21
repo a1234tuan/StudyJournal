@@ -1,41 +1,48 @@
 import type { AsrStreamEvent } from "./contracts";
 import type { VoiceAsrTransport, VoiceAsrTransportSession } from "./transportAsrAdapter";
-import { buildAliyunRunTask, buildAliyunFinishTask, parseAliyunAsrMessage, DEFAULT_ALIYUN_ASR_CONFIG, type AliyunAsrSessionConfig } from "./aliyunAsrProtocol";
+import type { VoiceSocket, VoiceSocketFactory } from "./aliyunAsrTransport";
+import {
+  buildAliyunNlsStartTranscription,
+  buildAliyunNlsStopTranscription,
+  DEFAULT_ALIYUN_NLS_ASR_CONFIG,
+  parseAliyunNlsAsrMessage,
+  type AliyunNlsAsrSessionConfig,
+} from "./aliyunNlsAsrProtocol";
 import { createAsyncQueue } from "./asyncQueue";
 
-const DEFAULT_ALIYUN_ASR_ENDPOINT = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
-export interface VoiceSocket {
-  readyState: number;
-  send(data: string | Uint8Array): void | Promise<void>;
-  close(): void;
-  onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: unknown }) => void) | null;
-  onerror: ((event: unknown) => void) | null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null;
-}
-export type VoiceSocketFactory = (url: string, headers: Record<string, string>) => VoiceSocket;
-const defaultSocketFactory: VoiceSocketFactory = (url, headers) => {
-  const Constructor = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => VoiceSocket;
-  return new Constructor(url, { headers });
+const DEFAULT_ALIYUN_NLS_ASR_ENDPOINT = "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1";
+const defaultSocketFactory: VoiceSocketFactory = (url) => new WebSocket(url) as unknown as VoiceSocket;
+const randomProtocolId = (): string => crypto.randomUUID().replaceAll("-", "");
+
+const authenticatedEndpoint = (endpoint: string, accessToken: string): string => {
+  const url = new URL(endpoint || DEFAULT_ALIYUN_NLS_ASR_ENDPOINT);
+  url.searchParams.set("token", accessToken.trim());
+  return url.toString();
 };
-export const createAliyunAsrTransport = (options: {
-  apiKey: string;
+
+export const createAliyunNlsAsrTransport = (options: {
+  appKey: string;
+  accessToken: string;
   socketFactory?: VoiceSocketFactory;
-  config?: Partial<AliyunAsrSessionConfig>;
+  config?: Partial<AliyunNlsAsrSessionConfig>;
   openTimeoutMs?: number;
   finalTimeoutMs?: number;
   completionGraceMs?: number;
+  idFactory?: () => string;
 }): VoiceAsrTransport => ({
-  open: async ({ profile, turnId, signal, format }): Promise<VoiceAsrTransportSession> => {
+  open: async ({ profile, signal, format }): Promise<VoiceAsrTransportSession> => {
     if (signal.aborted) throw new DOMException("ASR cancelled", "AbortError");
-    const socket = (options.socketFactory ?? defaultSocketFactory)(profile.endpoint || DEFAULT_ALIYUN_ASR_ENDPOINT, {
-      Authorization: "bearer " + options.apiKey.trim().replace(/^Bearer\s+/i, ""),
-    });
+    const makeId = options.idFactory ?? randomProtocolId;
+    const taskId = makeId();
+    const socket = (options.socketFactory ?? defaultSocketFactory)(
+      authenticatedEndpoint(profile.endpoint, options.accessToken),
+      {},
+    );
     const queue = createAsyncQueue<AsrStreamEvent>();
     const sentences = new Map<string, string>();
     let closed = false;
     let completed = false;
-    let taskStarted = false;
+    let startedTask = false;
     let finishRequested = false;
     let timer: ReturnType<typeof setTimeout>;
     let completionTimer: ReturnType<typeof setTimeout>;
@@ -78,26 +85,27 @@ export const createAliyunAsrTransport = (options: {
     else deadline(options.openTimeoutMs ?? 10_000);
     socket.onopen = () => {
       if (closed) return;
-      deadline(options.openTimeoutMs ?? 10_000);
-      Promise.resolve().then(() => {
-        if (!closed) return socket.send(buildAliyunRunTask(turnId, { ...DEFAULT_ALIYUN_ASR_CONFIG, ...options.config, model: profile.model ?? DEFAULT_ALIYUN_ASR_CONFIG.model, sampleRate: format.sampleRate, format: "pcm" }));
-      }).catch(fail);
+      const sampleRate: 8_000 | 16_000 = format.sampleRate === 8_000 ? 8_000 : 16_000;
+      const config = { ...DEFAULT_ALIYUN_NLS_ASR_CONFIG, ...options.config, sampleRate, format: "pcm" as const };
+      Promise.resolve()
+        .then(() => socket.send(buildAliyunNlsStartTranscription(taskId, makeId(), options.appKey.trim(), config)))
+        .catch(fail);
     };
     socket.onmessage = (event) => {
       if (closed) return;
-      const parsed = parseAliyunAsrMessage(typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer));
-      if (parsed.type === "started" && !taskStarted) { taskStarted = true; clearTimeout(timer); resolveStarted(); }
+      const parsed = parseAliyunNlsAsrMessage(typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer));
+      if (parsed.type === "started" && !startedTask) { startedTask = true; clearTimeout(timer); resolveStarted(); }
       if (parsed.type === "partial") queue.push({ type: "partial", text: [...sentences.values()].join("") + parsed.text });
       if (parsed.type === "final") {
         sentences.set(parsed.segmentId ?? parsed.text, parsed.text);
-        queue.push({ type: "final", text: [...sentences.values()].join(""), cumulative: true, ...(parsed.usageSeconds !== undefined ? { usageSeconds: parsed.usageSeconds } : {}) });
+        queue.push({ type: "final", text: [...sentences.values()].join(""), cumulative: true });
         scheduleCompletionFallback();
       }
       if (parsed.type === "failed") fail(new Error(parsed.message));
-      if (parsed.type === "completed" && !taskStarted) { fail(new Error("语音识别协议顺序异常")); return; }
+      if (parsed.type === "completed" && !startedTask) { fail(new Error("语音识别协议顺序异常")); return; }
       if (parsed.type === "completed") complete();
     };
-    socket.onerror = () => fail(new Error("语音识别连接失败，请检查凭据与网络。"));
+    socket.onerror = () => fail(new Error("语音识别连接失败，请检查 AppKey、Access Token 与网络。"));
     socket.onclose = () => { if (!completed) fail(new Error("语音识别连接提前关闭。")); };
     await started;
     return {
@@ -115,7 +123,7 @@ export const createAliyunAsrTransport = (options: {
         if (closed) throw new Error("语音识别连接已关闭");
         finishRequested = true;
         deadline(options.finalTimeoutMs ?? 8_000);
-        try { await socket.send(buildAliyunFinishTask(turnId)); } catch (error) { fail(error); throw error; }
+        try { await socket.send(buildAliyunNlsStopTranscription(taskId, makeId(), options.appKey.trim())); } catch (error) { fail(error); throw error; }
         scheduleCompletionFallback();
       },
       close: async () => { if (!completed) fail(new DOMException("ASR cancelled", "AbortError")); else close(); },

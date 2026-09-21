@@ -178,8 +178,47 @@ it("bounds the final result wait after finish-task", async () => {
     await session.finish();
     const result = session.events[Symbol.asyncIterator]().next();
     const rejected = expect(result).rejects.toThrow("超时");
-    await vi.advanceTimersByTimeAsync(30_001);
+    await vi.advanceTimersByTimeAsync(8_001);
     await rejected;
+    expect(socket.readyState).toBe(3);
+  } finally { vi.useRealTimers(); }
+});
+
+it("finishes promptly from a finalized sentence when task-finished is lost", async () => {
+  vi.useFakeTimers();
+  try {
+    const sockets: FakeSocket[] = [];
+    const transport = createAliyunAsrTransport({
+      apiKey: "test-key",
+      completionGraceMs: 1_500,
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    const controller = new AbortController();
+    const opened = transport.open({
+      profile,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      operationId: "operation-1",
+      language: "zh-CN",
+      format: { encoding: "pcm-s16le", sampleRate: 16_000, channelCount: 1 },
+      signal: controller.signal,
+    });
+    const socket = sockets[0];
+    socket.onopen?.({});
+    socket.onmessage?.({ data: JSON.stringify({ header: { event: "task-started" } }) });
+    const session = await opened;
+    const iterator = session.events[Symbol.asyncIterator]();
+
+    await session.finish();
+    socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "已经识别完成。", sentence_end: true } } } }) });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "已经识别完成。", cumulative: true } });
+
+    let settled = false;
+    const completion = iterator.next().then((value) => { settled = true; return value; });
+    await vi.advanceTimersByTimeAsync(1_501);
+    expect(settled).toBe(true);
+    await expect(completion).resolves.toEqual({ done: false, value: { type: "completed" } });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
     expect(socket.readyState).toBe(3);
   } finally { vi.useRealTimers(); }
 });

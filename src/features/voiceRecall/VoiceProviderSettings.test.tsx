@@ -53,6 +53,12 @@ describe("VoiceProviderSettings", () => {
     expect(screen.getByDisplayValue("volc.seedasr.sauc.duration")).toBeInTheDocument();
     expect(screen.getByText("凭据：豆包流式语音识别 2.0")).toBeInTheDocument();
 
+    fireEvent.change(screen.getByLabelText("语音识别服务"), { target: { value: "voice-asr-aliyun-nls-shiyinshi-v1" } });
+    expect(screen.getByText("凭据：阿里云 识音石 V1 实时 ASR")).toBeInTheDocument();
+    expect(screen.getByText(/识别模型由阿里云项目绑定/)).toBeInTheDocument();
+    expect(screen.getByLabelText("句级静音（毫秒）")).toHaveValue(800);
+    expect(screen.getByText(/Access Token 会过期/)).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("大语言模型服务"), { target: { value: "llm-b" } });
     expect(screen.getByDisplayValue("https://b.example/v1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("b")).toBeInTheDocument();

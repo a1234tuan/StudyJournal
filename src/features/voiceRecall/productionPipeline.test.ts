@@ -98,6 +98,29 @@ describe("createProductionVoiceSession", () => {
     expect(session.pipeline).toBeDefined();
   });
 
+  it("requires both the NLS project AppKey and temporary Access Token", async () => {
+    secrets.store.set("voice-asr-aliyun-nls", { id: "voice-asr-aliyun-nls", apiKey: "project-app-key", updatedAt: "" });
+    secrets.store.set("default", { id: "default", apiKey: "llm-key", updatedAt: "" });
+    secrets.store.set("fish-audio", { id: "fish-audio", apiKey: "tts-key", updatedAt: "" });
+    await expect(createProductionVoiceSession({
+      settings: settings(),
+      platform: "desktop",
+      socketFactory: () => { throw new Error("socket must not open while configuring"); },
+      config: {
+        templateId: "voice-default-cn",
+        asrProfileId: "voice-asr-aliyun-nls-shiyinshi-v1",
+        asrEndpoint: "",
+        asrModel: "",
+        asrResourceId: "",
+        llmBaseUrl: "",
+        llmModel: "",
+        ttsEndpoint: "",
+        ttsModel: "",
+        ttsVoice: "",
+      },
+    })).rejects.toThrow("缺少 Access Token");
+  });
+
   it("selects ASR, LLM, and TTS independently and preserves legacy Doubao credentials", async () => {
     const nextSettings = settings();
     nextSettings.ai!.providers.push({

@@ -7,6 +7,7 @@ import type { AsrProviderProfile } from "./providerProfiles";
 export const VOICE_ASR_SECRET_IDS: Record<AsrProviderProfile["providerId"], string | undefined> = {
   doubao: "voice-asr-doubao",
   "aliyun-bailian": "voice-asr-aliyun",
+  "aliyun-nls": "voice-asr-aliyun-nls",
   "openai-compatible": undefined,
   custom: undefined,
   mock: undefined,
