@@ -17,7 +17,7 @@
 
 ## 安装包
 
-保持已有品牌、包名、签名、数据路径和各平台版本号；本轮未创建 GitHub Release，安装包不写入 Git。
+保持已有品牌、包名、签名、数据路径和各平台版本号；安装包不写入 Git。最初构建交接时仅保留本机产物，随后根据用户追加授权，通过 v0.2.5 GitHub Release 分发同一组已校验安装包。
 
 - Android：dev-dist/release/学习日志.apk；版本 0.2.3，versionCode 14；29,525,710 字节。SHA-256：798EAF64B9F6F6B1489B8A2DF3471EAA849FF3B0F060C5D6A7D4C06C5C3C390C。
 - Windows：release/desktop/学习日志 Setup 0.1.6.exe；版本 0.1.6；117,322,311 字节。SHA-256：7AE5B06D7257BB7735D0D7FED12F53C442E8F6F9A0814C3B0EA97A78EC8C0BFF。
@@ -26,6 +26,13 @@
 
 APK 与本轮 TTS 验收包校验值相同：后续仅文档收口，Gradle 复用已验证的相同代码产物；这不是遗漏 Web 构建或 Capacitor 同步。
 
-## 未扩大验收范围
+## 公开分发说明
+
+- 发布入口：[StudyJournal v0.2.5](https://github.com/a1234tuan/StudyJournal/releases/tag/v0.2.5)。仓库发布编号不改变上述平台内部版本。
+- 附件使用 ASCII 文件名：StudyJournal-android-0.2.3-build-20260921.apk、StudyJournal-windows-x64-0.1.6-build-20260921.exe，以及 SHA256SUMS.txt；重命名不改变二进制内容或 SHA-256。
+- 本次发布后续仅修改 README、更新日志与交接文档，不改变安装包对应的应用源码；应用修复提交为 feaccec，完整构建交接提交为 7109046。
+- README 对照 APP 内使用教程重新组织；不将新增文档描述当作功能实现或新一轮真机验收。
+
+## 验收限制
 
 三款 TTS 的真机成功限于授权的短句、键盘确认输入和真实 LLM -> TTS -> Android 播放。麦克风 ASR、蓝牙/来电/弱网、长会话、计费与免费额度、Windows 安装升级交互仍按各自门槛处理。详见 [TTS 真机记录](voice-recall-tts-device-validation-2026-09-21.md) 和 [语音发布检查表](voice-recall-release-checklist.md)。

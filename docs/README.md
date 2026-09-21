@@ -20,6 +20,8 @@
 
 ## 构建与交接
 
+[v0.2.5 Release](https://github.com/a1234tuan/StudyJournal/releases/tag/v0.2.5) 提供 Android APK、Windows x64 EXE 和 SHA256SUMS.txt；用户使用流程与教程插图见 [项目首页](../README.md)。发布编号不等于安装包内部版本号。
+
 [2026-09-21 维护构建交接](release-handoff-2026-09-21.md) 记录本次验证数量、APK/EXE 校验值、手机覆盖安装和未验收边界。
 
 验证命令见根目录 CONTRIBUTING.md。普通验证排除 live Provider 测试；已有密钥不等于授权额外消费。Android 使用 npm run android:build:release（自动构建并同步 Web），Windows 使用 npm run desktop:build；安装包和签名配置均不进入源码仓库。
