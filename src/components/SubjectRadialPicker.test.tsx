@@ -56,6 +56,24 @@ describe("SubjectRadialPicker", () => {
     expect(screen.queryByRole("button", { name: /已归档/ })).not.toBeInTheDocument();
   });
 
+  it("keeps a useful label instead of collapsing distant long subjects to one character", () => {
+    renderPicker(vi.fn(async () => undefined), [
+      subject("math", "数学", 0),
+      subject("physics", "物理", 1),
+      subject("algorithm", "数据结构与算法专题复习", 2),
+    ]);
+
+    expect(screen.getByRole("button", { name: "聚焦学科数据结构与算法专题复习" })).toHaveTextContent("数据结…");
+  });
+
+  it("keeps a creation error inside the stable heading area", async () => {
+    renderPicker(vi.fn(async () => { throw new Error("create failed"); }));
+    fireEvent.click(screen.getByRole("button", { name: "创建数学日志" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.closest(".subject-orbit-heading")).not.toBeNull();
+  });
+
   it("closes without creating and sends an empty state to subject management", () => {
     const openPicker = renderPicker();
     fireEvent.keyDown(document, { key: "Escape" });

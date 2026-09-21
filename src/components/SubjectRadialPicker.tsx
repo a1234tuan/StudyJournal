@@ -25,7 +25,7 @@ export const subjectOrbitIndexAfterDrag = (index: number, deltaX: number, length
 
 const shortLabel = (name: string, distance: number) => {
   const characters = Array.from(name);
-  const limit = distance >= 2 ? 1 : distance === 1 ? 4 : 6;
+  const limit = distance >= 2 ? 3 : distance === 1 ? 4 : 6;
   return characters.length > limit ? `${characters.slice(0, limit).join("")}…` : name;
 };
 
@@ -138,7 +138,9 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
             <div className="subject-orbit-heading">
               <p className="eyebrow">新建学习日志</p>
               <h2 id="subject-orbit-title" title={focusedSubject?.name}>{focusedSubject?.name}</h2>
-              <p>{activeSubjects.length > SLOT_COUNT ? `左右滑动查看 · ${focusedIndex + 1} / ${activeSubjects.length}` : "选择学科后才会创建"}</p>
+              {error
+                ? <p className="subject-orbit-error" role="alert">{error}</p>
+                : <p>{activeSubjects.length > SLOT_COUNT ? `左右滑动查看 · ${focusedIndex + 1} / ${activeSubjects.length}` : "选择学科后才会创建"}</p>}
             </div>
             <div
               className={`subject-orbit-track${dragStartRef.current === null ? " settled" : " dragging"}`}
@@ -190,14 +192,12 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
               })}
             </div>
             <div className="subject-orbit-controls">
-              <button type="button" className="icon-button" onClick={() => setFocusedIndex((current) => clampIndex(current - 1, activeSubjects.length))} disabled={busy || focusedIndex === 0} aria-label="上一个学科"><ChevronLeft size={18} /></button>
+              <button type="button" className="icon-button subject-orbit-step" onClick={() => setFocusedIndex((current) => clampIndex(current - 1, activeSubjects.length))} disabled={busy || focusedIndex === 0} aria-label="上一个学科"><ChevronLeft size={18} /></button>
               <button type="button" className="subject-orbit-all-button" onClick={() => setAllOpen(true)} disabled={busy}><List size={16} />全部学科</button>
-              <button type="button" className="icon-button" onClick={() => setFocusedIndex((current) => clampIndex(current + 1, activeSubjects.length))} disabled={busy || focusedIndex === activeSubjects.length - 1} aria-label="下一个学科"><ChevronRight size={18} /></button>
+              <button type="button" className="icon-button subject-orbit-step" onClick={() => setFocusedIndex((current) => clampIndex(current + 1, activeSubjects.length))} disabled={busy || focusedIndex === activeSubjects.length - 1} aria-label="下一个学科"><ChevronRight size={18} /></button>
             </div>
-            {error && <p className="subject-orbit-error" role="alert">{error}</p>}
           </>
         )}
-        <button type="button" className="subject-orbit-close" onClick={onClose} aria-label="关闭新建菜单" title="关闭新建菜单"><Plus size={25} /></button>
       </section>
     </MotionPresence>
   );
