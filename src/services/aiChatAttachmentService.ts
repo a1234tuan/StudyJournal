@@ -31,6 +31,8 @@ export const runLocalOcrForAiAttachment = async (
   attachment: AiChatAttachment,
   options: {
     onChanged?: (attachment: AiChatAttachment) => void;
+    /** Training answers can use OCR without leaving an attachment row behind. */
+    persist?: boolean;
   } = {},
 ): Promise<AiChatAttachment> => {
   let current = attachment;
@@ -40,7 +42,9 @@ export const runLocalOcrForAiAttachment = async (
       ...next,
       ocrUpdatedAt: nowISO(),
     };
-    const saved = await storage.saveAiAttachment?.(updated) ?? updated;
+    const saved = options.persist === false
+      ? updated
+      : await storage.saveAiAttachment?.(updated) ?? updated;
     current = saved;
     options.onChanged?.(saved);
     return saved;

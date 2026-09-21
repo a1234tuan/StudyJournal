@@ -1,4 +1,4 @@
-import type { AiProviderProfile } from "../../types";
+import type { AiChatAttachment, AiProviderProfile } from "../../types";
 import { sendChatCompletionDetailed } from "../../services/aiClientService";
 import {
   ANSWER_EVALUATION_PROMPT_VERSION,
@@ -35,13 +35,25 @@ const prompt = (instruction: string, input: unknown) => [
 ].join("\n");
 
 const request = async <T>(options: QuizExecutionGatewayOptions, instruction: string, input: unknown, maxTokens: number, stage: "turn-generation" | "question-quality" | "answer-evaluation", parse: (value: unknown) => T, signal?: AbortSignal): Promise<T> => {
+  const requestInput = input && typeof input === "object" ? input as Record<string, unknown> : undefined;
+  const imageInputMode = requestInput?.imageInputMode === "vision" || requestInput?.imageInputMode === "local-ocr"
+    ? requestInput.imageInputMode
+    : undefined;
+  const imageAttachments = Array.isArray(requestInput?.imageAttachments)
+    ? requestInput.imageAttachments.filter((item): item is AiChatAttachment => Boolean(item && typeof item === "object" && "data" in item))
+    : undefined;
+  const promptInput = requestInput
+    ? Object.fromEntries(Object.entries(requestInput).filter(([key]) => key !== "imageAttachments" && key !== "imageInputMode"))
+    : input;
   const result = await parseStructuredWithFormatRepair({
-    prompt: prompt(instruction, input),
+    prompt: prompt(instruction, promptInput),
     call: (attemptPrompt) => sendChatCompletionDetailed({
       provider: options.provider,
       apiKey: options.apiKey,
       history: [],
       prompt: attemptPrompt,
+      imageInputMode,
+      imageAttachments,
       request: {
         structuredOutput: true,
         thinkingMode: "disabled",

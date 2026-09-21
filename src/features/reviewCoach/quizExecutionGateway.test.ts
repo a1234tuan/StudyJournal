@@ -77,6 +77,33 @@ describe("quiz execution gateway", () => {
     expect(request.prompt).toContain("必须同时对照 decisionBlockContent 判断");
     expect(request.request?.maxTokens).toBe(1400);
   });
+
+  it("keeps answer images out of the JSON prompt and forwards them as multimodal input", async () => {
+    vi.mocked(sendChatCompletionDetailed).mockResolvedValue({ content: JSON.stringify({ status: "ok", assessment: "correct", matchedCriteria: [], missingCriteria: [], rationale: "看图判断正确" }) });
+    const gateway = createQuizExecutionGateway({ provider, apiKey: "secret" });
+    const image = {
+      id: "answer-image",
+      sessionId: "review-session",
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:00:00.000Z",
+      fileName: "handwritten.png",
+      mimeType: "image/png",
+      size: 3,
+      data: new Blob(["png"], { type: "image/png" }),
+      ocrStatus: "idle" as const,
+    };
+    await gateway.evaluateAnswer({
+      decisionBlockContent: "材料",
+      answerText: "（图片作答，见本轮附件）",
+      answerCriteria: [],
+      imageInputMode: "vision",
+      imageAttachments: [image],
+    });
+    const request = vi.mocked(sendChatCompletionDetailed).mock.calls[0][0];
+    expect(request.prompt).not.toContain("handwritten.png");
+    expect(request.imageInputMode).toBe("vision");
+    expect(request.imageAttachments).toEqual([image]);
+  });
 });
 
 it("uses each role's own timeout and forwards cancellation", async () => {

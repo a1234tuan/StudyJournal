@@ -4,11 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordBlock } from "../../types";
 import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT, type AdaptiveReviewTask, type SessionBlueprint } from "./domain";
 import type { AnalysisPlanningBlock } from "./analysisPlanner";
-import { formatDecisionBlockPreview, ReviewCoachWorkbench } from "./ReviewCoachWorkbench";
+import { ReviewCoachWorkbench } from "./ReviewCoachWorkbench";
 import * as traceModule from "../../hooks/useInteractionTrace";
 
 const stamp = "2026-09-07T08:00:00.000Z";
-const record: RecordBlock = { id: "record-1", type: "record", date: "2026-09-07", order: 0, subject: "数据结构", title: "BFS", contentHtml: "<p>BFS</p>", assets: [], formulas: [], mistakeRefs: [], tags: [], createdAt: stamp, updatedAt: stamp };
+const record: RecordBlock = {
+  id: "record-1",
+  type: "record",
+  date: "2026-09-07",
+  order: 0,
+  subject: "数据结构",
+  title: "BFS",
+  contentHtml: '<record-decision-block data-decision-block-id="block-1" data-content-version="1"><p>BFS queue</p></record-decision-block>',
+  assets: [],
+  formulas: [],
+  mistakeRefs: [],
+  tags: [],
+  createdAt: stamp,
+  updatedAt: stamp,
+};
 const planningBlock: AnalysisPlanningBlock = {
   decisionBlockId: "block-1", recordId: record.id, contentVersion: 1, recordTitle: record.title, subject: record.subject,
   contextMarkdown: "BFS queue", excerptHash: "hash-1", missingOcrAssetIds: [], estimatedTokens: 800,
@@ -72,11 +86,30 @@ describe("ReviewCoachWorkbench", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("分析完成，已生成复习任务。"));
   });
 
-  it("keeps inline and block formulas visible even after the prose cutoff", () => {
-    const longProse = "这是很长的复习重点正文".repeat(20);
+  it("renders formulas and rich structure in the analysis preview instead of exposing raw LaTeX", async () => {
+    const richRecord: RecordBlock = {
+      ...record,
+      contentHtml: [
+        '<record-decision-block data-decision-block-id="block-1" data-content-version="1">',
+        '<p>能量 <record-inline-math data-formula-id="inline-1" data-latex="E = mc^2"></record-inline-math></p>',
+        '<record-collapse data-title="推导步骤" data-summary="展开查看" data-default-open="true">',
+        '<record-formula data-formula-id="block-formula-1" data-title="积分" data-latex="\\int_0^1 x^2 dx"></record-formula>',
+        `<record-structure-diagram data-json='${JSON.stringify({
+          title: "知识结构",
+          orientation: "horizontal",
+          chain: [{ id: "node-1", title: "换元", body: "令 t=1/x", note: "", pitfall: "", branches: [] }],
+        })}'></record-structure-diagram>`,
+        "</record-collapse>",
+        "</record-decision-block>",
+      ].join(""),
+    };
+    const { container } = render(<ReviewCoachWorkbench {...baseProps} records={[richRecord]} />);
 
-    expect(formatDecisionBlockPreview(`${longProse} $E = mc^2$`)).toContain("公式：E = mc^2");
-    expect(formatDecisionBlockPreview(`${longProse}\n\n$$\\int_0^1 x^2 dx$$`)).toContain("公式：\\int_0^1 x^2 dx");
+    await waitFor(() => expect(container.querySelectorAll(".review-coach-block-preview .katex").length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(container.querySelector(".review-coach-block-preview .structure-flow-view")).toBeInTheDocument());
+    expect(screen.getByText("推导步骤")).toBeInTheDocument();
+    expect(screen.getByText("知识结构")).toBeInTheDocument();
+    expect(container.querySelectorAll(".review-coach-block-preview .katex-display")).toHaveLength(1);
   });
 
   it("shows the active provider and the structured-output requirement", () => {

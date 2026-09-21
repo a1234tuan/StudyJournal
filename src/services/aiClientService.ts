@@ -579,18 +579,21 @@ export const sendChatCompletionDetailed = async (options: {
   history: AiChatMessage[];
   prompt: string;
   memorySummary?: string;
+  imageInputMode?: "vision" | "local-ocr" | "disabled";
+  imageAttachments?: AiChatAttachment[];
   budget?: AiRequestBudget;
   request?: AiCompletionRequestOptions & { maxTokens?: number };
 }): Promise<AiCompletionResult> => {
-  const { provider, apiKey, attachment, history, prompt, memorySummary } = options;
+  const { provider, apiKey, attachment, history, prompt, memorySummary, imageInputMode, imageAttachments } = options;
   if (!provider) throw new Error("请先在“更多 → AI 设置”里配置 AI 供应商。");
   if (!apiKey?.trim()) throw new Error(`请先在“更多 → AI 设置”里填写 ${provider.providerName} 的 API Key。`);
   if (!provider.model.trim()) throw new Error(`请先填写 ${provider.providerName} 的模型名称。`);
   const budget = options.budget ?? calculateAiRequestBudget({ provider, history, prompt, memorySummary, attachment });
+  const userContent = await buildUserPromptWithImages({ prompt, imageInputMode, imageAttachments });
   return requestOpenAiChatCompletionDetailed({
     provider,
     apiKey: apiKey.trim(),
-    messages: buildAiMessages(attachment, history, prompt, provider.memoryTurns ?? DEFAULT_AI_MEMORY_TURNS, memorySummary, undefined, options.request?.systemPrompt),
+    messages: buildAiMessages(attachment, history, prompt, provider.memoryTurns ?? DEFAULT_AI_MEMORY_TURNS, memorySummary, userContent, options.request?.systemPrompt),
     maxTokens: options.request?.maxTokens ?? budget.outputTokens,
     ...options.request,
   });

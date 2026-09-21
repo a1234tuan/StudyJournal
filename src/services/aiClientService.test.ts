@@ -415,6 +415,29 @@ describe("buildAiMessages", () => {
     ]);
   });
 
+  it("puts direct answer images into the actual structured request body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendChatCompletionDetailed({
+      provider: { id: "provider", providerName: "测试", baseUrl: "https://example.com/v1", model: "vision-model", temperature: 0, maxTokens: 8000 },
+      apiKey: "test",
+      history: [],
+      prompt: "请批改图片",
+      imageInputMode: "vision",
+      imageAttachments: [imageAttachment()],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const userMessage = body.messages.at(-1);
+    expect(userMessage.content).toEqual([
+      { type: "text", text: "请批改图片" },
+      expect.objectContaining({ type: "image_url" }),
+    ]);
+  });
+
   it("builds Markdown OCR content for local OCR image mode", async () => {
     const content = await buildUserPromptWithImages({
       prompt: "看看哪里错了",

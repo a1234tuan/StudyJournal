@@ -1,9 +1,11 @@
-import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, Keyboard, Lightbulb, LoaderCircle, LogOut, Mic, Pause, Play, RotateCcw, Send } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Clock3, Flag, ImagePlus, Keyboard, Lightbulb, LoaderCircle, LogOut, Mic, Pause, Play, RotateCcw, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AiMarkdown } from "../../components/AiMarkdown";
-import type { RecordBlock } from "../../types";
+import type { AiChatAttachment, RecordBlock } from "../../types";
 import { formatActionableError } from "../../lib/uiError";
+import { newId } from "../../lib/entity";
+import { runLocalOcrForAiAttachment } from "../../services/aiChatAttachmentService";
 import type { VoiceCaptureAdapter } from "../voiceRecall/contracts";
 import { canUseNativeVoiceCapture, NativeVoiceCaptureAdapter } from "../voiceRecall/nativeVoiceCapture";
 import { WebVoiceCaptureAdapter } from "../voiceRecall/webVoiceCapture";
@@ -16,6 +18,7 @@ import {
   interventionOptionsFor,
 } from "./interventionPolicy";
 import type { InterventionPath } from "./domain";
+import { DecisionBlockRichPreview } from "./DecisionBlockRichPreview";
 
 interface AdaptiveReviewPageProps {
   taskId: string;
@@ -25,7 +28,7 @@ interface AdaptiveReviewPageProps {
   onBack: () => void;
   onGenerateTurn: (taskId: string, signal?: AbortSignal) => Promise<unknown>;
   onRequestHint: (turnId: string, level: number) => Promise<unknown>;
-  onSubmitAnswer: (turnId: string, answer: string, signal?: AbortSignal) => Promise<unknown>;
+  onSubmitAnswer: (turnId: string, answer: string, signal?: AbortSignal, options?: { imageInputMode: "vision" | "local-ocr"; imageAttachments: AiChatAttachment[] }) => Promise<unknown>;
   onSkipTurn: (turnId: string) => Promise<unknown>;
   onReportInvalid: (turnId: string, reason: string) => Promise<unknown>;
   /** v1 only. v2 never asks the learner to declare an outcome. */
@@ -51,11 +54,26 @@ interface AdaptiveReviewPageProps {
 }
 
 const assessmentLabel = { correct: "回答正确", partial: "部分正确", incorrect: "仍有错误", unreliable: "无法可靠判断" } as const;
+const MAX_ANSWER_IMAGES = 4;
+const MAX_ANSWER_IMAGE_BYTES = 12 * 1024 * 1024;
 
-const extractSourceText = (record: RecordBlock | undefined, decisionBlockId: string): string => {
-  if (!record || typeof DOMParser === "undefined") return "来源记录不可用";
-  const document = new DOMParser().parseFromString(record.contentHtml, "text/html");
-  return document.querySelector(`record-decision-block[data-decision-block-id="${CSS.escape(decisionBlockId)}"]`)?.textContent?.replace(/\s+/g, " ").trim() || "来源片段不可用";
+const AnswerImagePreview = ({ image, onRemove }: { image: AiChatAttachment; onRemove?: () => void }) => {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    if (typeof URL.createObjectURL !== "function") return undefined;
+    const objectUrl = URL.createObjectURL(image.data);
+    setUrl(objectUrl);
+    return () => {
+      if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(objectUrl);
+    };
+  }, [image.data]);
+  return (
+    <figure className="adaptive-answer-image">
+      {url && <img src={url} alt={image.fileName} />}
+      <figcaption>{image.fileName}{image.ocrStatus === "running" || image.ocrStatus === "queued" ? " · OCR 中" : image.ocrStatus === "failed" ? " · OCR 失败" : ""}</figcaption>
+      {onRemove && <button type="button" onClick={onRemove} aria-label={`移除图片 ${image.fileName}`} title="移除图片"><X size={14} /></button>}
+    </figure>
+  );
 };
 
 export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBack, onGenerateTurn, onRequestHint, onSubmitAnswer, onSkipTurn, onReportInvalid, onFinish, onFinishVerification, onCompleteLoop, onCompleteV2Verification, onSelectIntervention, onDeferAttempt, onDefer, onAbandon }: AdaptiveReviewPageProps) => {
@@ -66,6 +84,8 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
   const record = task ? records.find((item) => item.id === task.recordId) : undefined;
   const delayedVerification = task ? snapshot.delayedVerifications.find((item) => item.taskId === task.id) : undefined;
   const [answer, setAnswer] = useState("");
+  const [answerImages, setAnswerImages] = useState<AiChatAttachment[]>([]);
+  const [answerImageInputMode, setAnswerImageInputMode] = useState<"vision" | "local-ocr">("vision");
   const [answerInputMode, setAnswerInputMode] = useState<"text" | "voice">("text");
   const [voiceTranscriptConfirmed, setVoiceTranscriptConfirmed] = useState(false);
   const [capturingVoice, setCapturingVoice] = useState(false);
@@ -101,9 +121,57 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
   useEffect(() => () => { void stopVoiceCapture(); }, []);
   useEffect(() => {
     setAnswer("");
+    setAnswerImages([]);
+    setAnswerImageInputMode("vision");
     setVoiceTranscriptConfirmed(false);
     void stopVoiceCapture();
   }, [currentTurn?.id]);
+
+  const addAnswerImages = (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? []);
+    if (files.length === 0) return;
+    const available = MAX_ANSWER_IMAGES - answerImages.length;
+    const accepted: AiChatAttachment[] = [];
+    let rejection = "";
+    for (const file of files.slice(0, available)) {
+      if (!file.type.startsWith("image/")) {
+        rejection = "只能添加图片文件。";
+        continue;
+      }
+      if (file.size > MAX_ANSWER_IMAGE_BYTES) {
+        rejection = `${file.name} 超过 12 MB，未添加。`;
+        continue;
+      }
+      accepted.push({
+        id: `review-answer-image:${newId()}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sessionId: `review-coach:${taskId}`,
+        fileName: file.name,
+        mimeType: file.type || "image/jpeg",
+        size: file.size,
+        data: file,
+        ocrStatus: "idle",
+      });
+    }
+    if (files.length > available) rejection = `每轮最多添加 ${MAX_ANSWER_IMAGES} 张图片。`;
+    if (accepted.length > 0) setAnswerImages((current) => [...current, ...accepted]);
+    if (rejection) setMessage(rejection);
+  };
+
+  const prepareAnswerImages = async (): Promise<AiChatAttachment[]> => {
+    if (answerImages.length === 0) return [];
+    if (answerImageInputMode === "vision") return answerImages;
+    const prepared: AiChatAttachment[] = [];
+    for (const image of answerImages) {
+      const updated = await runLocalOcrForAiAttachment(image, {
+        persist: false,
+        onChanged: (next) => setAnswerImages((current) => current.map((item) => item.id === next.id ? next : item)),
+      });
+      prepared.push(updated);
+    }
+    return prepared;
+  };
 
   const startVoiceCapture = () => {
     if (capturingVoice || busy) return;
@@ -327,6 +395,10 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
                 <button type="button" className={answerInputMode === "voice" ? "active" : ""} aria-pressed={answerInputMode === "voice"} onClick={() => { setAnswerInputMode("voice"); setVoiceTranscriptConfirmed(false); }}><Mic size={16} />语音输入</button>
               </div>
               {answerInputMode === "voice" && <p className="adaptive-voice-boundary">麦克风仅采集本机 PCM。真实 ASR 尚未验收，转写必须由你校对并明确确认。</p>}
+              <div className="adaptive-answer-editor-label">
+                <span>你的作答</span>
+                <small>可直接输入 Markdown；图片会与文字一起发送给 AI</small>
+              </div>
               <textarea
                 value={answer}
                 onChange={(event) => { setAnswer(event.target.value); setVoiceTranscriptConfirmed(false); }}
@@ -334,12 +406,56 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
                 aria-label={answerInputMode === "voice" ? "语音回答转写" : "你的回答"}
                 rows={6}
               />
+              <div className="adaptive-answer-attachments" role="group" aria-label="本轮图片附件">
+                <div className="adaptive-answer-attachment-toolbar">
+                  <label htmlFor={`adaptive-answer-image-input-${taskId}`} className="secondary-button adaptive-answer-attach-button">
+                    <ImagePlus size={16} />添加图片
+                  </label>
+                  <input
+                    id={`adaptive-answer-image-input-${taskId}`}
+                    className="adaptive-answer-file-input"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => {
+                      addAnswerImages(event.target.files);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  {answerImages.length > 0 && <div className="adaptive-answer-image-mode" role="group" aria-label="图片发送方式">
+                    <button type="button" className={answerImageInputMode === "vision" ? "active" : ""} aria-pressed={answerImageInputMode === "vision"} onClick={() => setAnswerImageInputMode("vision")}>
+                      直发 AI
+                    </button>
+                    <button type="button" className={answerImageInputMode === "local-ocr" ? "active" : ""} aria-pressed={answerImageInputMode === "local-ocr"} onClick={() => setAnswerImageInputMode("local-ocr")}>
+                      本地 OCR
+                    </button>
+                  </div>}
+                  {answerImages.length > 0 && <small>{answerImages.length}/{MAX_ANSWER_IMAGES} 张</small>}
+                </div>
+                {answerImages.length > 0 && <div className="adaptive-answer-image-list">
+                  {answerImages.map((image) => <AnswerImagePreview key={image.id} image={image} onRemove={() => setAnswerImages((current) => current.filter((item) => item.id !== image.id))} />)}
+                </div>}
+                {answerImages.length > 0 && <p className="adaptive-answer-attachment-note">
+                  {answerImageInputMode === "vision" ? "当前图片会作为视觉输入发送；若模型不支持图片，请切换为本地 OCR。" : "发送前会在本机识别图片文字，识别结果随本轮文字发送；图片不会写入学习记录。"}
+                </p>}
+              </div>
               {answerInputMode === "voice" && <div className="adaptive-voice-actions">
                 <button type="button" className={capturingVoice ? "active" : ""} disabled={Boolean(busy)} onClick={() => void (capturingVoice ? finishVoiceCapture() : startVoiceCapture())}>{capturingVoice ? <Pause size={16} /> : <Mic size={16} />}{capturingVoice ? "结束录音" : "开始录音"}</button>
                 <button type="button" disabled={!answer.trim() || capturingVoice || Boolean(busy)} aria-pressed={voiceTranscriptConfirmed} className={voiceTranscriptConfirmed ? "active" : ""} onClick={() => { setVoiceTranscriptConfirmed(true); setMessage("转写已确认，可以提交本题回答。"); }}><Check size={16} />{voiceTranscriptConfirmed ? "转写已确认" : "确认转写"}</button>
               </div>}
               <div className="adaptive-review-primary-actions">
-                <button type="button" className="primary-button" disabled={!answer.trim() || Boolean(busy) || capturingVoice || (answerInputMode === "voice" && !voiceTranscriptConfirmed)} onClick={() => void run("answer", () => onSubmitAnswer(currentTurn.id, answer.trim(), requestAbortRef.current.signal))}>{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提交回答</button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={(!answer.trim() && answerImages.length === 0) || Boolean(busy) || capturingVoice || (answerInputMode === "voice" && !voiceTranscriptConfirmed)}
+                  onClick={() => void run("answer", async () => {
+                    const preparedImages = await prepareAnswerImages();
+                    if (preparedImages.length > 0) {
+                      return onSubmitAnswer(currentTurn.id, answer.trim(), requestAbortRef.current.signal, { imageInputMode: answerImageInputMode, imageAttachments: preparedImages });
+                    }
+                    return onSubmitAnswer(currentTurn.id, answer.trim(), requestAbortRef.current.signal);
+                  })}
+                >{busy === "answer" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}{busy === "answer" && answerImageInputMode === "local-ocr" ? "识别并提交" : "提交回答"}</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => void run("skip", () => onSkipTurn(currentTurn.id))}>跳过本题</button>
                 <button type="button" disabled={Boolean(busy)} onClick={() => setShowInvalid(true)}><Flag size={16} />题目有问题</button>
               </div>
@@ -349,8 +465,23 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
               <strong>{assessmentLabel[currentTurn.assessment!]}</strong>
               <div className="ai-markdown adaptive-review-markdown"><AiMarkdown content={currentTurn.assessmentRationale ?? ""} /></div>
               <div><small>你的回答</small><p>{currentTurn.answerText}</p></div>
+              {answerImages.length > 0 && <div className="adaptive-review-submitted-images">
+                <small>本轮图片作答</small>
+                <div className="adaptive-answer-image-list">
+                  {answerImages.map((image) => <AnswerImagePreview key={image.id} image={image} />)}
+                </div>
+              </div>}
               <div><small>答案依据</small><ul>{currentTurn.answerCriteria.map((item) => <li key={item}><div className="ai-markdown adaptive-review-markdown"><AiMarkdown content={item} /></div></li>)}</ul></div>
-              <div className="adaptive-review-source"><small>来源片段 · {record.title}</small><p>{extractSourceText(record, task.decisionBlockId)}</p></div>
+              <div className="adaptive-review-source">
+                <small>来源片段 · {record.title}</small>
+                <DecisionBlockRichPreview
+                  record={record}
+                  decisionBlockId={task.decisionBlockId}
+                  referenceRecords={records}
+                  className="adaptive-review-source-content"
+                  ariaLabel={`${record.title} 的来源片段`}
+                />
+              </div>
               {isClosedLoopV2 && !delayedVerification && !v2LoopClosed && needsInterventionChoice && (
                 // The learner says which action they need next. They are not
                 // asked what went wrong, why, or whether they have mastered it.

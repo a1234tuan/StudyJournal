@@ -4,6 +4,7 @@ import { ActionableError } from "../lib/uiError";
 
 import type {
   AppSettings,
+  AiChatAttachment,
   Asset,
   AutoBackupSettings,
   Block,
@@ -700,7 +701,12 @@ export const useAppData = () => {
     return result;
   }, [refresh]);
 
-  const submitAdaptiveQuizAnswer = useCallback(async (turnId: string, answerText: string, signal?: AbortSignal) => {
+  const submitAdaptiveQuizAnswer = useCallback(async (
+    turnId: string,
+    answerText: string,
+    signal?: AbortSignal,
+    options?: { imageInputMode: "vision" | "local-ocr"; imageAttachments: AiChatAttachment[] },
+  ) => {
     const turn = reviewCoachSnapshot.adaptiveQuizTurns.find((item) => item.id === turnId);
     const task = turn ? reviewCoachSnapshot.adaptiveReviewTasks.find((item) => item.id === turn.taskId) : undefined;
     const record = task ? recordBlocks.find((item) => item.id === task.recordId) : undefined;
@@ -711,7 +717,19 @@ export const useAppData = () => {
     // rather than letting the provider fail with an opaque context-length error.
     assertTurnContextBudget(provider, context);
     try {
-      return await orchestrator.submitQuizAnswer({ turnId, answerText, decisionBlockContent: context, provider: provider.providerName, model: provider.model, promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion, policyVersion: defaultQuizExecutionMetadata.policyVersion, operationId: newId(), signal });
+      return await orchestrator.submitQuizAnswer({
+        turnId,
+        answerText,
+        decisionBlockContent: context,
+        provider: provider.providerName,
+        model: provider.model,
+        promptVersion: defaultQuizExecutionMetadata.answerEvaluationPromptVersion,
+        policyVersion: defaultQuizExecutionMetadata.policyVersion,
+        operationId: newId(),
+        signal,
+        imageInputMode: options?.imageInputMode,
+        imageAttachments: options?.imageAttachments,
+      });
     } finally {
       await refresh();
       await markAutoBackupDirty("review-coach-quiz-answer");

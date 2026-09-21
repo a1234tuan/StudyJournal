@@ -59,6 +59,7 @@ import {
   type InterventionChoiceResolution,
 } from "./interventionPolicy";
 import { checkVariantEligibility, normalizeQuestion, targetFormStatusFor } from "./variantPolicy";
+import type { AiChatAttachment } from "../../types";
 
 export interface ReviewCoachAiGateway {
   interpretFeedback(input: unknown, signal?: AbortSignal): Promise<FeedbackInterpretationAiCallResult>;
@@ -204,6 +205,8 @@ export interface SubmitQuizAnswerInput {
   policyVersion: string;
   operationId: string;
   signal?: AbortSignal;
+  imageInputMode?: "vision" | "local-ocr";
+  imageAttachments?: AiChatAttachment[];
 }
 
 const priorityRank: Record<AdaptiveReviewTask["priorityTier"], number> = {
@@ -1029,14 +1032,28 @@ export class ReviewCoachOrchestrator {
 
   async submitQuizAnswer(input: SubmitQuizAnswerInput): Promise<AdaptiveQuizTurn> {
     if (!this.dependencies.aiGateway) throw new Error("Review coach AI gateway is not configured.");
-    const answerText = input.answerText.trim();
-    if (!answerText) throw new Error("请先填写回答。");
+    const typedAnswer = input.answerText.trim();
+    const hasImageAnswer = (input.imageAttachments?.length ?? 0) > 0;
+    if (!typedAnswer && !hasImageAnswer) throw new Error("请先填写文字回答或添加图片。");
+    // Keep the formal turn non-empty when the learner answers entirely with a
+    // handwritten/photo attachment. The actual image is sent only to the AI
+    // evaluator and never persisted in the learning fact.
+    const answerText = typedAnswer || "（图片作答，见本轮附件）";
     const snapshot = await this.dependencies.repository.getFormalSnapshot();
     const turn = snapshot.adaptiveQuizTurns.find((item) => item.id === input.turnId && item.status === "displayed");
     const task = turn ? snapshot.adaptiveReviewTasks.find((item) => item.id === turn.taskId && item.status === "in-progress") : undefined;
     const blueprint = task ? snapshot.sessionBlueprints.find((item) => item.id === task.blueprintId && item.status === "accepted") : undefined;
     if (!turn || !task || !blueprint) throw new Error("当前题目已经失效或不再进行中。");
-    const evaluation = await this.dependencies.aiGateway.evaluateAnswer({ blueprint, decisionBlockContent: input.decisionBlockContent, question: turn.question, answerCriteria: turn.answerCriteria, answerText, hintsUsed: turn.hintsUsed }, input.signal);
+    const evaluation = await this.dependencies.aiGateway.evaluateAnswer({
+      blueprint,
+      decisionBlockContent: input.decisionBlockContent,
+      question: turn.question,
+      answerCriteria: turn.answerCriteria,
+      answerText,
+      hintsUsed: turn.hintsUsed,
+      imageInputMode: input.imageInputMode,
+      imageAttachments: input.imageAttachments,
+    }, input.signal);
     input.signal?.throwIfAborted();
     if (evaluation.status === "insufficient-context") throw new Error(`无法可靠判断回答：${evaluation.missingInformation.join("、")}`);
     const criteria = new Set(turn.answerCriteria);

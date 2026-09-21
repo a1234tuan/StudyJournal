@@ -9,6 +9,7 @@ import { rankWaitingTasks } from "./orchestrator";
 import { formatActionableError } from "../../lib/uiError";
 import { useInteractionTrace } from "../../hooks/useInteractionTrace";
 import { structuredOutputModeForProvider } from "../../lib/aiProviders";
+import { DecisionBlockRichPreview } from "./DecisionBlockRichPreview";
 
 interface ReviewCoachWorkbenchProps {
   planningBlocks: readonly AnalysisPlanningBlock[];
@@ -48,21 +49,6 @@ const taskStatusLabel: Record<AdaptiveReviewTask["status"], string> = {
   abandoned: "已放弃",
   stale: "内容已更新",
   deleted: "已删除",
-};
-
-export const formatDecisionBlockPreview = (markdown: string, maxLength = 150): string => {
-  const formulas: string[] = [];
-  const prose = markdown.replace(/\$\$([\s\S]*?)\$\$|\$([^$\n]+?)\$/g, (_match, blockFormula: string | undefined, inlineFormula: string | undefined) => {
-    const formula = (blockFormula ?? inlineFormula ?? "").replace(/\s+/g, " ").trim();
-    if (formula) formulas.push(formula);
-    return " ";
-  }).replace(/\s+/g, " ").trim();
-  const formulaLabel = formulas[0] ? `公式：${formulas[0]}` : "";
-  if (!formulaLabel) return prose.slice(0, maxLength);
-  const separator = prose ? " · " : "";
-  const proseBudget = Math.max(0, maxLength - formulaLabel.length - separator.length);
-  const shortenedProse = prose.slice(0, proseBudget).trim();
-  return `${shortenedProse}${shortenedProse ? separator : ""}${formulaLabel}`;
 };
 
 export const ReviewCoachWorkbench = ({
@@ -165,11 +151,17 @@ export const ReviewCoachWorkbench = ({
           <div className="review-coach-analysis-list">
             {planningBlocks.map((block) => (
               <div key={block.decisionBlockId} className="review-coach-analysis-item">
-                <span className="review-coach-analysis-copy">
+                <div className="review-coach-analysis-copy">
                   <span><strong>{block.recordTitle}</strong></span>
-                  <span className="review-coach-block-preview">{formatDecisionBlockPreview(block.contextMarkdown)}</span>
+                  <DecisionBlockRichPreview
+                    record={recordById.get(block.recordId)}
+                    decisionBlockId={block.decisionBlockId}
+                    referenceRecords={records}
+                    className="review-coach-block-preview"
+                    ariaLabel={`${block.recordTitle} 的复习重点预览`}
+                  />
                   <span className="review-coach-feedback-quote">“{block.feedback.at(-1)!.comment}”</span>
-                </span>
+                </div>
               </div>
             ))}
           </div>

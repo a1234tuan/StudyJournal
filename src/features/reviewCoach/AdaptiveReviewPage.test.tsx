@@ -33,6 +33,44 @@ describe("AdaptiveReviewPage", () => {
     expect(props.onSubmitAnswer).toHaveBeenCalledWith(coachTestTurn.id, "修改后必须重新确认", expect.any(AbortSignal));
   });
 
+  it("sends selected answer images with the typed answer and keeps direct vision as the default", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    const image = new File(["handwritten"], "answer.png", { type: "image/png" });
+    const imageInput = screen.getByRole("group", { name: "本轮图片附件" }).querySelector('input[type="file"]');
+    fireEvent.change(imageInput!, { target: { files: [image] } });
+    expect(screen.getByRole("button", { name: "直发 AI" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "请结合图片批改" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+
+    await waitFor(() => expect(props.onSubmitAnswer).toHaveBeenCalledTimes(1));
+    expect(props.onSubmitAnswer).toHaveBeenCalledWith(
+      coachTestTurn.id,
+      "请结合图片批改",
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        imageInputMode: "vision",
+        imageAttachments: [expect.objectContaining({ fileName: "answer.png", mimeType: "image/png" })],
+      }),
+    );
+  });
+
+  it("allows an image-only answer and switches the attachment path to local OCR", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", answerText: undefined, answeredAt: undefined, assessment: undefined, assessmentRationale: undefined };
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+
+    const image = new File(["drawing"], "diagram.jpg", { type: "image/jpeg" });
+    const imageInput = screen.getByRole("group", { name: "本轮图片附件" }).querySelector('input[type="file"]');
+    fireEvent.change(imageInput!, { target: { files: [image] } });
+    fireEvent.click(screen.getByRole("button", { name: "本地 OCR" }));
+    expect(screen.getByRole("button", { name: "提交回答" })).toBeEnabled();
+  });
+
   it("hides answer criteria and source until the user submits", () => {
     const snapshot = completeCoachTestSnapshot();
     snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
@@ -81,6 +119,28 @@ describe("AdaptiveReviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "已掌握" }));
     expect(screen.getByRole("button", { name: "确认已掌握" })).toBeInTheDocument();
     expect(props.onFinish).not.toHaveBeenCalled();
+  });
+
+  it("renders formulas and structure from the canonical source fragment after submission", async () => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, assessment: "incorrect", assessmentRationale: "Wrong order", answerText: "After dequeue" };
+    const richRecord = {
+      ...record,
+      contentHtml: [
+        `<record-decision-block data-decision-block-id="${coachTestBlock.id}" data-content-version="1">`,
+        '<p>令 <record-inline-math data-formula-id="source-inline" data-latex="t=1/x"></record-inline-math></p>',
+        '<record-collapse data-title="原题解析" data-summary="含公式" data-default-open="true">',
+        '<record-formula data-formula-id="source-block" data-title="原极限" data-latex="\\lim_{x\\to0^+} e^{1/x}"></record-formula>',
+        "</record-collapse>",
+        "</record-decision-block>",
+      ].join(""),
+    };
+    const { container } = render(<AdaptiveReviewPage {...props} records={[richRecord]} snapshot={snapshot} />);
+
+    await waitFor(() => expect(container.querySelectorAll(".adaptive-review-source .katex").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText("原题解析")).toBeInTheDocument();
+    expect(container.querySelectorAll(".adaptive-review-source .katex-display")).toHaveLength(1);
   });
 
   it("hides completion criteria before a delayed verification answer", () => {

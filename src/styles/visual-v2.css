@@ -470,6 +470,20 @@ body {
 .adaptive-review-inline-dialog textarea { border-color: var(--color-border); background: var(--color-surface); line-height: 1.7; }
 .adaptive-review-result > strong { color: var(--color-primary-strong); }
 .adaptive-review-hint { border-left-color: var(--color-accent); background: var(--color-accent-soft); }
+.adaptive-review-header { align-items: start; padding-block: 4px 18px; }
+.adaptive-review-header > span { align-self: start; min-width: 68px; padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border)); border-radius: 999px; background: var(--color-primary-soft); color: var(--color-primary-strong); font-size: 0.76rem; text-align: center; }
+.adaptive-review-objective { padding-block: 18px; background: color-mix(in srgb, var(--color-primary-soft) 36%, transparent); }
+.adaptive-review-turn { padding: 20px; border: 1px solid var(--color-border); border-radius: var(--radius-page); background: var(--color-surface); box-shadow: var(--shadow-soft); }
+.adaptive-review-turn-meta { align-items: center; }
+.adaptive-review-turn-meta > span { color: var(--color-text); font-size: 0.78rem; font-weight: 700; }
+.adaptive-review-turn-meta > small { padding: 4px 8px; border-radius: 999px; background: var(--color-surface-muted); font-size: 0.72rem; }
+.adaptive-review-question { margin: 20px 0 24px; padding: 18px 20px; border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); border-radius: var(--radius-control); background: color-mix(in srgb, var(--color-surface-muted) 54%, var(--color-surface)); }
+.adaptive-review-primary-actions { align-items: center; }
+.adaptive-review-primary-actions > button { min-height: 42px; }
+.adaptive-review-primary-actions .primary-button { flex: 1 1 220px; }
+.adaptive-review-secondary-actions { margin-top: 28px; }
+.adaptive-answer-attachment-toolbar { padding-top: 2px; }
+.adaptive-answer-image { background: var(--color-surface); }
 
 @media (max-width: 720px) {
   .review-direct-edit { min-width: 42px; padding-inline: 9px; font-size: 0; }
@@ -485,6 +499,8 @@ body {
   .adaptive-review-turn,
   .adaptive-review-finish,
   .adaptive-review-inline-dialog { padding-inline: 2px; }
+  .adaptive-review-turn { padding: 16px; }
+  .adaptive-review-question { padding: 15px; }
 }
 
 /* Stage 5: remaining library, tools, settings and AI surfaces. */
