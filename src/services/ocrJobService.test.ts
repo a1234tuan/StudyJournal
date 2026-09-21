@@ -26,6 +26,14 @@ vi.mock("./ocrService", () => ({
 }));
 
 describe("ocrJobService", () => {
+  it("does not automatically re-recognize an accepted synced result", async () => {
+    const { enqueueAutoOcrForRecord } = await import("./ocrJobService");
+    const { runPaddleOcr } = await import("./ocrService");
+    assetStore.set("a1", { ...assetStore.get("a1")!, ocrText: "synced result", ocrStatus: "idle" });
+    await enqueueAutoOcrForRecord({ assets: [{ id: "a1", kind: "image", title: "image" }] } as RecordBlock);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runPaddleOcr).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     assetStore.clear();
     assetStore.set("a1", {

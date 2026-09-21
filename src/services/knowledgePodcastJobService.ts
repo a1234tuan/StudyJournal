@@ -191,8 +191,7 @@ export const syncNativeKnowledgePodcastTtsJobs = async (): Promise<Set<string>> 
     if (!asset) {
       const blob = base64ToPodcastAudioBlob(artifact.data, artifact.mimeType);
       const file = new File([blob], `${podcast.title}-${String(unit.order + 1).padStart(2, "0")}-${unit.title}.mp3`, { type: artifact.mimeType || "audio/mpeg" });
-      asset = await storage.saveAsset(file, "audio", unit.title);
-      await storage.patchAsset?.(asset.id, {
+      asset = await storage.saveAsset(file, "audio", unit.title, {
         generatedBy: "knowledge-podcast",
         generatedForPodcastId: podcast.id,
         generatedForAudioUnitId: unit.id,
@@ -524,8 +523,7 @@ export const startKnowledgePodcastAudioJob = async (podcastId: string, onlyUnitI
           });
           const blob = new Blob(blobs, { type: "audio/mpeg" });
           const file = new File([blob], `${current.title}-${String(unit.order + 1).padStart(2, "0")}-${unit.title}.mp3`, { type: "audio/mpeg" });
-          const asset = await storage.saveAsset(file, "audio", unit.title);
-          await storage.patchAsset?.(asset.id, {
+          const asset = await storage.saveAsset(file, "audio", unit.title, {
             generatedBy: "knowledge-podcast",
             generatedForPodcastId: current.id,
             generatedForAudioUnitId: unit.id,

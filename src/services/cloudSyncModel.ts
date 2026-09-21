@@ -41,6 +41,8 @@ import { nowISO } from "../lib/date";
 import { sha256 as javascriptSha256 } from "@noble/hashes/sha256";
 import { extractDecisionBlocks } from "../features/reviewCoach/decisionBlockContent";
 import { sanitizeSettingsForExport, stripPrivateExportFields } from "./exportPrivacy";
+import { ASSET_OPERATIONAL_FIELDS, stripAssetOperationalFields } from "./assetOcrState";
+export { ASSET_OPERATIONAL_FIELDS, stripAssetOperationalFields } from "./assetOcrState";
 
 export type CloudHashAlgorithm = "sha256" | "fnv1a";
 
@@ -111,7 +113,6 @@ type JsonRecord = Record<string, unknown>;
 export const CLOUD_DOCUMENT_THRESHOLD_BYTES = 750 * 1024;
 export const ASSET_CONTENT_HASH_VERSION = 2;
 export const BLOCK_CONTENT_HASH_VERSION = 2;
-export const ASSET_OPERATIONAL_FIELDS = ["ocrStatus", "ocrError", "ocrJobId", "ocrUpdatedAt", "ocrResultSummary"] as const;
 
 export interface CloudPayloadDocument {
   hash: string;
@@ -186,28 +187,14 @@ export const stripUpdatedAt = (value: unknown): unknown => {
   return rest;
 };
 
-/**
- * OCR queue state and derived result summaries are device-local bookkeeping.
- * The OCR text itself remains synchronized as user-visible content.
- */
-export const stripAssetOperationalFields = (value: unknown): unknown => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const {
-    ocrStatus: _ocrStatus,
-    ocrError: _ocrError,
-    ocrJobId: _ocrJobId,
-    ocrUpdatedAt: _ocrUpdatedAt,
-    ocrResultSummary: _ocrResultSummary,
-    ...rest
-  } = value as JsonRecord;
-  return rest;
-};
-
 /** Keep OCR queue state local when a remote asset result is applied. */
 export const preserveAssetOperationalFields = (
   current: CloudSyncEntity | undefined,
   incoming: CloudSyncEntity,
 ): CloudSyncEntity => {
+  if (incoming.entityType === "asset") {
+    incoming = { ...incoming, payload: stripAssetOperationalFields(incoming.payload) as JsonRecord };
+  }
   if (
     incoming.entityType !== "asset" || incoming.deleted ||
     !current || current.entityType !== "asset" || current.deleted
@@ -250,7 +237,7 @@ export const legacyEntityHashPayload = (payload: unknown): unknown => stripUpdat
  */
 export const createCloudPayloadDocument = async (entity: CloudSyncEntity): Promise<CloudPayloadDocument | undefined> => {
   if (entity.deleted || entity.payloadDocumentHash) return undefined;
-  const source = stableJson(entity.payload);
+  const source = stableJson(entity.entityType === "asset" ? stripAssetOperationalFields(entity.payload) : entity.payload);
   const bytes = new TextEncoder().encode(source);
   if (bytes.byteLength <= CLOUD_DOCUMENT_THRESHOLD_BYTES) return undefined;
   const hash = await hashValue(syncHashPayload(entity.entityType, entity.payload));
@@ -301,7 +288,7 @@ const entity = async (
   entityType: CloudSyncEntityType,
   value: { id: string; deletedAt?: string },
 ): Promise<CloudSyncEntity> => {
-  const payload = sortValue(value) as JsonRecord;
+  const payload = sortValue(entityType === "asset" ? stripAssetOperationalFields(value) : value) as JsonRecord;
   return {
     key: `${entityType}:${value.id}`,
     entityType,
@@ -434,9 +421,9 @@ export const materializeCloudSyncSnapshot = (
     if (!data) {
       throw new Error(`云端资源不完整：${asset.fileName}。`);
     }
-    return { ...meta, data } as Asset;
+    return { ...stripAssetOperationalFields(meta) as Omit<Asset, "data">, data } as Asset;
   });
-  const settings = values<AppSettings>(entities, "settings")[0] ?? DEFAULT_SETTINGS;
+  const settings = sanitizeSettingsForExport(values<AppSettings>(entities, "settings")[0] ?? DEFAULT_SETTINGS);
   const recordDrafts = values<RecordDraft>(entities, "draft");
   const reviewCoach: ReviewCoachFormalSnapshot = {
     decisionBlocks: coachValues<DecisionBlock>(entities, "decision-block"),

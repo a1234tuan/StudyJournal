@@ -112,6 +112,17 @@ const snapshot: StorageSnapshot = {
 };
 
 describe("cloud sync model", () => {
+  it("strips all OCR runtime fields from metadata and large payload documents", async () => {
+    const exported = await exportCloudSync({ ...snapshot, assets: [{ ...snapshot.assets[0], ocrText: "text".repeat(CLOUD_DOCUMENT_THRESHOLD_BYTES), ocrStatus: "failed", ocrError: "PRIVATE_ERROR", ocrJobId: "PRIVATE_JOB", ocrUpdatedAt: stamp, ocrResultSummary: { textLength: 0, includedInAi: false, parserVersion: "PRIVATE_SUMMARY" } }] });
+    const asset = exported.entities.find((row) => row.entityType === "asset")!;
+    expect(Object.keys(asset.payload).filter((key) => key.startsWith("ocr"))).toEqual(["ocrText"]);
+    const document = await createCloudPayloadDocument({ ...asset, payload: { ...asset.payload, ocrError: "OLD_PRIVATE_ERROR" } });
+    const text = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.readAsText(document!.blob); });
+    expect(text).not.toContain("PRIVATE");
+    expect(JSON.parse(text).ocrText).toBe(asset.payload.ocrText);
+    const restored = materializeCloudSyncSnapshot([{ ...asset, payload: { ...asset.payload, ocrJobId: "foreign" } }], [], exported.assetBlobs);
+    expect(restored.assets[0].ocrJobId).toBeUndefined();
+  });
   it("ignores local voice stores when deriving a publish or no-op plan", async () => {
     const baseline = await exportCloudSync(snapshot);
     const withLocalVoiceData = await exportCloudSync({
@@ -520,7 +531,8 @@ describe("cloud sync model", () => {
       assets: [{ ...snapshot.assets[0], ocrStatus: "done", ocrText: "手机识别结果" }],
     })).entities.find((entity) => entity.entityType === "asset")!;
 
-    const merged = preserveAssetOperationalFields(local, remote);
+    expect(local.payload.ocrStatus).toBeUndefined();
+    const merged = preserveAssetOperationalFields({ ...local, payload: { ...local.payload, ocrStatus: "running", ocrJobId: "desktop-job" } }, remote);
     expect(merged.payload.ocrText).toBe("手机识别结果");
     expect(merged.payload.ocrStatus).toBe("running");
     expect(merged.payload.ocrJobId).toBe("desktop-job");

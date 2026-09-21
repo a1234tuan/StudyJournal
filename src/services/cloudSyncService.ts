@@ -62,6 +62,7 @@ import {
 import { CloudSyncLocalMutationError, storage } from "./storageAdapter";
 import { snapshotToZip, summarizeSnapshot, zipToSnapshot } from "./backup";
 import { sanitizeSettingsForExport } from "./exportPrivacy";
+import { stripAssetOperationalFields } from "./assetOcrState";
 import {
   downloadNativeFirebaseStorageBlob,
   listNativeFirebaseStoragePaths,
@@ -473,6 +474,9 @@ const parseRemoteEntity = (id: string, value: unknown): RemoteEntity | undefined
 
 export const normalizeRemoteEntity = async (entity: RemoteEntity): Promise<RemoteEntity> => {
   if (entity.deleted || Object.keys(entity.payload).length === 0) return entity;
+  if (entity.entityType === "asset") {
+    entity = { ...entity, payload: stripAssetOperationalFields(entity.payload) as Record<string, unknown> };
+  }
   if (entity.entityType === "settings") {
     const payload = sanitizeSettingsForExport(entity.payload as unknown as AppSettings) as unknown as Record<string, unknown>;
     return {
@@ -611,6 +615,10 @@ const tombstoneFor = (ledger: CloudSyncLedgerRecord): CloudSyncEntity => ({
 const matchesLedger = async (entity: CloudSyncEntity, ledger: CloudSyncLedgerRecord | undefined) => {
   if (!ledger) return false;
   if (ledger.contentHash === entity.contentHash) return true;
+  if (entity.entityType === "settings" && ledger.basePayload) {
+    const basePayload = sanitizeSettingsForExport(ledger.basePayload as unknown as AppSettings);
+    if (entity.contentHash === await hashValue(syncHashPayload("settings", basePayload))) return true;
+  }
   if (ledger.contentHashAlgorithm === "fnv1a" || ledger.contentHash.startsWith("fnv-")) {
     const canonicalLegacy = legacyFnvHashValue(syncHashPayload(entity.entityType, entity.payload));
     if (ledger.contentHash === canonicalLegacy) return true;
@@ -1705,7 +1713,9 @@ const activeEntityDocument = (entity: RemoteEntity) => ({
   contentHash: entity.contentHash,
   ...(entity.contentHashVersion !== undefined ? { contentHashVersion: entity.contentHashVersion } : {}),
   ...(entity.contentHashAlgorithm !== undefined ? { contentHashAlgorithm: entity.contentHashAlgorithm } : {}),
-  payload: entity.payload,
+  payload: entity.entityType === "asset"
+    ? stripAssetOperationalFields(entity.payload)
+    : entity.payload,
   ...(entity.payloadDocumentHash ? {
     payloadDocumentHash: entity.payloadDocumentHash,
     payloadByteSize: entity.payloadByteSize,

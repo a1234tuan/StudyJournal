@@ -88,6 +88,7 @@ import {
 } from "../features/reviewCoach/repository";
 import { validateReviewCoachFormalSnapshot } from "../features/reviewCoach/validation";
 import { preserveLocalSettings, sanitizeSettingsForExport, stripPrivateExportFields } from "./exportPrivacy";
+import { restoreAssetOcrState } from "./assetOcrState";
 import { extractDecisionBlocks, prepareDecisionBlockContentForSave } from "../features/reviewCoach/decisionBlockContent";
 import {
   DEFAULT_REVIEW_EASE,
@@ -1970,7 +1971,7 @@ export class DexieStorageAdapter implements StorageAdapter {
     return saved;
   }
 
-  async saveAsset(file: File, kind: Asset["kind"], title?: string): Promise<Asset> {
+  async saveAsset(file: File, kind: Asset["kind"], title?: string, source?: { generatedBy: "knowledge-podcast"; generatedForPodcastId: string; generatedForAudioUnitId: string }): Promise<Asset> {
     const asset: Asset = {
       ...createBaseEntity(),
       fileName: file.name,
@@ -1979,9 +1980,12 @@ export class DexieStorageAdapter implements StorageAdapter {
       size: file.size,
       kind,
       data: file,
+      ...source,
     };
-    await markCloudSyncMutation();
-    await db.assets.put(asset);
+    await db.transaction("rw", db.assets, db.cloudSyncMutation, async () => {
+      if (!source) await markCloudSyncMutation();
+      await db.assets.put(asset);
+    });
     return asset;
   }
 
@@ -2488,26 +2492,30 @@ export class DexieStorageAdapter implements StorageAdapter {
         ...reviewCoachRestoreTables(db),
       ],
       async () => {
-        const [currentEpoch, currentPodcasts, currentPodcastAssets, currentSettings] = await Promise.all([
+        const [currentEpoch, currentPodcasts, currentPodcastAssets, currentSettings, currentAssets] = await Promise.all([
           db.cloudSyncMutation.get("local"),
           options.preservePodcasts ? db.knowledgePodcasts.toArray() : Promise.resolve([]),
           options.preservePodcasts ? db.assets.filter((asset) => asset.generatedBy === "knowledge-podcast").toArray() : Promise.resolve([]),
-          options.preserveLocalSettings ? db.settings.get("settings") : Promise.resolve(undefined),
+          db.settings.get("settings"),
+          options.preserveLocalSettings ? db.assets.toArray() : Promise.resolve([]),
         ]);
         if (expectedEpoch !== undefined && (currentEpoch?.epoch ?? 0) !== expectedEpoch) {
           throw new CloudSyncLocalMutationError();
         }
         const settingsToRestore = ensureSettingsSubjects(
           {
-            ...(currentSettings
-              ? preserveLocalSettings(snapshot.payload.settings, currentSettings)
+            ...(options.preserveLocalSettings
+              ? preserveLocalSettings(snapshot.payload.settings, currentSettings ?? DEFAULT_SETTINGS)
               : snapshot.payload.settings),
+            editorFontScale: currentSettings?.editorFontScale ?? 1,
             schemaVersion: 4,
           },
           restoredRecords,
         );
+        const currentAssetsById = new Map(currentAssets.map((asset) => [asset.id, asset]));
         const assetsToRestore = options.preservePodcasts
-          ? [...snapshot.assets.filter((asset) => asset.generatedBy !== "knowledge-podcast"), ...currentPodcastAssets]
+          ? [...snapshot.assets.filter((asset) => asset.generatedBy !== "knowledge-podcast")
+            .map((asset) => restoreAssetOcrState(asset, currentAssetsById.get(asset.id))), ...currentPodcastAssets]
           : snapshot.assets;
         const podcastsToRestore = options.preservePodcasts ? currentPodcasts : restoredPodcasts;
         await Promise.all([
@@ -2608,6 +2616,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         "rw",
         [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, ...reviewCoachRestoreTables(db)],
         async () => {
+          const currentSettings = await db.settings.get("settings");
           await Promise.all([
             db.entries.clear(), db.blocks.clear(), db.templates.clear(), db.recordDrafts.clear(), db.recordReviews.clear(), db.recordReviewLogs.clear(),
             db.recordReviewDayStats.clear(), db.mistakes.clear(), db.tags.clear(), db.reviews.clear(), db.studySessions.clear(),
@@ -2629,7 +2638,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             db.recordReviewDayStats.bulkPut(snapshot.payload.recordReviewDayStats ?? []),
             db.tags.bulkPut(dedupeSnapshotTags(snapshot.payload.tags)),
             db.studySessions.bulkPut(snapshot.payload.studySessions),
-            db.settings.put(ensureSettingsSubjects({ ...snapshot.payload.settings, schemaVersion: 4 }, restoredRecords)),
+            db.settings.put(ensureSettingsSubjects({ ...snapshot.payload.settings, editorFontScale: currentSettings?.editorFontScale ?? 1, schemaVersion: 4 }, restoredRecords)),
             db.assets.bulkPut(staged.map((entry) => entry.asset)),
             db.knowledgePodcasts.bulkPut(normalizeSnapshotPodcasts(snapshot.payload.podcasts)),
             db.restoreStagingAssets.where("sessionId").equals(sessionId).delete(),

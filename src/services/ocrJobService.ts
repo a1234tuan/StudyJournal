@@ -27,7 +27,7 @@ let activeJob: OcrJob | undefined;
 let drainScheduled = false;
 
 const shouldAutoOcr = (asset: Asset): boolean =>
-  asset.kind === "image" && (!asset.ocrStatus || asset.ocrStatus === "idle");
+  asset.kind === "image" && !asset.ocrText?.trim() && (!asset.ocrStatus || asset.ocrStatus === "idle");
 
 const patchOcrAsset = async (assetId: string, patch: Partial<Omit<Asset, "id" | "data">>) => {
   const hasResultChange = Object.prototype.hasOwnProperty.call(patch, "ocrText");

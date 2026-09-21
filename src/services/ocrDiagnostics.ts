@@ -10,7 +10,7 @@ export const describeOcrForAi = (
     return { included: false, reason: "不是图片资源，未参与 AI 问答。", textLength: 0 };
   }
   const textLength = asset.ocrText?.trim().length ?? 0;
-  if (asset.ocrStatus === "done" && textLength > 0) {
+  if (textLength > 0) {
     return { included: true, reason: "图片 OCR 文本已参与 AI 问答。", textLength };
   }
   if (asset.ocrStatus === "done" && textLength === 0) {

@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import { Blob as NodeBlob } from "node:buffer";
 vi.mock("./firebase", () => ({ firebaseAuth: { currentUser: null }, firebaseStorage: {}, firestore: {}, googleAuthProvider: {} }));
+const boundaryStorage = vi.hoisted(() => ({ metadata: 0, downloads: 0, uploads: 0 }));
+vi.mock("firebase/storage", () => ({
+    ref: (_storage: unknown, path: string) => ({ fullPath: path }),
+    getMetadata: async () => { boundaryStorage.metadata++; return { size: 4 }; },
+    getBlob: async () => { boundaryStorage.downloads++; throw new Error("unexpected attachment download"); },
+    uploadBytesResumable: () => { boundaryStorage.uploads++; throw new Error("unexpected attachment upload"); },
+    deleteObject: vi.fn(), list: vi.fn(),
+}));
 const auditRemote = vi.hoisted(() => ({ documents: new Map<string, any>(), reads: 0, queries: 0, writes: 0, db: undefined as any, onQuery: undefined as undefined | (() => Promise<void>), failPublishHead: false, failMetadataBatch: 0, metadataBatches: 0 }));
 vi.mock('../db/database', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -82,6 +91,58 @@ async function auditClose(devices: any[]) { const Dexie = (await import('dexie')
     await Dexie.delete(database.name);
 } }
 describe('full service controlled remote', () => {
+    it.each([0, 1])('keeps OCR runtime and editor scale local, converging direction %s', async (sender) => {
+        const devices = await auditSeed();
+        try {
+            const service = await import('./cloudSyncService');
+            const { describeOcrForAi } = await import('./ocrDiagnostics');
+            const image = { id: 'image', kind: 'image' as const, fileName: 'image.png', mimeType: 'image/png', size: 4, data: new NodeBlob(['test']) as unknown as Blob, createdAt: auditStamp, updatedAt: auditStamp, ocrStatus: 'failed' as const, ocrJobId: 'local-job' };
+            for (const device of devices) await device.assets.put(image);
+            auditRemote.db = devices[sender];
+            const baseline = (await auditExport(await auditStorage.createCloudSyncSnapshot())).entities.find(row => row.entityType === 'asset')!;
+            auditRemote.documents.set('users/audit-user/syncEntities/' + baseline.key, { ...baseline, revision: 1 });
+            for (const device of devices) await device.cloudSyncLedger.put({ id: baseline.key, entityType: baseline.entityType, entityId: baseline.entityId, contentHash: baseline.contentHash, contentHashAlgorithm: baseline.contentHashAlgorithm, contentHashVersion: baseline.contentHashVersion, cloudRevision: 1 });
+            await devices[sender].settings.update('settings', { editorFontScale: 1.4 });
+            await devices[1 - sender].settings.update('settings', { editorFontScale: 0.8 });
+            await auditStorage.patchAsset('image', { ocrText: 'accepted remote result', ocrStatus: 'done', ocrJobId: 'sender-private-job' });
+            const beforeTransfers = { ...boundaryStorage };
+            expect(await service.synchronizeCloudChanges({ uid: 'audit-user' } as any)).toMatchObject({ kind: 'synced', uploaded: 1 });
+            const remote = auditRemote.documents.get('users/audit-user/syncEntities/asset:image');
+            expect(Object.keys(remote.payload).filter(key => key.startsWith('ocr'))).toEqual(['ocrText']);
+            auditRemote.db = devices[1 - sender];
+            expect(await service.synchronizeCloudChanges({ uid: 'audit-user' } as any)).toMatchObject({ kind: 'synced', uploaded: 0, downloaded: 1 });
+            const received = await devices[1 - sender].assets.get('image');
+            expect(received).toMatchObject({ ocrStatus: 'failed', ocrJobId: 'local-job', ocrText: 'accepted remote result' });
+            expect(describeOcrForAi(received).included).toBe(true);
+            expect((await devices[1 - sender].settings.get('settings'))!.editorFontScale).toBe(0.8);
+            const writes = auditRemote.writes;
+            for (const device of [devices[1 - sender], devices[sender]]) {
+                device.close(); await device.open(); auditRemote.db = device;
+                expect(await service.synchronizeCloudChanges({ uid: 'audit-user' } as any)).toMatchObject({ kind: 'synced', uploaded: 0, downloaded: 0 });
+            }
+            expect(auditRemote.writes).toBe(writes);
+            expect(boundaryStorage.uploads).toBe(beforeTransfers.uploads);
+            expect(boundaryStorage.downloads).toBe(beforeTransfers.downloads);
+            expect(boundaryStorage.metadata - beforeTransfers.metadata).toBe(1);
+        } finally { await auditClose(devices); }
+    });
+
+    it('ignores the old editor scale in a ledger without hiding real settings changes', async () => {
+        const devices = await auditSeed();
+        try {
+            const service = await import('./cloudSyncService');
+            const { hashValue, syncHashPayload } = await import('./cloudSyncModel');
+            const baseline = (await auditExport(await auditStorage.createCloudSyncSnapshot())).entities.find(row => row.entityType === 'settings')!;
+            const oldPayload = { ...baseline.payload, editorFontScale: 1.4 };
+            const oldHash = await hashValue(syncHashPayload('settings', oldPayload));
+            const oldLedger = { id: baseline.key, entityType: baseline.entityType, entityId: baseline.entityId, contentHash: oldHash, contentHashAlgorithm: 'sha256' as const, cloudRevision: 1, basePayload: oldPayload };
+            const unchanged = await service.deriveLocalCloudChanges({ entities: [baseline], reviewEvents: [], assetBlobs: new Map() }, [oldLedger]);
+            expect(unchanged.entities).toEqual([]);
+            const nextPayload = { ...baseline.payload, examDate: '2027-01-01' };
+            const changed = await service.deriveLocalCloudChanges({ entities: [{ ...baseline, payload: nextPayload, contentHash: await hashValue(syncHashPayload('settings', nextPayload)) }], reviewEvents: [], assetBlobs: new Map() }, [oldLedger]);
+            expect(changed.entities).toHaveLength(1);
+        } finally { await auditClose(devices); }
+    });
     it.each([0, 1])('converges simple unilateral edit direction %s using independent DBs and ledgers', async (sender) => {
         const devices = await auditSeed();
         try {

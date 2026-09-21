@@ -118,6 +118,46 @@ const podcast = (): KnowledgePodcast => ({
 let database: StudyJournalDatabase;
 let adapter: InstanceType<typeof import("./storageAdapter").DexieStorageAdapter>;
 
+describe("atomic resource classification", () => {
+  it.each(["cloud", "ordinary", "streaming"])("preserves this device's editor scale on %s restore", async (channel) => {
+    const { DEFAULT_SETTINGS } = await import("../db/defaults");
+    await database.settings.put({ ...DEFAULT_SETTINGS, editorFontScale: 0.8 });
+    const incoming = await adapter.createSnapshot();
+    incoming.payload.settings.editorFontScale = 1.4;
+    if (channel === "cloud") await adapter.restoreCloudSyncSnapshot(incoming);
+    else if (channel === "ordinary") await adapter.restoreSnapshot(incoming);
+    else await adapter.restoreStreamableSnapshot({ payload: incoming.payload, assets: [] }, async () => { throw new Error("unexpected asset"); });
+    expect((await database.settings.get("settings"))?.editorFontScale).toBe(0.8);
+  });
+
+  it("persists podcast source on the first write without a cloud mutation", async () => {
+    const { exportCloudSync } = await import("./cloudSyncModel");
+    const before = await adapter.getCloudSyncMutationEpoch();
+    const saved = await adapter.saveAsset(new File(["audio"], "podcast.mp3"), "audio", "episode", {
+      generatedBy: "knowledge-podcast", generatedForPodcastId: "podcast", generatedForAudioUnitId: "unit",
+    });
+    database.close();
+    await database.open();
+    expect(await database.assets.get(saved.id)).toMatchObject({ generatedBy: "knowledge-podcast", generatedForPodcastId: "podcast", generatedForAudioUnitId: "unit" });
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+    const exported = await exportCloudSync(await adapter.createCloudSyncSnapshot());
+    expect(exported.entities.some((entity) => entity.entityId === saved.id)).toBe(false);
+    expect(exported.assetBlobs.size).toBe(0);
+  });
+
+  it("rolls back the ordinary mutation marker when the resource write fails", async () => {
+    const before = await adapter.getCloudSyncMutationEpoch();
+    const put = vi.spyOn(database.assets, "put").mockRejectedValueOnce(new Error("synthetic write failure"));
+    await expect(adapter.saveAsset(new File(["audio"], "recording.mp3"), "audio")).rejects.toThrow("synthetic write failure");
+    put.mockRestore();
+    expect(await database.assets.count()).toBe(0);
+    expect(await adapter.getCloudSyncMutationEpoch()).toBe(before);
+    const saved = await adapter.saveAsset(new File(["audio"], "recording.mp3"), "audio");
+    expect(await database.assets.get(saved.id)).toBeDefined();
+    expect(await adapter.getCloudSyncMutationEpoch()).toBeGreaterThan(before);
+  });
+});
+
 beforeEach(async () => {
   vi.resetModules();
   database = new StudyJournalDatabase(`storage-asset-refs-${crypto.randomUUID()}`);

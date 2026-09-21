@@ -169,6 +169,10 @@ describe("knowledgePodcastJobService", () => {
     await vi.waitFor(() => expect(isKnowledgePodcastJobRunning(current.id, "audio")).toBe(false));
 
     expect(synthesizeMock.mock.calls.map(([text]) => text)).toEqual(["这是开场。", "这是正文。", "这是结尾。"]);
+    expect(storage.patchAsset).not.toHaveBeenCalled();
+    for (const call of vi.mocked(storage.saveAsset).mock.calls) {
+      expect(call[3]).toMatchObject({ generatedBy: "knowledge-podcast", generatedForPodcastId: current.id, generatedForAudioUnitId: expect.any(String) });
+    }
     expect(current.audioUnits?.map((unit) => [unit.kind, unit.audioStatus, unit.audioAssetId])).toEqual([
       ["opening", "ready", "asset-1"], ["segment", "ready", "asset-2"], ["closing", "ready", "asset-3"],
     ]);
@@ -235,6 +239,21 @@ describe("knowledgePodcastJobService", () => {
 });
 
 describe("syncNativeKnowledgePodcastTtsJobs", () => {
+  it("imports native audio with its source in the initial asset write", async () => {
+    let current = podcastWithUnits();
+    vi.spyOn(storage, "getKnowledgePodcast").mockImplementation(async () => current);
+    vi.spyOn(storage, "saveKnowledgePodcast").mockImplementation(async (next) => { current = next; return next; });
+    vi.spyOn(storage, "listAssets").mockResolvedValue([]);
+    const save = vi.spyOn(storage, "saveAsset").mockImplementation(async (file, kind, title, source) => ({ id: "native-audio", createdAt: current.createdAt, updatedAt: current.updatedAt, fileName: file.name, mimeType: file.type, size: file.size, data: file, kind, title, ...source }));
+    const patch = vi.spyOn(storage, "patchAsset");
+    isNativePodcastTtsAvailableMock.mockReturnValue(true);
+    getNativePodcastTtsStateMock.mockResolvedValue(nativeState());
+    takeNativePodcastTtsArtifactMock.mockResolvedValueOnce({ podcastId: current.id, unitId: "unit-seg", jobId: "job-1", data: "synthetic", mimeType: "audio/mpeg" }).mockResolvedValueOnce(null);
+    await syncNativeKnowledgePodcastTtsJobs();
+    expect(save).toHaveBeenCalledWith(expect.any(File), "audio", "第一章", { generatedBy: "knowledge-podcast", generatedForPodcastId: current.id, generatedForAudioUnitId: "unit-seg" });
+    expect(patch).not.toHaveBeenCalled();
+  });
+
   const nativeState = (overrides: object = {}) => ({
     podcastId: "podcast-job",
     jobId: "job-1",

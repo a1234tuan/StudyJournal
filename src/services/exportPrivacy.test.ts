@@ -4,6 +4,12 @@ import { DEFAULT_SETTINGS } from "../db/defaults";
 import { preserveLocalSettings, sanitizeSettingsForExport, sanitizeStreamableSnapshotForExport, stripPrivateExportFields } from "./exportPrivacy";
 
 describe("export privacy", () => {
+  it("keeps editor scale local including legacy incoming settings", () => {
+    const incoming = { ...DEFAULT_SETTINGS, editorFontScale: 1.4 };
+    expect(sanitizeSettingsForExport(incoming)).not.toHaveProperty("editorFontScale");
+    expect(preserveLocalSettings(incoming, { ...DEFAULT_SETTINGS, editorFontScale: 0.8 }).editorFontScale).toBe(0.8);
+    expect(preserveLocalSettings(incoming, { ...DEFAULT_SETTINGS, editorFontScale: undefined }).editorFontScale).toBe(1);
+  });
   it("removes full prompts, raw provider data, and device-local backup fields", () => {
     const settings = {
       ...structuredClone(DEFAULT_SETTINGS),

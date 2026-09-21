@@ -1129,7 +1129,7 @@ export interface StorageAdapter {
   upsertTag(name: string): Promise<Tag>;
   listStudySessions(): Promise<StudySession[]>;
   saveStudySession(session: StudySession): Promise<StudySession>;
-  saveAsset(file: File, kind: Asset["kind"], title?: string): Promise<Asset>;
+  saveAsset(file: File, kind: Asset["kind"], title?: string, source?: { generatedBy: "knowledge-podcast"; generatedForPodcastId: string; generatedForAudioUnitId: string }): Promise<Asset>;
   patchAsset(
     id: EntityId,
     patch: Partial<Omit<Asset, "id" | "data">>,

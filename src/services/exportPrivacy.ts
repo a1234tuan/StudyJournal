@@ -28,6 +28,7 @@ export const sanitizeSettingsForExport = (settings: AppSettings): AppSettings =>
     knowledgePodcastModeTemplates: _knowledgePodcastModeTemplates,
     ai: _ai,
     tts: _tts,
+    editorFontScale: _editorFontScale,
     ...portable
   } = settings;
   return stripPrivateExportFields({
@@ -38,7 +39,8 @@ export const sanitizeSettingsForExport = (settings: AppSettings): AppSettings =>
 
 /** Restores fields deliberately omitted from cloud payloads from this device's current settings. */
 export const preserveLocalSettings = (incoming: AppSettings, current: AppSettings): AppSettings => ({
-  ...incoming,
+  ...sanitizeSettingsForExport(incoming),
+  editorFontScale: current.editorFontScale ?? 1,
   ...(current.lastBackupAt !== undefined ? { lastBackupAt: current.lastBackupAt } : {}),
   ...(current.syncFolderName !== undefined ? { syncFolderName: current.syncFolderName } : {}),
   ai: current.ai,
