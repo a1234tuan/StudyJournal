@@ -1,5 +1,6 @@
 import type { AiProviderProfile, TtsProviderProfile } from "../../types";
 import type { VoiceAudioFormat } from "./contracts";
+import { aliyunTtsEndpoint } from "../../lib/aliyunTts";
 
 export type VoiceProviderTemplateStatus = "candidate" | "verified" | "deprecated";
 export type VoiceProviderTransport = "websocket" | "sse" | "http-stream" | "native-sdk" | "mock";
@@ -207,12 +208,25 @@ export const BUILT_IN_VOICE_TTS_PROFILES: readonly VoiceTtsProviderProfile[] = [
     browserDirectSupported: false,
   },
   {
+    id: "voice-tts-aliyun-qwen-audio-31",
+    providerId: "aliyun",
+    providerName: "阿里云百炼",
+    model: "qwen-audio-3.1-tts-flash",
+    voice: "longanfengyue_v3.1",
+    endpoint: aliyunTtsEndpoint("qwen-audio-3.1-tts-flash"),
+    transport: "http-stream",
+    streaming: true,
+    audioFormat: "provider-native",
+    firstChunkTimeoutMs: 8_000,
+    browserDirectSupported: false,
+  },
+  {
     id: "voice-tts-aliyun-qwen-audio-30",
     providerId: "aliyun",
     providerName: "阿里云百炼",
     model: "qwen-audio-3.0-tts-flash",
-    voice: "Cherry",
-    endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio",
+    voice: "longanfengyue",
+    endpoint: aliyunTtsEndpoint("qwen-audio-3.0-tts-flash"),
     transport: "http-stream",
     streaming: true,
     audioFormat: "provider-native",
@@ -226,7 +240,7 @@ const voiceTtsDefaults = (profile: TtsProviderProfile): Omit<VoiceTtsProviderPro
   const endpoint = profile.providerId === "fish-audio"
     ? "https://api.fish.audio/v1/tts"
     : profile.providerId === "aliyun"
-      ? "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio"
+      ? aliyunTtsEndpoint(profile.model)
       : profile.providerId === "tencent"
         ? "https://tts.tencentcloudapi.com"
         : profile.providerId === "google"

@@ -178,10 +178,35 @@ it("bounds the final result wait after finish-task", async () => {
     await session.finish();
     const result = session.events[Symbol.asyncIterator]().next();
     const rejected = expect(result).rejects.toThrow("超时");
-    await vi.advanceTimersByTimeAsync(8_001);
+    await vi.advanceTimersByTimeAsync(12_001);
     await rejected;
     expect(socket.readyState).toBe(3);
   } finally { vi.useRealTimers(); }
+});
+
+it("keeps recognized text when task-finished is replaced by a socket close", async () => {
+  const { session, socket } = await openSession();
+  const iterator = session.events[Symbol.asyncIterator]();
+  socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "连接关闭前已识别", sentence_end: false } } } }) });
+  await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "partial", text: "连接关闭前已识别" } });
+  await session.finish();
+  socket.onclose?.({ code: 1000, reason: "provider-finished" });
+  await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "连接关闭前已识别", cumulative: true } });
+  await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
+  await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+});
+
+it("keeps a trailing partial after an earlier finalized sentence", async () => {
+  const { session, socket } = await openSession();
+  const iterator = session.events[Symbol.asyncIterator]();
+  socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "第一句。", begin_time: 0, sentence_end: true } } } }) });
+  await iterator.next();
+  socket.onmessage?.({ data: JSON.stringify({ header: { event: "result-generated" }, payload: { output: { sentence: { text: "第二句", begin_time: 1000, sentence_end: false } } } }) });
+  await iterator.next();
+  await session.finish();
+  socket.onclose?.({ code: 1000, reason: "provider-finished" });
+  await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "第一句。第二句", cumulative: true } });
+  await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
 });
 
 it("finishes promptly from a finalized sentence when task-finished is lost", async () => {

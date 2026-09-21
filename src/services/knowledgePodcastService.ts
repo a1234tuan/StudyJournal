@@ -19,6 +19,7 @@ import { storage } from "./storageAdapter";
 import { signTencentRequest } from "../lib/tencentSigning";
 import { decodeDoubaoSmallTtsJson, decodeDoubaoTtsNdjson } from "../lib/doubaoTts";
 import { synthesizeOnHost } from "./nativeTts";
+import { aliyunTtsAudioUrl, aliyunTtsEndpoint, buildAliyunTtsRequest } from "../lib/aliyunTts";
 
 export const FISH_AUDIO_PROVIDER_ID = "fish-audio";
 export const DEFAULT_FISH_MODEL = "s2.1-pro-free";
@@ -661,10 +662,10 @@ export class AliyunTtsProvider implements TextToSpeechProvider {
     if (hosted) return hosted;
     let response: Response;
     try {
-      response = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio", {
+      response = await fetch(aliyunTtsEndpoint(this.profile.model), {
         method: "POST",
         headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.profile.model, input: { text, voice: this.profile.voice }, parameters: { format: "mp3", sample_rate: 16000 } }),
+        body: JSON.stringify(buildAliyunTtsRequest(this.profile.model, this.profile.voice, text)),
         signal: ttsRequestSignal(options.signal),
       });
     } catch (error) {
@@ -678,11 +679,11 @@ export class AliyunTtsProvider implements TextToSpeechProvider {
     const json = await response.json() as { output?: { audio?: { url?: string } } };
     const url = json?.output?.audio?.url;
     if (!url) throw new Error("阿里云 TTS 未返回音频地址。");
-    const audioResponse = await fetch(url, { signal: ttsRequestSignal(options.signal) });
+    const audioResponse = await fetch(aliyunTtsAudioUrl(url), { signal: ttsRequestSignal(options.signal) });
     if (!audioResponse.ok) throw new Error(`阿里云音频下载失败（${audioResponse.status}）。`);
     const blob = await audioResponse.blob();
     if (blob.size === 0) throw new Error("阿里云 TTS 返回了空音频。");
-    return new Blob([blob], { type: "audio/mpeg" });
+    return new Blob([blob], { type: blob.type.startsWith("audio/") ? blob.type : this.profile.model.startsWith("qwen-audio-") ? "audio/mpeg" : "audio/wav" });
   }
 }
 

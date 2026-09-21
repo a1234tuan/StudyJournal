@@ -50,14 +50,16 @@ describe("VoiceProviderSettings", () => {
     render(<Harness />);
 
     fireEvent.change(screen.getByLabelText("语音识别服务"), { target: { value: "voice-asr-doubao-seed-streaming" } });
-    expect(screen.getByDisplayValue("volc.seedasr.sauc.duration")).toBeInTheDocument();
     expect(screen.getByText("凭据：豆包流式语音识别 2.0")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Resource ID")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("语音识别服务"), { target: { value: "voice-asr-aliyun-nls-shiyinshi-v1" } });
     expect(screen.getByText("凭据：阿里云 识音石 V1 实时 ASR")).toBeInTheDocument();
-    expect(screen.getByText(/识别模型由阿里云项目绑定/)).toBeInTheDocument();
-    expect(screen.getByLabelText("句级静音（毫秒）")).toHaveValue(800);
-    expect(screen.getByText(/Access Token 会过期/)).toBeInTheDocument();
+    expect(screen.getByText(/稳定默认参数/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("句级静音（毫秒）")).not.toBeInTheDocument();
+    expect(screen.queryByText("语义断句")).not.toBeInTheDocument();
+    expect(screen.queryByText(/服务端过滤语气词/)).not.toBeInTheDocument();
+    expect(screen.queryByText("数字规范化")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("大语言模型服务"), { target: { value: "llm-b" } });
     expect(screen.getByDisplayValue("https://b.example/v1")).toBeInTheDocument();
@@ -66,6 +68,15 @@ describe("VoiceProviderSettings", () => {
     fireEvent.change(screen.getByLabelText("语音合成服务"), { target: { value: "voice-tts-doubao-small" } });
     expect(screen.getByDisplayValue("volcano_tts")).toBeInTheDocument();
     expect(screen.getByLabelText("旧版控制台 App ID")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("语音合成服务"), { target: { value: "voice-tts-aliyun-qwen-audio-31" } });
+    expect(screen.getByDisplayValue("qwen-audio-3.1-tts-flash")).toBeInTheDocument();
+    expect(screen.getByLabelText("音色 ID")).toHaveValue("longanfengyue_v3.1");
+    expect(screen.getByDisplayValue("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("语音合成服务"), { target: { value: "voice-tts-aliyun-qwen-audio-30" } });
+    expect(screen.getByDisplayValue("qwen-audio-3.0-tts-flash")).toBeInTheDocument();
+    expect(screen.getByLabelText("音色 ID")).toHaveValue("longanfengyue");
+    fireEvent.change(screen.getByLabelText("语音合成服务"), { target: { value: fish.id } });
+    expect(screen.getByLabelText("音色 ID")).toHaveValue(fish.voice);
     expect(screen.getByText(/端到端实时语音/)).toBeInTheDocument();
   });
 });

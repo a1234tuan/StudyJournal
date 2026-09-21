@@ -33,9 +33,15 @@ export class VoiceActivityEndpoint {
 
   updateTranscript(text: string, kind: "partial" | "final" = "partial") {
     const normalized = text.trim();
-    if (normalized !== this.transcript) this.transcriptChangedAtMs = this.metrics.elapsedMs;
+    const changed = normalized !== this.transcript;
+    if (changed) this.transcriptChangedAtMs = this.metrics.elapsedMs;
     this.transcript = normalized;
     this.transcriptKind = kind;
+    if (normalized && (changed || !this.accepted)) {
+      this.accepted = true;
+      this.quietMs = 0;
+      this.phase = "speaking";
+    }
   }
 
   updatePartial(text: string) { this.updateTranscript(text, "partial"); }
@@ -59,18 +65,19 @@ export class VoiceActivityEndpoint {
     this.metrics.rms = rms;
     if (this.previousSequence !== undefined) this.metrics.missingFrames += Math.max(0, frame.sequence - this.previousSequence - 1);
     this.previousSequence = frame.sequence;
-    const threshold = Math.max(this.accepted ? 0.006 : 0.008, this.noise * (this.accepted ? 1.8 : 2.2));
+    const threshold = Math.max(this.accepted ? 0.001 : 0.0015, this.noise * (this.accepted ? 1.8 : 2.2));
     if (rms >= threshold) {
       this.candidateMs += duration;
       this.quietMs = 0;
       this.metrics.lastVoicedFrameMs = this.metrics.elapsedMs;
-      if (this.candidateMs >= 350) this.accepted = true;
+      if (this.candidateMs >= 240) this.accepted = true;
       this.phase = this.accepted ? "speaking" : "armed";
     } else {
       this.metrics.silentFrames += 1;
       if (!this.accepted) {
-        this.candidateMs = Math.max(0, this.candidateMs - Math.min(duration, this.candidateGapMs));
-        this.noise = Math.min(0.012, this.noise * 0.98 + rms * 0.02);
+        if (this.quietMs + duration >= this.candidateGapMs) this.candidateMs = 0;
+        const weight = rms < this.noise ? 0.2 : 0.02;
+        this.noise = Math.min(0.012, this.noise * (1 - weight) + rms * weight);
       }
       this.quietMs += duration;
       this.phase = this.accepted ? "endpoint-wait" : "armed";

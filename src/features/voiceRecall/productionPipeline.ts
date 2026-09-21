@@ -77,12 +77,10 @@ const overridesFromConfig = (
   if (!config || config.templateId !== templateId) return undefined;
   return {
     templateId,
-    asr: {
-      recognitionOptions: config.asrOptions,
-      ...(config.asrEndpoint ? { endpoint: config.asrEndpoint } : {}),
-      ...(config.asrModel ? { model: config.asrModel } : {}),
-      ...(config.asrResourceId ? { resourceId: config.asrResourceId } : {}),
-    },
+    // Built-in ASR profiles are deliberately fixed. Older app versions exposed
+    // these fields; ignoring persisted overrides prevents stale experimental
+    // endpoints or sentence options from silently breaking current sessions.
+    asr: {},
     llm: {
       ...(config.llmBaseUrl ? { baseUrl: config.llmBaseUrl } : {}),
       ...(config.llmModel ? { model: config.llmModel } : {}),

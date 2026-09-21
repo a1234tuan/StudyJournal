@@ -45,6 +45,7 @@ export const createDoubaoAsrTransport = (options: {
   socketFactory: VoiceSocketFactory;
   openTimeoutMs?: number;
   finalTimeoutMs?: number;
+  completionGraceMs?: number;
 }): VoiceAsrTransport => ({
   open: async ({ profile, operationId, language, format, signal }): Promise<VoiceAsrTransportSession> => {
     if (signal.aborted) throw new DOMException("ASR cancelled", "AbortError");
@@ -60,7 +61,9 @@ export const createDoubaoAsrTransport = (options: {
     let completed = false;
     let lastText = "";
     let lastFinalText = "";
+    let finishRequested = false;
     let timer: ReturnType<typeof setTimeout>;
+    let completionTimer: ReturnType<typeof setTimeout>;
     let resolveStarted!: () => void;
     let rejectStarted!: (error: unknown) => void;
     const started = new Promise<void>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
@@ -70,6 +73,7 @@ export const createDoubaoAsrTransport = (options: {
       if (closed) return;
       closed = true;
       clearTimeout(timer);
+      clearTimeout(completionTimer);
       signal.removeEventListener("abort", abort);
       queue.close();
       try { socket.close(); } catch { }
@@ -84,6 +88,21 @@ export const createDoubaoAsrTransport = (options: {
     const deadline = (milliseconds: number) => {
       clearTimeout(timer);
       timer = setTimeout(() => fail(new Error("豆包语音识别等待超时，请重试。")), milliseconds);
+    };
+    const complete = (usageSeconds?: number) => {
+      if (closed || completed) return;
+      if (lastText && lastText !== lastFinalText) {
+        lastFinalText = lastText;
+        queue.push({ type: "final", text: lastText, cumulative: true, ...(usageSeconds !== undefined ? { usageSeconds } : {}) });
+      }
+      completed = true;
+      queue.push({ type: "completed", ...(usageSeconds !== undefined ? { usageSeconds } : {}) });
+      close();
+    };
+    const scheduleCompletionFallback = () => {
+      if (!finishRequested || !lastText || closed) return;
+      clearTimeout(completionTimer);
+      completionTimer = setTimeout(() => complete(), options.completionGraceMs ?? 1_500);
     };
 
     signal.addEventListener("abort", abort, { once: true });
@@ -130,19 +149,22 @@ export const createDoubaoAsrTransport = (options: {
           } else {
             queue.push({ type: "partial", text });
           }
+          scheduleCompletionFallback();
         } else if (parsed.final && text && text !== lastFinalText) {
           lastFinalText = text;
           queue.push({ type: "final", text, cumulative: true, ...(usageSeconds !== undefined ? { usageSeconds } : {}) });
         }
-        if (parsed.final) {
-          completed = true;
-          queue.push({ type: "completed", ...(usageSeconds !== undefined ? { usageSeconds } : {}) });
-          close();
-        }
+        if (parsed.final) complete(usageSeconds);
       }).catch(fail);
     };
-    socket.onerror = () => fail(new Error("豆包语音识别连接失败，请检查凭据与网络。"));
-    socket.onclose = () => { if (!completed) fail(new Error("豆包语音识别连接提前关闭。")); };
+    socket.onerror = () => {
+      if (finishRequested && lastText) complete();
+      else fail(new Error("豆包语音识别连接失败，请检查凭据与网络。"));
+    };
+    socket.onclose = () => {
+      if (!completed && finishRequested && lastText) complete();
+      else if (!completed) fail(new Error("豆包语音识别连接提前关闭。"));
+    };
     await started;
 
     return {
@@ -158,8 +180,10 @@ export const createDoubaoAsrTransport = (options: {
       },
       finish: async () => {
         if (closed) throw new Error("豆包语音识别连接已关闭");
-        deadline(options.finalTimeoutMs ?? 30_000);
+        finishRequested = true;
+        deadline(options.finalTimeoutMs ?? 12_000);
         try { await socket.send(buildDoubaoAsrAudioFrame(new Uint8Array(0), true)); } catch (error) { fail(error); throw error; }
+        scheduleCompletionFallback();
       },
       close: async () => { if (!completed) fail(new DOMException("ASR cancelled", "AbortError")); else close(); },
     };

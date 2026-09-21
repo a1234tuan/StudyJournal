@@ -37,6 +37,7 @@ export const createAliyunAsrTransport = (options: {
     let completed = false;
     let taskStarted = false;
     let finishRequested = false;
+    let latestPartial = "";
     let timer: ReturnType<typeof setTimeout>;
     let completionTimer: ReturnType<typeof setTimeout>;
     let resolveStarted: () => void;
@@ -64,12 +65,17 @@ export const createAliyunAsrTransport = (options: {
     };
     const complete = () => {
       if (closed || completed) return;
+      const finalizedText = [...sentences.values()].join("");
+      const partialText = latestPartial.trim();
+      if (partialText && partialText !== finalizedText) {
+        queue.push({ type: "final", text: partialText, cumulative: true });
+      }
       completed = true;
       queue.push({ type: "completed" });
       close();
     };
     const scheduleCompletionFallback = () => {
-      if (!finishRequested || sentences.size === 0 || closed) return;
+      if (!finishRequested || (!sentences.size && !latestPartial.trim()) || closed) return;
       clearTimeout(completionTimer);
       completionTimer = setTimeout(complete, options.completionGraceMs ?? 1_500);
     };
@@ -87,9 +93,14 @@ export const createAliyunAsrTransport = (options: {
       if (closed) return;
       const parsed = parseAliyunAsrMessage(typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer));
       if (parsed.type === "started" && !taskStarted) { taskStarted = true; clearTimeout(timer); resolveStarted(); }
-      if (parsed.type === "partial") queue.push({ type: "partial", text: [...sentences.values()].join("") + parsed.text });
+      if (parsed.type === "partial") {
+        latestPartial = [...sentences.values()].join("") + parsed.text;
+        queue.push({ type: "partial", text: latestPartial });
+        scheduleCompletionFallback();
+      }
       if (parsed.type === "final") {
         sentences.set(parsed.segmentId ?? parsed.text, parsed.text);
+        latestPartial = "";
         queue.push({ type: "final", text: [...sentences.values()].join(""), cumulative: true, ...(parsed.usageSeconds !== undefined ? { usageSeconds: parsed.usageSeconds } : {}) });
         scheduleCompletionFallback();
       }
@@ -97,8 +108,14 @@ export const createAliyunAsrTransport = (options: {
       if (parsed.type === "completed" && !taskStarted) { fail(new Error("语音识别协议顺序异常")); return; }
       if (parsed.type === "completed") complete();
     };
-    socket.onerror = () => fail(new Error("语音识别连接失败，请检查凭据与网络。"));
-    socket.onclose = () => { if (!completed) fail(new Error("语音识别连接提前关闭。")); };
+    socket.onerror = () => {
+      if (finishRequested && (sentences.size > 0 || latestPartial.trim())) complete();
+      else fail(new Error("语音识别连接失败，请检查凭据与网络。"));
+    };
+    socket.onclose = () => {
+      if (!completed && finishRequested && (sentences.size > 0 || latestPartial.trim())) complete();
+      else if (!completed) fail(new Error("语音识别连接提前关闭。"));
+    };
     await started;
     return {
       events: queue,
@@ -114,7 +131,7 @@ export const createAliyunAsrTransport = (options: {
       finish: async () => {
         if (closed) throw new Error("语音识别连接已关闭");
         finishRequested = true;
-        deadline(options.finalTimeoutMs ?? 8_000);
+        deadline(options.finalTimeoutMs ?? 12_000);
         try { await socket.send(buildAliyunFinishTask(turnId)); } catch (error) { fail(error); throw error; }
         scheduleCompletionFallback();
       },

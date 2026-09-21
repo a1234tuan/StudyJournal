@@ -480,22 +480,13 @@ export const VoiceRecallWorkspace = ({
         if (recordingSecondsRef.current >= 120) return;
         const automatic = runtime.snapshot?.inputMode === "auto-half-duplex";
         const ended = automatic ? detectorRef.current.push(frame) : false;
-        if (automatic) {
-          setCapturePhase(detectorRef.current.phase);
-          if (!detectorRef.current.hasSpeech) {
-            preRollRef.current.push(frame);
-            while (preRollRef.current.length > 1 && preRollRef.current.reduce((sum, buffered) => sum + buffered.data.byteLength, 0) > frame.format.sampleRate) preRollRef.current.shift();
-            return;
-          }
-          for (const buffered of preRollRef.current) { queue.push(buffered); framesRef.current += 1; recordingSecondsRef.current += buffered.data.byteLength / (buffered.format.sampleRate * 2); }
-          preRollRef.current = [];
-        }
+        if (automatic) setCapturePhase(detectorRef.current.phase);
         const previousSeconds = recordingSecondsRef.current;
         recordingSecondsRef.current += frame.data.byteLength / (frame.format.sampleRate * frame.format.channelCount * 2);
         framesRef.current += 1;
         queue.push(frame);
         if (automatic) {
-          if (detectorRef.current.hasSpeech && !liveAsrRef.current) {
+          if (!liveAsrRef.current) {
             speechLimitRef.current = setTimeout(() => { if (runtime.isCurrentOperation(generation) && frameQueueRef.current === queue) void stopCaptureRef.current(); }, 120000);
             const task: LiveAsrTask = { promise: Promise.resolve() };
             liveAsrRef.current = task;
@@ -611,9 +602,10 @@ export const VoiceRecallWorkspace = ({
       if (automatic && asrRetryRef.current < 1 && runtime.isCurrentOperation(generation)) {
         asrRetryRef.current += 1;
         if (runtime.snapshot?.status === "finalizing-asr") runtime.dispatch({ type: "CANCEL_TURN" });
+        const retryGeneration = runtime.operationGeneration;
         setAutoBlocked(false);
         setMessage("本轮没有收到清晰转写，正在重新监听…");
-        window.setTimeout(() => { if (runtime.isCurrentOperation(generation)) void startCapture(); }, 250);
+        window.setTimeout(() => { if (runtime.isCurrentOperation(retryGeneration)) void startCapture(); }, 250);
       } else {
         setAutoBlocked(true);
         setMessage(`${describeVoiceError(error)} 请点击“开始说话”重试。`);

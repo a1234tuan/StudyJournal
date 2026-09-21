@@ -667,20 +667,25 @@ const synthesizeDesktopTts = async (options, signal) => {
 
   if (providerId === "aliyun") {
     const aliyunModel = model || "qwen3-tts-flash";
-    const resp = await net.fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio", {
+    const qwenAudio = aliyunModel.startsWith("qwen-audio-");
+    const endpoint = qwenAudio
+      ? "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+      : "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+    const resp = await net.fetch(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: aliyunModel, input: { text, voice: voiceId }, parameters: { format: "mp3", sample_rate: 16000 } }),
+      body: JSON.stringify({ model: aliyunModel, input: { text, voice: voiceId, ...(qwenAudio ? { format: "mp3", sample_rate: 16000 } : {}) } }),
       signal,
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(`阿里云 TTS 请求失败（${resp.status}）：${JSON.stringify(json).slice(0, 200)}`);
     const audioUrl = json?.output?.audio?.url;
     if (!audioUrl) throw new Error("阿里云 TTS 未返回音频链接。");
-    const audioResp = await net.fetch(audioUrl, { signal });
+    const secureAudioUrl = audioUrl.startsWith("http://") ? "https://" + audioUrl.slice(7) : audioUrl;
+    const audioResp = await net.fetch(secureAudioUrl, { signal });
     if (!audioResp.ok) throw new Error(`阿里云音频下载失败（${audioResp.status}）`);
     const buffer = Buffer.from(await audioResp.arrayBuffer());
-    return { data: buffer.toString("base64"), mimeType: "audio/mpeg" };
+    return { data: buffer.toString("base64"), mimeType: qwenAudio ? "audio/mpeg" : "audio/wav" };
   }
 
   if (providerId === "tencent") {

@@ -123,4 +123,38 @@ describe("Aliyun NLS ASR transport", () => {
     await expect(failure).rejects.toThrow("invalid token");
     expect(socket.readyState).toBe(3);
   });
+
+  it("promotes the latest partial when completion arrives without SentenceEnd", async () => {
+    const { session, socket } = await openSession();
+    const iterator = session.events[Symbol.asyncIterator]();
+    socket.onmessage?.({ data: JSON.stringify({ header: { name: "TranscriptionResultChanged", status: 20_000_000 }, payload: { index: 1, result: "识音石已有转写" } }) });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "partial", text: "识音石已有转写" } });
+    await session.finish();
+    socket.onmessage?.({ data: JSON.stringify({ header: { name: "TranscriptionCompleted", status: 20_000_000 } }) });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "识音石已有转写", cumulative: true } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
+  });
+
+  it("keeps a final sentence when the provider closes before TranscriptionCompleted", async () => {
+    const { session, socket } = await openSession();
+    const iterator = session.events[Symbol.asyncIterator]();
+    socket.onmessage?.({ data: JSON.stringify({ header: { name: "SentenceEnd", status: 20_000_000 }, payload: { index: 1, result: "连接关闭前已识别。" } }) });
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "final", text: "连接关闭前已识别。" } });
+    await session.finish();
+    socket.onclose?.({ code: 1000, reason: "provider-finished" });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
+  });
+
+  it("keeps a trailing partial after an earlier SentenceEnd", async () => {
+    const { session, socket } = await openSession();
+    const iterator = session.events[Symbol.asyncIterator]();
+    socket.onmessage?.({ data: JSON.stringify({ header: { name: "SentenceEnd", status: 20_000_000 }, payload: { index: 1, result: "第一句。" } }) });
+    await iterator.next();
+    socket.onmessage?.({ data: JSON.stringify({ header: { name: "TranscriptionResultChanged", status: 20_000_000 }, payload: { index: 2, result: "第二句" } }) });
+    await iterator.next();
+    await session.finish();
+    socket.onclose?.({ code: 1000, reason: "provider-finished" });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "第一句。第二句", cumulative: true } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
+  });
 });

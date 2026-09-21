@@ -44,14 +44,13 @@ test.describe("voice recall production workspace migration", () => {
     await asr.locator("summary").click();
     await expect(asr.getByLabel("语音识别服务")).toBeVisible();
     await asr.getByLabel("语音识别服务").selectOption("voice-asr-doubao-seed-streaming");
-    await expect(asr.getByLabel("Resource ID")).toHaveValue("volc.seedasr.sauc.duration");
-    await asr.getByLabel("语音识别服务").selectOption("voice-asr-aliyun-paraformer");
-    await asr.getByLabel("热词列表 ID").fill("test-local-vocabulary");
+    await expect(asr.getByText(/稳定默认参数/)).toBeVisible();
     await asr.getByLabel("语音识别服务").selectOption("voice-asr-aliyun-nls-shiyinshi-v1");
     await expect(asr.getByText(/识别模型由阿里云项目绑定/)).toBeVisible();
     await expect(asr.getByLabel("项目 AppKey")).toBeVisible();
     await expect(asr.getByLabel("Access Token")).toBeVisible();
-    await expect(asr.getByLabel("句级静音（毫秒）")).toHaveValue("800");
+    await expect(asr.getByLabel("句级静音（毫秒）")).toHaveCount(0);
+    await expect(asr.getByText("语义断句", { exact: true })).toHaveCount(0);
     expect(await asr.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
     await expect(llm.getByLabel("模型", { exact: true })).toBeVisible();
     const tts = providerDetails.locator("details").filter({ has: page.locator("summary").filter({ hasText: "TTS：" }) });

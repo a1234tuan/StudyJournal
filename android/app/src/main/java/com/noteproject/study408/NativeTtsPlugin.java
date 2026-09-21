@@ -121,17 +121,20 @@ public class NativeTtsPlugin extends Plugin {
 
     private void synthesizeAliyun(PluginCall call, String apiKey, String model, String voiceId, String text) throws Exception {
         String aliyunModel = model.isEmpty() ? "qwen3-tts-flash" : model;
+        boolean qwenAudio = aliyunModel.startsWith("qwen-audio-");
         JSONObject input = new JSONObject();
         input.put("text", text);
         input.put("voice", voiceId);
-        JSONObject parameters = new JSONObject();
-        parameters.put("format", "mp3");
-        parameters.put("sample_rate", 16000);
+        if (qwenAudio) {
+            input.put("format", "mp3");
+            input.put("sample_rate", 16000);
+        }
         JSONObject payload = new JSONObject();
         payload.put("model", aliyunModel);
         payload.put("input", input);
-        payload.put("parameters", parameters);
-        HttpURLConnection conn = openPost("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio");
+        HttpURLConnection conn = openPost(qwenAudio
+            ? "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+            : "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         writeBody(conn, payload.toString());
         int code = conn.getResponseCode();
@@ -142,6 +145,7 @@ public class NativeTtsPlugin extends Plugin {
         }
         JSONObject json = new JSONObject(new String(respBytes, StandardCharsets.UTF_8));
         String audioUrl = json.getJSONObject("output").getJSONObject("audio").getString("url");
+        if (audioUrl.startsWith("http://")) audioUrl = "https://" + audioUrl.substring(7);
         HttpURLConnection audioConn = trackedConnection(audioUrl);
         audioConn.setConnectTimeout(30000);
         audioConn.setReadTimeout(120000);
@@ -151,7 +155,7 @@ public class NativeTtsPlugin extends Plugin {
             call.reject("阿里云音频下载失败（" + audioCode + "）");
             return;
         }
-        resolveAudio(call, audioBytes);
+        resolveAudio(call, audioBytes, qwenAudio ? "audio/mpeg" : "audio/wav");
     }
 
     private void synthesizeDoubao(PluginCall call, String apiKey, String model, String voiceId, String appId, String text) throws Exception {
@@ -318,9 +322,17 @@ public class NativeTtsPlugin extends Plugin {
     }
 
     private void resolveAudio(PluginCall call, byte[] bytes) {
+        resolveAudio(call, bytes, "audio/mpeg");
+    }
+
+    private void resolveAudio(PluginCall call, byte[] bytes, String mimeType) {
+        if (bytes.length == 0) {
+            call.reject("TTS 返回了空音频。");
+            return;
+        }
         JSObject result = new JSObject();
         result.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP));
-        result.put("mimeType", "audio/mpeg");
+        result.put("mimeType", mimeType);
         call.resolve(result);
     }
 

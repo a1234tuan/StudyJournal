@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { VoiceSocket } from "./aliyunAsrTransport";
 import type { VoiceAudioFrame } from "./contracts";
@@ -101,5 +101,93 @@ describe("Doubao ASR transport", () => {
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "间隔复习。", cumulative: true, usageSeconds: 1.2 } });
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed", usageSeconds: 1.2 } });
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("finishes from recognized text when the terminal SAUC frame is lost", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const transport = createDoubaoAsrTransport({
+        secret: { apiKey: "new-key" },
+        completionGraceMs: 1_500,
+        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      });
+      const opened = transport.open({
+        profile,
+        sessionId: "session",
+        turnId: "turn",
+        operationId: "operation",
+        language: "zh-CN",
+        format: audioFrame.format,
+        signal: new AbortController().signal,
+      });
+      const socket = sockets[0];
+      socket.onopen?.({});
+      const session = await opened;
+      const iterator = session.events[Symbol.asyncIterator]();
+      socket.onmessage?.({ data: serverFrame({ result: { text: "豆包已有转写", utterances: [{ definite: true }] } }) });
+      await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "final", text: "豆包已有转写" } });
+      await session.finish();
+      const completion = iterator.next();
+      await vi.advanceTimersByTimeAsync(1_501);
+      await expect(completion).resolves.toEqual({ done: false, value: { type: "completed" } });
+      expect(socket.readyState).toBe(3);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("promotes a partial when the provider closes after finish", async () => {
+    const sockets: FakeSocket[] = [];
+    const transport = createDoubaoAsrTransport({
+      secret: { apiKey: "new-key" },
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    const opened = transport.open({
+      profile,
+      sessionId: "session",
+      turnId: "turn",
+      operationId: "operation",
+      language: "zh-CN",
+      format: audioFrame.format,
+      signal: new AbortController().signal,
+    });
+    const socket = sockets[0];
+    socket.onopen?.({});
+    const session = await opened;
+    const iterator = session.events[Symbol.asyncIterator]();
+    socket.onmessage?.({ data: serverFrame({ result: { text: "第二轮已有转写" } }) });
+    await iterator.next();
+    await session.finish();
+    socket.onclose?.({ code: 1000, reason: "provider-finished" });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "第二轮已有转写", cumulative: true } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
+  });
+
+  it("keeps a trailing partial after an earlier definite result", async () => {
+    const sockets: FakeSocket[] = [];
+    const transport = createDoubaoAsrTransport({
+      secret: { apiKey: "new-key" },
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    const opened = transport.open({
+      profile,
+      sessionId: "session",
+      turnId: "turn",
+      operationId: "operation",
+      language: "zh-CN",
+      format: audioFrame.format,
+      signal: new AbortController().signal,
+    });
+    const socket = sockets[0];
+    socket.onopen?.({});
+    const session = await opened;
+    const iterator = session.events[Symbol.asyncIterator]();
+    socket.onmessage?.({ data: serverFrame({ result: { text: "第一句。", utterances: [{ definite: true }] } }) });
+    await iterator.next();
+    socket.onmessage?.({ data: serverFrame({ result: { text: "第一句。第二句" } }) });
+    await iterator.next();
+    await session.finish();
+    socket.onclose?.({ code: 1000, reason: "provider-finished" });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "final", text: "第一句。第二句", cumulative: true } });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: "completed" } });
   });
 });

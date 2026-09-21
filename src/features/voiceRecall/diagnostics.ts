@@ -53,4 +53,16 @@ export class VoiceStageError extends Error {
   constructor(readonly stage: VoiceStage, cause: unknown) { super(`${labels[stage]}没有完成`, { cause }); this.name = "VoiceStageError"; }
 }
 export const stageFailure = (stage: VoiceStage, error: unknown): unknown => error instanceof DOMException && error.name === "AbortError" ? error : error instanceof VoiceStageError ? error : new VoiceStageError(stage, error);
-export const describeVoiceStage = (error: VoiceStageError) => `${labels[error.stage]}没有完成，请检查该阶段的配置或网络后重试。已确认的本机学习数据不会因此被删除。`;
+const safeStageCause = (cause: unknown): string | undefined => {
+  if (!(cause instanceof Error) || !cause.message.trim()) return undefined;
+  return cause.message.trim()
+    .replace(/([?&](?:token|appkey)=)[^&\s]+/gi, "$1[已隐藏]")
+    .replace(/((?:access[ _-]?token|appkey)\s*(?:[:=]|\s))["']?[A-Za-z0-9._~+/-]{6,}["']?/gi, "$1[已隐藏]")
+    .replace(/(bearer\s+)[A-Za-z0-9._~+/-]+/gi, "$1[已隐藏]")
+    .replace(/[A-Za-z0-9_-]{24,}/g, "[已隐藏]")
+    .slice(0, 180);
+};
+export const describeVoiceStage = (error: VoiceStageError) => {
+  const detail = safeStageCause(error.cause);
+  return `${labels[error.stage]}没有完成${detail ? `：${detail}` : ""}。请检查该阶段的配置或网络后重试。已确认的本机学习数据不会因此被删除。`;
+};

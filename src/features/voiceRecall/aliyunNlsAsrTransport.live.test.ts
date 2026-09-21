@@ -6,6 +6,7 @@
  * never persisted by this test and ordinary validation always skips it.
  */
 import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 
 import type { VoiceAudioFrame } from "./contracts";
 import type { AsrProviderProfile } from "./providerProfiles";
@@ -13,6 +14,7 @@ import { createAliyunNlsAsrTransport } from "./aliyunNlsAsrTransport";
 
 const appKey = process.env.VOICE_ASR_ALIYUN_NLS_APP_KEY;
 const accessToken = process.env.VOICE_ASR_ALIYUN_NLS_TOKEN;
+const pcmFile = process.env.VOICE_ASR_ALIYUN_NLS_PCM_FILE;
 const live = appKey && accessToken ? describe : describe.skip;
 
 const profile: AsrProviderProfile = {
@@ -43,14 +45,19 @@ live("Aliyun NLS ASR live acceptance", () => {
       format,
       signal: new AbortController().signal,
     });
-    for (let index = 0; index < 10; index += 1) {
-      const frame: VoiceAudioFrame = { sequence: index, capturedAtMonotonicMs: index * 100, format, data: new Uint8Array(3_200) };
+    const audio = pcmFile ? new Uint8Array(await readFile(pcmFile)) : new Uint8Array(32_000);
+    let sequence = 0;
+    for (let offset = 0; offset < audio.byteLength; offset += 3_200) {
+      const frame: VoiceAudioFrame = { sequence, capturedAtMonotonicMs: sequence * 100, format, data: audio.slice(offset, Math.min(offset + 3_200, audio.byteLength)) };
       await session.send(frame);
+      sequence += 1;
+      if (pcmFile) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     await session.finish();
-    const events: string[] = [];
-    for await (const event of session.events) events.push(event.type);
+    const events: Array<{ type: string; text?: string }> = [];
+    for await (const event of session.events) events.push(event);
     await session.close();
-    expect(events).toContain("completed");
+    expect(events.some((event) => event.type === "completed")).toBe(true);
+    if (pcmFile) expect(events.some((event) => event.type === "final" && Boolean(event.text?.trim()))).toBe(true);
   }, 30_000);
 });

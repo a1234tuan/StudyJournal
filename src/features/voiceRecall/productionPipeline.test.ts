@@ -74,7 +74,7 @@ describe("createProductionVoiceSession", () => {
     expect(session.ttsVoice).toBeTruthy();
   });
 
-  it("prefers a device-local ASR override from the voice service config", async () => {
+  it("ignores legacy ASR overrides and keeps the selected built-in profile stable", async () => {
     seedAllSecrets();
     const session = await createProductionVoiceSession({
       settings: settings(),
@@ -91,7 +91,8 @@ describe("createProductionVoiceSession", () => {
         ttsVoice: "",
       },
       asrTransportFactory: (profile) => {
-        expect(profile.endpoint).toBe("wss://relay.example/asr");
+        expect(profile.endpoint).toBe("wss://dashscope.aliyuncs.com/api-ws/v1/inference");
+        expect(profile.model).toBe("paraformer-realtime-v2");
         return { open: async () => { throw new Error("not opened in this test"); } };
       },
     });
