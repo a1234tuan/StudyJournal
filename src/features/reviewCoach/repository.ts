@@ -1,5 +1,6 @@
 import Dexie, { type Table } from "dexie";
 
+import { StaleRecordError } from "../../lib/uiError";
 import { db as defaultDatabase, type StudyJournalDatabase } from "../../db/database";
 import type { RecordBlock } from "../../types";
 import type {
@@ -629,7 +630,7 @@ export class DexieReviewCoachRepository implements ReviewCoachRepository {
       [this.database.blocks, this.database.recordDrafts, this.database.cloudSyncMutation, ...formalTables(this.database)],
       async () => {
         if (expectedRecord && !sameEntity(await this.database.blocks.get(record.id), expectedRecord)) {
-          throw new ReviewCoachValidationError("stale-record", "Record changed while editing; the local draft must be reviewed before saving.");
+          throw new StaleRecordError();
         }
         const currentRows = await this.database.decisionBlocks.where("recordId").equals(record.id).toArray();
         const currentById = new Map(currentRows.map((block) => [block.id, block]));

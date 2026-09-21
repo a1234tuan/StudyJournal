@@ -4,6 +4,8 @@
 
 ## 当前接入与验收
 
+- [云同步白盒复核修复与验收](audit/cloud-sync-whitebox-remediation-2026-09-21.md)：计划回收事务、删除守卫、过期保存提示、查询计数断言及原报告勘误；含保留拒写的异常验证链和未部署边界。
+
 - [学习助教同步写入修复](cloud-sync-coach-write-boundaries-2026-09-21.md)：v0.2.5 后的角色绑定、启动选任务、队列幂等、反馈自动执行/旧回调和复查任务关联修复；区分首轮手机安装与后续未部署源码，以及真实账号验证边界。
 - [云同步收敛专项修复](cloud-sync-convergence-fixes-2026-09-21.md)：软删除保留、事务 mutation、未知/部分提交核对、隐藏修订保护、助教旧回调、编辑草稿与语音恢复生命周期；含隔离回归和未部署边界。
 - [语音服务配置](voice-recall-provider-configuration.md)：设备本机凭据、ASR/LLM/TTS 选择、平台限制和排障入口。

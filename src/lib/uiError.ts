@@ -6,6 +6,7 @@ export type UiErrorContext =
   | "adaptive-review"
   | "voice-recall"
   | "record-save"
+  | "record-draft-save"
   | "ai-request"
   | "cloud-sync"
   | "generic";
@@ -23,10 +24,22 @@ const CONTEXT_MESSAGES: Record<UiErrorContext, string> = {
   "adaptive-review": "暂时无法更新学习助教任务。当前回答仍保留在本页，请重试。",
   "voice-recall": "语音复述操作没有完成。当前转写和本机学习数据不会因此上传，请重试。",
   "record-save": "保存失败。内容已存于本机草稿，请重试。",
+  "record-draft-save": "本机草稿保存失败。请勿关闭页面，请先复制保留当前内容后重试。",
   "ai-request": "AI 暂时无法完成本次请求。你的提问已保留，可以重试。",
   "cloud-sync": "云同步未完成。请检查网络后重试，本机数据不会因此删除。",
   generic: "操作没有完成，请稍后重试。",
 };
+
+const STALE_RECORD_MESSAGE = "正式内容已更新，请核对本机草稿与最新内容后再保存，避免覆盖其他设备的修改。";
+
+export class StaleRecordError extends Error {
+  readonly code = "stale-record";
+
+  constructor() {
+    super(STALE_RECORD_MESSAGE);
+    this.name = "StaleRecordError";
+  }
+}
 
 let diagnosticSequence = 0;
 
@@ -36,12 +49,14 @@ const diagnosticPrefix = (context: UiErrorContext): string => context
   .join("")
   .slice(0, 3);
 
-export const normalizeUiError = (_error: unknown, context: UiErrorContext): UiError => {
+export const normalizeUiError = (error: unknown, context: UiErrorContext): UiError => {
   diagnosticSequence = (diagnosticSequence + 1) % 46_656;
   const time = Date.now().toString(36).slice(-5).toUpperCase();
   const sequence = diagnosticSequence.toString(36).padStart(3, "0").toUpperCase();
   return {
-    message: CONTEXT_MESSAGES[context],
+    message: context === "record-save" && error instanceof StaleRecordError
+      ? STALE_RECORD_MESSAGE
+      : CONTEXT_MESSAGES[context],
     diagnosticId: `${diagnosticPrefix(context)}-${time}${sequence}`,
   };
 };

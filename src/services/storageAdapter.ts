@@ -1,5 +1,7 @@
 import Dexie, { liveQuery } from "dexie";
 
+import { StaleRecordError } from "../lib/uiError";
+
 import type {
   AiChatAttachment,
   AiChatMessage,
@@ -1079,7 +1081,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       await db.transaction("rw", [db.blocks, db.recordDrafts, db.cloudSyncMutation], async () => {
         const current = options.expectedRecord ? await db.blocks.get(saved.id) : undefined;
         if (options.expectedRecord && (!current || !deepEqualIgnoring(current, options.expectedRecord, []))) {
-          throw new Error("正式内容已更新，请核对本机草稿后再保存。");
+          throw new StaleRecordError();
         }
         if (!isUnchangedBlock || saved.type === "studySession") await bumpCloudSyncMutationInTransaction();
         await db.blocks.put(saved);
@@ -1788,6 +1790,7 @@ export class DexieStorageAdapter implements StorageAdapter {
   async saveDailyPlan(plan: DailyPlan): Promise<DailyPlan> {
     return db.transaction("rw", db.dailyPlans, db.cloudSyncMutation, async () => {
       const current = await db.dailyPlans.get(plan.id);
+      if (current?.deletedAt) throw new Error("计划已删除，不能通过保存恢复。");
       if (current && deepEqualIgnoring(current, plan, ["updatedAt"])) return current;
       const saved = touch(plan);
       await bumpCloudSyncMutationInTransaction();
@@ -1852,14 +1855,6 @@ export class DexieStorageAdapter implements StorageAdapter {
   async reclaimEmptyPlanRecords(options: { planIds?: string[]; skipRecordIds?: string[] } = {}): Promise<string[]> {
     const { planIds, skipRecordIds = [] } = options;
     const skip = new Set(skipRecordIds);
-    // Read the raw table, not `listDailyPlans`: soft-deleted plans are candidates too.
-    const plans = (await db.dailyPlans.toArray())
-      .filter((plan) => plan.linkedRecordId && (planIds ? planIds.includes(plan.id) : true));
-    const candidates = [...new Set(plans.map((plan) => plan.linkedRecordId!))]
-      .filter((recordId) => !skip.has(recordId));
-    if (candidates.length === 0) {
-      return [];
-    }
 
     const reclaimed: string[] = [];
     // One transaction covering the delete scope plus `dailyPlans`. Dexie
@@ -1868,6 +1863,11 @@ export class DexieStorageAdapter implements StorageAdapter {
     // interleaving is exactly the bug this closes. Widening the scope here is
     // what lets the purge body be reused instead of nested.
     await db.transaction("rw", [...this.blockPurgeStores(), db.dailyPlans, db.cloudSyncMutation], async () => {
+      const plans = (await db.dailyPlans.toArray())
+        .filter((plan) => plan.linkedRecordId && (planIds ? planIds.includes(plan.id) : true));
+      const candidates = [...new Set(plans.map((plan) => plan.linkedRecordId!))]
+        .filter((recordId) => !skip.has(recordId));
+      if (candidates.length === 0) return;
       const assets = await db.assets.toArray();
       const doomed: Block[] = [];
       for (const recordId of candidates) {

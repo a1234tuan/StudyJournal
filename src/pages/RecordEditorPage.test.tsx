@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StaleRecordError } from "../lib/uiError";
 
 import type { Asset, RecordBlock, RecordDraft, RecordReviewLog, RecordReviewState, SubjectConfig } from "../types";
 
@@ -228,6 +229,38 @@ afterEach(() => {
 });
 
 describe("RecordEditorPage", () => {
+  it("keeps the original draft base and gives actionable guidance for a transaction-level stale save", async () => {
+    const onSave = vi.fn().mockRejectedValue(new StaleRecordError());
+    const { onGetDraft, onSaveDraft, onDeleteDraft, saveButton } = renderEditor({ onSave });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalled());
+    act(() => {
+      richEditorMock.html = "<p>local answer</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    fireEvent.click(saveButton());
+    expect(await screen.findByText(/正式内容已更新，请核对本机草稿与最新内容/)).toBeInTheDocument();
+    expect(onSaveDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+      baseUpdatedAt: record.updatedAt,
+      draft: expect.objectContaining({ contentHtml: "<p>local answer</p>" }),
+    }));
+    expect(onDeleteDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not claim the draft is saved when stale-save recovery also fails", async () => {
+    const onSave = vi.fn().mockRejectedValue(new StaleRecordError());
+    const onSaveDraft = vi.fn().mockRejectedValue(new Error("secret storage failure"));
+    const { onGetDraft, onDeleteDraft, saveButton } = renderEditor({ onSave, onSaveDraft });
+    await waitFor(() => expect(onGetDraft).toHaveBeenCalled());
+    act(() => {
+      richEditorMock.html = "<p>unsaved answer</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(screen.getAllByText(/请勿关闭页面/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/内容已存于本机草稿/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/secret storage failure/)).not.toBeInTheDocument();
+    expect(onDeleteDraft).not.toHaveBeenCalled();
+  });
   const decisionBlockHtml = '<record-decision-block data-decision-block-id="block-1" data-content-version="1"><p>需要复习</p></record-decision-block>';
 
   it("automatically enrolls a newly created record when its first save contains a decision block", async () => {
@@ -590,7 +623,7 @@ describe("RecordEditorPage", () => {
 
     // The failure is reported with the shared uiError wording plus a diagnostic id,
     // and never with the raw provider/indexeddb message.
-    expect(await screen.findByText(/^保存失败。内容已存于本机草稿，请重试。（诊断编号 [A-Z]+-[0-9A-Z]+）$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^本机草稿保存失败。请勿关闭页面，请先复制保留当前内容后重试。（诊断编号 [A-Z]+-[0-9A-Z]+）$/)).toBeInTheDocument();
     expect(screen.queryByText(/storage is full/)).not.toBeInTheDocument();
     expect(screen.getByText("本机草稿保存失败")).toBeInTheDocument();
 
@@ -600,7 +633,7 @@ describe("RecordEditorPage", () => {
       richEditorMock.props.onChange(richEditorMock.html);
     });
     await waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByText(/^保存失败。内容已存于本机草稿/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/^本机草稿保存失败。请勿关闭页面/)).not.toBeInTheDocument());
     expect(screen.getByText("草稿已存于本机")).toBeInTheDocument();
   });
 

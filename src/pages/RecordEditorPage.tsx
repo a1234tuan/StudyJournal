@@ -328,12 +328,12 @@ export const RecordEditorPage = ({
         decisionBlockOptions.decisionBlockRemovals?.length || decisionBlockOptions.restoredDecisionBlocks?.length,
       );
       if (restoreLocked || draftLoadingRef.current || (!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
-        return;
+        return false;
       }
 
       const task = draftSaveQueueRef.current.then(async () => {
         if ((!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
-          return;
+          return false;
         }
         setDraftSaveStatus("saving");
         try {
@@ -347,17 +347,18 @@ export const RecordEditorPage = ({
           });
           setDraftSaveStatus("saved");
           setDraftSaveError(null);
+          return true;
         } catch (error) {
           // Keep the queue chain alive for later retries, but surface a diagnosable
           // message instead of silently swallowing the failure.
           setDraftSaveStatus("error");
-          setDraftSaveError(formatUiError(error, "record-save"));
+          setDraftSaveError(formatUiError(error, "record-draft-save"));
           throw error;
         }
       });
 
-      draftSaveQueueRef.current = task.catch(() => undefined);
-      await task;
+      draftSaveQueueRef.current = task.then(() => undefined, () => undefined);
+      return task;
     },
     [onSaveDraft, restoreLocked],
   );
@@ -382,7 +383,7 @@ export const RecordEditorPage = ({
       const recordId = record.id;
       onDraftFlushPendingChange?.(recordId, true);
       return flushDraft(nextDraft, options)
-        .catch(() => undefined)
+        .catch(() => false)
         .finally(() => onDraftFlushPendingChange?.(recordId, false));
     },
     [flushDraft, onDraftFlushPendingChange, record.id],
@@ -823,8 +824,10 @@ export const RecordEditorPage = ({
       if (remoteRecordChangedRef.current || latestRecordRef.current.updatedAt !== formalRecordRef.current.updatedAt || hasDraftChanges(latestRecordRef.current, formalRecordRef.current)) {
         committingRef.current = false;
         ignoreEditorChangesRef.current = false;
-        await flushDraftDetached(draftRef.current, { force: true });
-        setSaveError("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。");
+        const draftSaved = await flushDraftDetached(draftRef.current, { force: true });
+        setSaveError(draftSaved
+          ? "正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。"
+          : formatUiError(undefined, "record-draft-save"));
         return;
       }
 
@@ -865,8 +868,8 @@ export const RecordEditorPage = ({
       const fallbackDraft = draftToSave ?? draftRef.current;
       draftRef.current = fallbackDraft;
       setDraft(fallbackDraft);
-      await flushDraftDetached(fallbackDraft, { force: true });
-      setSaveError(formatUiError(error, "record-save"));
+      const draftSaved = await flushDraftDetached(fallbackDraft, { force: true });
+      setSaveError(formatUiError(error, draftSaved ? "record-save" : "record-draft-save"));
     } finally {
       committingRef.current = false;
       setSaving(false);

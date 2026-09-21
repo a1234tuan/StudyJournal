@@ -1609,7 +1609,6 @@ const persistLedgers = async (
   state: CloudSyncStateRecord,
   entities: RemoteEntity[],
   events: RemoteReviewEvent[],
-  revision: number,
   completeThroughRevision?: number,
   pulledThroughRevision?: number,
 ) => {
@@ -1769,15 +1768,8 @@ const publish = async (
     metadataCommitted = true;
     // Advance headRevision before recording the local ledger, not after. The Firestore batch write
     // above is the true point of no return — once it succeeds, this revision's data is durably
-    // stored regardless of what happens next. If the app is killed between these two calls:
-    //  - headRevision-first (this order): the server already reflects the new revision, so every
-    //    device (including this one) can see it on the very next pull. This device's local ledger
-    //    is stale, so its next sync harmlessly re-diffs and re-uploads the same content under a new
-    //    revision — wasteful but self-correcting on this device's own next attempt.
-    //  - ledger-first (the old order): the local ledger says "already synced," so this device's own
-    //    retries find nothing to publish and release the lock without advancing headRevision. The
-    //    just-written entities sit above headRevision — invisible to every device, including this
-    //    one — until some unrelated future edit anywhere finally pushes headRevision past them.
+    // stored regardless of what happens next.
+
     await updateOperation(lock.operationId, { phase: "releasing" });
     const storageSummary = await cloudStorageSummaryFor(exported.entities, lock.revision, exported.assetBlobs).catch(() => undefined);
     await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, true, storageSummary);
@@ -1785,7 +1777,7 @@ const publish = async (
       && state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision
       ? lock.revision
       : undefined;
-    await persistLedgers(state, remoteEntities, remoteEvents, lock.revision, completeThroughRevision, lock.revision);
+    await persistLedgers(state, remoteEntities, remoteEvents, completeThroughRevision, lock.revision);
     await updateOperation(lock.operationId, { status: "succeeded", phase: "releasing" });
     return { revision: lock.revision, uploaded: remoteEntities.length + remoteEvents.length };
   } catch (error) {
@@ -2329,7 +2321,7 @@ const reconcileOperation = async (user: User, operation: CloudSyncOperationRecor
         }
       }
       const state = await localState(user.uid);
-      await persistLedgers(state, matchedEntities, matchedEvents, operation.revision);
+      await persistLedgers(state, matchedEntities, matchedEvents);
       await updateOperation(operation.operationId, {
         status: "succeeded",
         phase: "reconciling",
@@ -2413,7 +2405,7 @@ const reconcileOperation = async (user: User, operation: CloudSyncOperationRecor
         const repair = await acquireLock(user.uid, operation.deviceId, operation.operationId + ":partial-repair:" + newId());
         await releaseLock(user.uid, repair.deviceId, repair.operationId, repair.revision, true);
       }
-      await persistLedgers(await localState(user.uid), partialEntities, partialEvents, operation.revision);
+      await persistLedgers(await localState(user.uid), partialEntities, partialEvents);
       await updateOperation(operation.operationId, {
         status: "failed",
         phase: "reconciling",
@@ -2568,7 +2560,7 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
       // random local IDs can never create a first-sync conflict or upload.
       const allRemote = await getAllRemote(user.uid, remote.state);
       await applyRemote(user.uid, initialExport, allRemote, options, initialEpoch);
-      await persistLedgers(state, allRemote.entities, allRemote.reviewEvents, remote.state.headRevision, remote.state.headRevision);
+      await persistLedgers(state, allRemote.entities, allRemote.reviewEvents, remote.state.headRevision);
       const storageSummary = await cloudStorageSummaryFor(allRemote.entities, remote.state.headRevision, initialExport.assetBlobs).catch(() => undefined);
       await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, false, storageSummary);
       await updateOperation(operationId, { status: "succeeded", phase: "releasing" });
@@ -2608,13 +2600,13 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
         && state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision
         ? remote.state.headRevision
         : undefined;
-      await persistLedgers(state, remoteChanges.entities, remoteChanges.reviewEvents, remote.state.headRevision, completeThroughRevision, remote.state.headRevision);
+      await persistLedgers(state, remoteChanges.entities, remoteChanges.reviewEvents, completeThroughRevision, remote.state.headRevision);
       downloaded = remoteChanges.entities.length + remoteChanges.reviewEvents.length;
       restored = true;
     }
     if (!restored && downloaded === 0 && remote.state.headRevision > state.lastPulledRevision) {
       const completeThroughRevision = state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision ? remote.state.headRevision : undefined;
-      await persistLedgers(state, [], [], remote.state.headRevision, completeThroughRevision, remote.state.headRevision);
+      await persistLedgers(state, [], [], completeThroughRevision, remote.state.headRevision);
     }
     const skipReExport = downloaded === 0 && !restored;
     const afterPullState = skipReExport && remote.state.headRevision <= state.lastPulledRevision ? state : await localState(user.uid);
@@ -2804,7 +2796,7 @@ export const resolveCloudSyncConflict = async (
         new Date().toISOString(),
       );
       await storage.restoreCloudSyncSnapshotIfUnchanged(cloudSnapshot, initialEpoch);
-      await persistLedgers(state, dataset.entities, dataset.reviewEvents, remote.state.headRevision, dataset.completeThroughRevision);
+      await persistLedgers(state, dataset.entities, dataset.reviewEvents, dataset.completeThroughRevision);
       await lease.assert();
       const storageSummary = await cloudStorageSummaryFor(dataset.entities, remote.state.headRevision, localExport.assetBlobs).catch(() => undefined);
       await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, false, storageSummary);
