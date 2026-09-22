@@ -67,9 +67,6 @@ export const ReviewCoachWorkbench = ({
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
 
-  // The workbench no longer selects a subset of blocks to analyse: the user's
-  // own feedback already decided what needs attention. A single action analyses
-  // everything pending and produces the first task.
   const maxInputTokens = provider ? maxAnalysisInputTokensForProvider(provider) : 57_536;
   const plan = useMemo(() => planAnalysisBatches(planningBlocks, maxInputTokens), [maxInputTokens, planningBlocks]);
   const pausedBatches = snapshot.analysisBatches.filter((item) => ["confirmed", "running"].includes(item.status) && !item.deletedAt);
@@ -167,7 +164,7 @@ export const ReviewCoachWorkbench = ({
           </div>
 
           {plan.oversized.length > 0 && (
-            <p className="review-coach-error">{plan.oversized.map((item) => item.recordTitle).join("、")} 超过模型上下文上限，请缩小或拆分决策块。</p>
+            <p className="review-coach-error">{plan.oversized.map((item) => item.recordTitle).join("、")} 超过模型上下文上限，将保留在待分析队列，不会发送或截断。请缩小或拆分决策块；本次只分析其余 {plan.subBatches.reduce((count, batch) => count + batch.blocks.length, 0)} 个重点。</p>
           )}
 
           <p className="review-coach-provider-note">
@@ -186,8 +183,8 @@ export const ReviewCoachWorkbench = ({
           <button
             type="button"
             className="primary-button"
-            disabled={plan.oversized.length > 0 || Boolean(busyAction)}
-            onClick={() => void run("analysis", () => onAnalyze(planningBlocks.map((item) => item.decisionBlockId), false), "分析完成，已生成复习任务。")}
+            disabled={plan.subBatches.length === 0 || Boolean(busyAction)}
+            onClick={() => void run("analysis", () => onAnalyze(plan.subBatches.flatMap((batch) => batch.blocks.map((item) => item.decisionBlockId)), false), plan.oversized.length ? "可分析的重点已完成，超限重点仍保留在待分析队列。" : "分析完成，已生成复习任务。")}
             aria-busy={busyAction === "analysis"}
           >
             <BrainCircuit size={17} />{busyAction === "analysis" ? "正在分析并出题…" : "开始分析并出题"}

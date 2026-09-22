@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { useState } from "react";
@@ -15,6 +15,7 @@ import { VoiceRecallRepository } from "./repository";
 import { VoiceRecallRuntimeController } from "./runtimeController";
 import { VoiceRecallWorkspace } from "./VoiceRecallWorkspace";
 import { WebVoiceCaptureAdapter } from "./webVoiceCapture";
+import { VoiceAudioFocusManager } from "./audioFocus";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -80,6 +81,111 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallWorkspace", () => {
+  it("makes an oversized history summary editable without truncation and reports a failed write", async () => {
+    const { database, runtime, repository } = await openWorkspace();
+    const sessionId = await runtime.createSession({ mode: "free-topic", inputMode: "tap-to-record", source: { kind: "free-topic" } });
+    await repository.putTurn({ id: "long-turn", sessionId, sequence: 0, operationId: "long-operation", status: "completed", teacherText: "回复", confirmedText: "文".repeat(13000), createdAt: now, updatedAt: now });
+    await runtime.end();
+    const save = vi.spyOn(repository, "saveHistory").mockRejectedValueOnce(new Error("database unavailable"));
+    const view = render(<VoiceRecallWorkspace route={{ screen: "summary", sessionId, sourceKind: "free-topic", recordIds: [], returnTab: "review", topic: "主题" }} blocks={[]} assets={[]} subjects={subjects} templates={[]} settings={DEFAULT_SETTINGS} onRouteChange={() => undefined} onBack={() => undefined} onCreateJournal={async () => undefined} repository={repository} runtime={runtime} />);
+    const editor = await screen.findByLabelText("本机历史摘要");
+    await waitFor(() => expect((editor as HTMLTextAreaElement).value.length).toBeGreaterThan(12000));
+    expect(screen.getByRole("button", { name: "保留为本机历史" })).toBeDisabled();
+    expect(screen.getByText(/不会自动截断/)).toBeInTheDocument();
+    fireEvent.change(editor, { target: { value: "保".repeat(12000) } });
+    fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
+    await screen.findByRole("alert");
+    expect(editor).toHaveValue("保".repeat(12000));
+    expect(await repository.listHistory()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
+    await screen.findByRole("button", { name: "已保留在本机" });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect((await repository.listHistory())[0].summary).toBe("保".repeat(12000));
+    expect((await repository.listTurns(sessionId))[0].confirmedText).toHaveLength(13000);
+    view.unmount();
+    database.close();
+  });
+  it("does not send previously selected record content after switching to a free topic", async () => {
+    const record: RecordBlock = { id: "private", type: "record", date: "2026-09-22", order: 0, subject: "计算机", title: "Private", contentHtml: "<p>PRIVATE_MATERIAL_MARKER_482</p>", tags: [], assets: [], formulas: [], mistakeRefs: [], createdAt: now, updatedAt: now };
+    const { database, runtime, repository, Harness } = await openWorkspace({ blocks: [record], initialRoute: { screen: "start", returnTab: "review", sourceKind: "coach-task", taskId: "task", recordIds: [record.id] } });
+    const respond = vi.spyOn(runtime, "respondTurn");
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByRole("tab", { name: "从学习资料开始" }));
+    expect(screen.getByRole("heading", { name: "Private" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "NEW_TOPIC_596" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    fireEvent.click(screen.getByRole("button", { name: "字幕与键盘输入" }));
+    fireEvent.change(screen.getByLabelText("本轮转写校对"), { target: { value: "开始讨论" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
+    await waitFor(() => expect(respond).toHaveBeenCalled());
+    const request = JSON.stringify(respond.mock.calls[0][0].messages);
+    expect(request).not.toContain("PRIVATE_MATERIAL_MARKER_482");
+    expect(request).toContain("NEW_TOPIC_596");
+    const stored = await repository.getSession(runtime.activeSessionId!);
+    expect(stored?.sourceRecordIds).toEqual([]);
+    expect(stored?.sourceTaskId).toBeUndefined();
+    await runtime.end();
+    view.unmount();
+    database.close();
+  });
+
+  it.each(["pointerUp", "pointerCancel", "lostPointerCapture"])("cancels push-to-talk startup on %s before audio focus is acquired", async (eventName) => {
+    let release!: () => void;
+    const focus = vi.spyOn(VoiceAudioFocusManager.prototype, "acquire").mockImplementation(() => new Promise<void>((resolve) => { release = resolve; }));
+    const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () {});
+    const { database, runtime, Harness } = await openWorkspace();
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
+    fireEvent.click(screen.getByRole("button", { name: /按住讲话/ }));
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    const button = screen.getByRole("button", { name: "按住说话" });
+    fireEvent.pointerDown(button);
+    await waitFor(() => expect(focus).toHaveBeenCalled());
+    if (eventName === "pointerUp") fireEvent.pointerUp(button);
+    else if (eventName === "pointerCancel") fireEvent.pointerCancel(button);
+    else fireEvent.lostPointerCapture(button);
+    await act(async () => { release(); });
+    expect(capture).not.toHaveBeenCalled();
+    expect(button).not.toHaveClass("is-capturing");
+    await runtime.end();
+    view.unmount();
+    database.close();
+  });
+
+  it("offers a paused checkpoint after pause-and-leave without starting capture", async () => {
+    const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () {});
+    const { database, runtime, repository, Harness } = await openWorkspace();
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "保留的主题" } });
+    fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
+    fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并连接" }));
+    await waitFor(() => expect(runtime.snapshot?.status).toBe("listening"));
+    const sessionId = runtime.activeSessionId;
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    fireEvent.click(await screen.findByRole("button", { name: /暂停并离开/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /恢复暂停通话/ }));
+    await screen.findByRole("button", { name: "继续通话" });
+    expect(runtime.activeSessionId).toBe(sessionId);
+    expect(runtime.snapshot?.status).toBe("paused");
+    expect(capture).not.toHaveBeenCalled();
+    expect(await repository.listHistory()).toEqual([]);
+    await runtime.end();
+    view.unmount();
+    database.close();
+  });
   it("starts automatic capture after the user-first connection", async () => {
     let finishPlayback: () => void = () => undefined;
     const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () { return; });
@@ -214,7 +320,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "结束并查看摘要" }));
 
     await screen.findByRole("heading", { name: "本次复述摘要" });
-    expect(screen.getByText(/这是人工确认后的正式回答/)).toBeInTheDocument();
+    expect((screen.getByLabelText("本机历史摘要") as HTMLTextAreaElement).value).toContain("这是人工确认后的正式回答");
     fireEvent.click(screen.getByRole("button", { name: "保留为本机历史" }));
     await waitFor(async () => expect(await repository.listHistory()).toHaveLength(1));
 

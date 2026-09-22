@@ -92,6 +92,7 @@ export interface TtsStreamAdapter {
 
 export interface VoiceRecallSource {
   kind: "review-home" | "record" | "review-card" | "coach-task" | "free-topic";
+  topic?: string;
   recordIds?: string[];
   taskId?: string;
   returnIdentity?: string;

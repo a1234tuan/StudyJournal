@@ -228,6 +228,7 @@ export interface VoiceRecallCallViewProps {
   onEnd: () => void;
   onRetry: () => void;
   onResume: () => void;
+  resumeDisabled?: boolean;
   onTranscriptChange: (value: string) => void;
   onSubmitTranscript: () => void;
   onContinueSupplement?: () => void;
@@ -265,17 +266,24 @@ export interface VoiceRecallSummaryViewProps {
   summary: string;
   turnCount: number;
   historySaved: boolean;
+  historySummary?: string;
+  historyLimit?: number;
+  onHistorySummaryChange?: (summary: string) => void;
+  saving?: boolean;
+  message?: string;
   onBack: () => void;
   onSaveHistory: () => void;
   onCreateJournal: () => void;
 }
 
-export const VoiceRecallSummaryView = ({ theme, summary, turnCount, historySaved, onBack, onSaveHistory, onCreateJournal }: VoiceRecallSummaryViewProps) => (
+export const VoiceRecallSummaryView = ({ theme, summary, turnCount, historySaved, onBack, onSaveHistory, onCreateJournal, historySummary = summary, historyLimit = 12000, onHistorySummaryChange, saving = false, message }: VoiceRecallSummaryViewProps) => (
   <main className="vr-shell vr-summary page-section-transition" data-visual-theme={theme}>
     <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回来源" onClick={onBack}><X /></button><h1>本次复述摘要</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-summary-hero"><span className="vr-eyebrow"><Sparkles />主动回忆完成</span><h1>{turnCount ? `完成 ${turnCount} 轮复述` : "这次没有形成正式回答"}</h1><p>先确认内容，再决定是否保留为本机历史或整理为正式日志。</p></section>
     <section className="vr-summary-sheet"><pre>{summary || "本次没有形成可保留的正式转写。"}</pre></section>
-    <div className="vr-summary-actions"><button type="button" className="vr-primary-button" disabled={historySaved || !turnCount} onClick={onSaveHistory}><History />{historySaved ? "已保留在本机" : "保留为本机历史"}</button><button type="button" disabled={!turnCount} onClick={onCreateJournal}><BookOpen />整理为日志</button><button type="button" onClick={onBack}>不保留并返回</button></div>
+    {onHistorySummaryChange && <section className="vr-history-editor"><label htmlFor="voice-history-summary">本机历史摘要</label><textarea id="voice-history-summary" rows={8} value={historySummary} disabled={saving || historySaved} onChange={(event) => onHistorySummaryChange(event.target.value)} /><p>{historySummary.length} / {historyLimit} 字。只保存此处确认的摘要；完整通话仍可通过“整理为日志”保留。</p>{historySummary.length > historyLimit && <p role="status">摘要超过上限，请手动精简后保存；不会自动截断。未保留的完整通话仍受 7 天清理规则约束。</p>}</section>}
+    {message && <p className="vr-message" role="alert">{message}</p>}
+    <div className="vr-summary-actions"><button type="button" className="vr-primary-button" disabled={historySaved || saving || !turnCount || !historySummary.trim() || historySummary.length > historyLimit} onClick={onSaveHistory}><History />{historySaved ? "已保留在本机" : saving ? "正在保存…" : "保留为本机历史"}</button><button type="button" disabled={!turnCount || saving} onClick={onCreateJournal}><BookOpen />整理为日志</button><button type="button" disabled={saving} onClick={onBack}>不保留并返回</button></div>
   </main>
 );
 
@@ -323,6 +331,7 @@ export const VoiceRecallCallView = ({
   onEnd,
   onRetry,
   onResume,
+  resumeDisabled = false,
   onTranscriptChange,
   onSubmitTranscript,
   onContinueSupplement,
@@ -370,7 +379,7 @@ export const VoiceRecallCallView = ({
         </> : <>
         {onSpeechRateChange && <label className="vr-speech-rate">语速（下轮生效）<select aria-label="语音回复速度" value={speechRate} onChange={(event) => onSpeechRateChange(Number(event.target.value))}><option value={1}>1.0×</option><option value={1.2}>1.2×</option><option value={1.5}>1.5×</option></select></label>}
         {state.status === "failed" ? <button className="vr-retry" type="button" onClick={onRetry}><RotateCcw />重新连接</button>
-          : state.status === "paused" ? <button className="vr-retry" type="button" onClick={onResume}><Play />继续通话</button>
+          : state.status === "paused" ? <button className="vr-retry" type="button" disabled={resumeDisabled} aria-busy={resumeDisabled} onClick={onResume}><Play />继续通话</button>
             : state.status === "ended" ? <button className="vr-retry" type="button" onClick={onBack}><Check />返回复习</button>
               : <>
                 <button className={`vr-control-secondary ${state.userMuted ? "is-active" : ""}`} type="button" aria-pressed={state.userMuted} onClick={onMute}>{state.userMuted ? <MicOff /> : <Mic />}<span>{state.userMuted ? "已静音" : "静音"}</span></button>
@@ -378,7 +387,7 @@ export const VoiceRecallCallView = ({
                   if (transcriptEditorOpen || !captionsVisible) onToggleCaptions();
                   onToggleTranscriptEditor();
                 }}><Captions /><span>{transcriptEditorOpen ? "收起输入" : "字幕输入"}</span></button>
-                <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={onPressStart} onPointerUp={onPressEnd} onPointerCancel={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
+                <div className="vr-main-control-wrap"><button className={`vr-main-control ${active ? "is-capturing" : ""}`} type="button" aria-label={mainControl.label} disabled={["connecting", "reconnecting", "ending", "ended", "failed", "paused"].includes(state.status)} onClick={onMainClick} onPointerDown={(event) => { if (event.button > 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); onPressStart(); }} onPointerUp={onPressEnd} onPointerCancel={onPressEnd} onLostPointerCapture={onPressEnd}><MainControlIcon /></button><span>{mainControl.label}</span></div>
                 {pendingPlayback && state.status === "listening" && onContinuePlayback && <button type="button" className="vr-control-secondary" onClick={onContinuePlayback}><Play /><span>继续回复</span></button>}
                 <button className="vr-control-secondary vr-control-end" type="button" aria-label="结束并查看摘要" onClick={onEnd}><X /><span>结束</span></button>
               </>}

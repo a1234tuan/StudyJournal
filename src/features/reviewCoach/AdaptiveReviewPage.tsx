@@ -101,6 +101,8 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
   const captureAdapterRef = useRef<VoiceCaptureAdapter>();
   const captureAbortRef = useRef<AbortController>();
   const capturedFramesRef = useRef(0);
+  const draftIdentityRef = useRef({ taskId, turnId: currentTurn?.id });
+  const sourceAvailable = Boolean(task && blueprint && record);
   // Leaving the page must cancel an in-flight paid generation, not just hide it.
   const requestAbortRef = useRef<AbortController>(new AbortController());
   useEffect(() => {
@@ -108,7 +110,7 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
     requestAbortRef.current = controller;
     setBusy(undefined);
     return () => { controller.abort(); };
-  }, [taskId]);
+  }, [taskId, sourceAvailable]);
 
   const stopVoiceCapture = async () => {
     captureAbortRef.current?.abort();
@@ -120,12 +122,18 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
 
   useEffect(() => () => { void stopVoiceCapture(); }, []);
   useEffect(() => {
+    const previous = draftIdentityRef.current;
+    if (previous.taskId === taskId && (!currentTurn?.id || previous.turnId === currentTurn.id)) return;
+    draftIdentityRef.current = { taskId, turnId: currentTurn?.id };
     setAnswer("");
     setAnswerImages([]);
     setAnswerImageInputMode("vision");
     setVoiceTranscriptConfirmed(false);
     void stopVoiceCapture();
-  }, [currentTurn?.id]);
+  }, [taskId, currentTurn?.id]);
+  useEffect(() => {
+    if (!sourceAvailable) void stopVoiceCapture();
+  }, [sourceAvailable]);
 
   const addAnswerImages = (fileList: FileList | null) => {
     const files = Array.from(fileList ?? []);
@@ -216,8 +224,10 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
     try {
       await work();
       if (controller.signal.aborted) return false;
-      setAnswer("");
-      setVoiceTranscriptConfirmed(false);
+      if (key === "answer" || key === "skip") {
+        setAnswer("");
+        setVoiceTranscriptConfirmed(false);
+      }
       if (success) setMessage(success);
       return true;
     } catch (error) {
@@ -229,43 +239,7 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
     }
   };
 
-  if (!task || !blueprint || !record) {
-    return <main className="page adaptive-review-page"><button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={17} />返回</button><div className="empty-state"><h2>任务不可用</h2><p>对应记录或复习蓝图已经不存在。</p></div></main>;
-  }
-
   const answered = currentTurn?.status === "answered";
-  const lastIncorrect = answered && currentTurn.assessment === "incorrect";
-  const canContinue = turns.length < blueprint.maxTurns;
-  const requestedLevels = new Set(currentTurn?.hintsUsed.map((item) => item.level) ?? []);
-  // v2 tasks derive their outcome from evidence. The learner never sees
-  // 已掌握 / 仍需巩固 / 未掌握, because none of those is a fact they can report.
-  const isClosedLoopV2 = task.loopVersion === CLOSED_LOOP_V2_LOOP_VERSION;
-  // Scoped to this task: another task's post-judgment retrieval must never make
-  // this page believe its own loop is closed.
-  const v2LoopClosed = isClosedLoopV2
-    && isLoopClosed({ turns, events: snapshot.taskOutcomeEvents, taskId: task.id });
-  const v2QualifyingCount = turns.filter((item) => item.status === "answered" && item.assessment !== "unreliable").length;
-  // The anti-self-esteem cap is computed from the task's own event log, so the
-  // third "I could but did not produce it" can be shown as unavailable before
-  // the learner picks it, rather than silently rewritten afterwards.
-  const v2Options = isClosedLoopV2
-    ? interventionOptionsFor(snapshot.taskOutcomeEvents.filter((event) => event.taskId === task.id))
-    : [];
-  const selectedOption = v2Options.find((option) => option.path === selectedPath);
-
-  /**
-   * Whether the learner must choose a next action before continuing.
-   *
-   * Only when the last retrieval was *not* correct. A correct answer still has
-   * to be retrieved again after feedback (that is what closes the loop), but it
-   * is not a shortfall, so there is no remedy to pick. Forcing a choice here
-   * manufactured a false self-report - the learner had to claim something went
-   * wrong to get to the next question.
-   */
-  const needsInterventionChoice = Boolean(
-    currentTurn?.status === "answered" && currentTurn.assessment !== "correct",
-  );
-
   /**
    * Device-local friction measurement (M5).
    *
@@ -293,9 +267,43 @@ export const AdaptiveReviewPage = ({ taskId, sessionId, snapshot, records, onBac
           : (currentTurn.phase === "post-judgment" ? "post-judgment" : "initial-retrieval"))
         : "workbench";
   useEffect(() => {
-    if (!task || !record) return;
+    if (!task || !record || !blueprint) { trace.flush("source-unavailable"); return; }
     trace.enter({ screen: "task", category: traceCategory, phase: tracePhase, taskId: task.id, recordId: record.id, sessionId });
-  }, [record, sessionId, task, trace, traceCategory, tracePhase]);
+  }, [blueprint, record, sessionId, task, trace, traceCategory, tracePhase]);
+
+  if (!task || !blueprint || !record) {
+    return <main className="page adaptive-review-page"><button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={17} />返回</button><div className="empty-state"><h2>任务不可用</h2><p>对应记录或复习蓝图已经不存在。</p>{answer && <label>未提交的回答（可复制保留）<textarea readOnly value={answer} aria-label="未提交的回答" /></label>}</div></main>;
+  }
+  const lastIncorrect = answered && currentTurn.assessment === "incorrect";
+  const canContinue = turns.length < blueprint.maxTurns;
+  const requestedLevels = new Set(currentTurn?.hintsUsed.map((item) => item.level) ?? []);
+  // v2 tasks derive their outcome from evidence. The learner never sees
+  // 已掌握 / 仍需巩固 / 未掌握, because none of those is a fact they can report.
+  const isClosedLoopV2 = task.loopVersion === CLOSED_LOOP_V2_LOOP_VERSION;
+  // Scoped to this task: another task's post-judgment retrieval must never make
+  // this page believe its own loop is closed.
+  const v2LoopClosed = isClosedLoopV2
+    && isLoopClosed({ turns, events: snapshot.taskOutcomeEvents, taskId: task.id });
+  const v2QualifyingCount = turns.filter((item) => item.status === "answered" && item.assessment !== "unreliable").length;
+  // The anti-self-esteem cap is computed from the task's own event log, so the
+  // third "I could but did not produce it" can be shown as unavailable before
+  // the learner picks it, rather than silently rewritten afterwards.
+  const v2Options = isClosedLoopV2
+    ? interventionOptionsFor(snapshot.taskOutcomeEvents.filter((event) => event.taskId === task.id))
+    : [];
+  const selectedOption = v2Options.find((option) => option.path === selectedPath);
+  /**
+   * Whether the learner must choose a next action before continuing.
+   *
+   * Only when the last retrieval was *not* correct. A correct answer still has
+   * to be retrieved again after feedback (that is what closes the loop), but it
+   * is not a shortfall, so there is no remedy to pick. Forcing a choice here
+   * manufactured a false self-report - the learner had to claim something went
+   * wrong to get to the next question.
+   */
+  const needsInterventionChoice = Boolean(
+    currentTurn?.status === "answered" && currentTurn.assessment !== "correct",
+  );
 
   /**
    * Records the action, then asks for the next retrieval.

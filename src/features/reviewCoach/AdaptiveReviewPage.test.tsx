@@ -13,6 +13,36 @@ const props = { taskId: coachTestTask.id, records: [record], onBack: vi.fn(), on
 describe("AdaptiveReviewPage", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each(["record", "task", "blueprint", "snapshot"])("keeps hook order and draft when %s disappears and returns", (missing) => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", hintsUsed: [], availableHints: ["提示"] };
+    const view = render(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    fireEvent.change(screen.getByLabelText("你的回答"), { target: { value: "未提交的推导" } });
+    const unavailable = { ...snapshot, ...(missing === "task" ? { adaptiveReviewTasks: [] } : missing === "blueprint" ? { sessionBlueprints: [] } : missing === "snapshot" ? { adaptiveReviewTasks: [], adaptiveQuizTurns: [], sessionBlueprints: [] } : {}) };
+    view.rerender(<AdaptiveReviewPage {...props} snapshot={unavailable} records={missing === "record" ? [] : props.records} />);
+    expect(screen.getByText("任务不可用")).toBeInTheDocument();
+    view.rerender(<AdaptiveReviewPage {...props} snapshot={snapshot} />);
+    expect(screen.getByLabelText("你的回答")).toHaveValue("未提交的推导");
+  });
+
+  it.each([false, true])("preserves text, images and confirmed voice input after hint failure=%s", async (fails) => {
+    const snapshot = completeCoachTestSnapshot();
+    snapshot.adaptiveQuizTurns[0] = { ...coachTestTurn, status: "displayed", hintsUsed: [], availableHints: ["提示"] };
+    const hint = fails ? vi.fn().mockRejectedValue(new Error("hint failed")) : vi.fn().mockResolvedValue(undefined);
+    render(<AdaptiveReviewPage {...props} snapshot={snapshot} onRequestHint={hint} />);
+    fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+    fireEvent.change(screen.getByLabelText("语音回答转写"), { target: { value: "未提交的推导" } });
+    fireEvent.change(screen.getByRole("group", { name: "本轮图片附件" }).querySelector('input[type="file"]')!, { target: { files: [new File(["image"], "draft.png", { type: "image/png" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "确认转写" }));
+    fireEvent.click(screen.getByRole("button", { name: "提示 1" }));
+    await waitFor(() => expect(hint).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("button", { name: "提示 1" })).toBeEnabled());
+    expect(screen.getByLabelText("语音回答转写")).toHaveValue("未提交的推导");
+    expect(screen.getByRole("button", { name: "转写已确认" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "移除图片 draft.png" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交回答" })).toBeEnabled();
+  });
+
   it("requires explicit transcript confirmation before submitting one voice answer", async () => {
     const snapshot = completeCoachTestSnapshot();
     snapshot.adaptiveReviewTasks[0] = { ...coachTestTask, status: "in-progress" };

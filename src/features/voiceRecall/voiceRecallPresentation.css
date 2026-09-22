@@ -822,6 +822,12 @@
   .vr-controls { min-height: 94px; padding-block: 7px; }
 }
 
+.vr-main-control { touch-action: none; }
+.vr-history-editor, .vr-resumable { display: grid; gap: 12px; min-width: 0; margin-block: 20px; }
+.vr-history-editor textarea { box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; color: var(--vr-text); background: var(--vr-surface); border: 1px solid var(--vr-line); border-radius: 12px; padding: 12px; font: inherit; }
+.vr-history-editor p, .vr-resumable p { color: var(--vr-muted); overflow-wrap: anywhere; }
+.vr-resumable button { text-align: left; overflow-wrap: anywhere; white-space: normal; }
+
 @media (prefers-reduced-motion: reduce) {
   .vr-wave.is-active i { animation: none; }
   .vr-mode-grid > button { transition: none; }

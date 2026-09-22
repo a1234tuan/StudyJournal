@@ -65,6 +65,18 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallRepository", () => {
+  it.each([11999, 12000, 12001])("enforces the explicit history capacity at %i characters without truncation", async (length) => {
+    const { database, repository } = await openRepository();
+    const entry = { ...history(), summary: "文".repeat(length) };
+    if (length > VOICE_RECALL_LIMITS.maxHistorySummaryCharacters) {
+      await expect(repository.saveHistory(entry)).rejects.toThrow("摘要已达上限");
+      expect(await repository.listHistory()).toHaveLength(0);
+    } else {
+      await repository.saveHistory(entry);
+      expect((await repository.listHistory())[0].summary).toBe(entry.summary);
+    }
+    database.close();
+  });
   it("keeps voice tables local-only without marking a cloud mutation", async () => {
     const { database, repository } = await openRepository();
     // Asserts the database opens at the current schema. The voice tables were

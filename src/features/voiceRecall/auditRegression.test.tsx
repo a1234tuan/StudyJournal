@@ -140,6 +140,34 @@ const submitText = (text: string) => {
   fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
 };
 
+it("finds a paused checkpoint from the start page after replacing the runtime and preserves its topic", async () => {
+  const { repository, runtime, view, sessionFactory } = await openCall();
+  const sessionId = runtime.activeSessionId!;
+  await act(async () => { await runtime.pause(); });
+  view.unmount();
+  const replacement = new VoiceRecallRuntimeController(repository);
+  const capture = vi.spyOn(replacement, "startCapture");
+  await replacement.initialize();
+  const Restarted = () => {
+    const [route, setRoute] = useState<VoiceRecallNavigationRoute>({ screen: "start", returnTab: "review", sourceKind: "review-home", recordIds: [] });
+    return <VoiceRecallWorkspace route={route} blocks={[]} assets={[]} subjects={[]} templates={[]} settings={DEFAULT_SETTINGS} onRouteChange={setRoute} onBack={() => undefined} onCreateJournal={async () => undefined} runtime={replacement} repository={repository} sessionFactory={sessionFactory} playbackSinkFactory={() => ({ play: async () => undefined, stop: () => undefined })} />;
+  };
+  const restarted = render(<Restarted />);
+  fireEvent.click(await screen.findByRole("button", { name: /恢复暂停通话.*核心概念/ }));
+  await screen.findByRole("button", { name: "继续通话" });
+  expect(replacement.activeSessionId).toBe(sessionId);
+  expect(replacement.snapshot?.status).toBe("paused");
+  expect(capture).not.toHaveBeenCalled();
+  const respond = vi.spyOn(replacement, "respondTurn");
+  await waitFor(() => expect(screen.getByRole("button", { name: "继续通话" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "继续通话" }));
+  submitText("继续讨论");
+  await waitFor(() => expect(respond).toHaveBeenCalled());
+  expect(JSON.stringify(respond.mock.calls[0][0].messages)).toContain("核心概念");
+  await act(async () => { await replacement.end(); });
+  restarted.unmount();
+});
+
 describe("Second audit: desired behavior regression probes (no network)", () => {
   it("automatically transcribes and submits three rounds, then stops on pause", async () => {
     const queues: ReturnType<typeof createAsyncQueue<VoiceAudioFrame>>[] = [];

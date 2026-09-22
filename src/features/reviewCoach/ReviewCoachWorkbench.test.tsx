@@ -41,6 +41,22 @@ const baseProps = {
 };
 
 describe("ReviewCoachWorkbench", () => {
+  it("analyzes eligible blocks while retaining oversized blocks, then permits the resized block", async () => {
+    const onAnalyze = vi.fn().mockResolvedValue(undefined);
+    const oversized = { ...planningBlock, decisionBlockId: "large", recordTitle: "超长日志", estimatedTokens: 100000 };
+    const view = render(<ReviewCoachWorkbench {...baseProps} planningBlocks={[planningBlock, oversized]} onAnalyze={onAnalyze} />);
+    const button = screen.getByRole("button", { name: /开始分析并出题/ });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(onAnalyze).toHaveBeenCalledWith([planningBlock.decisionBlockId], false));
+    expect(screen.getByText(/超过模型上下文上限/)).toHaveTextContent("保留在待分析队列");
+    view.rerender(<ReviewCoachWorkbench {...baseProps} planningBlocks={[oversized]} onAnalyze={onAnalyze} />);
+    expect(screen.getByRole("button", { name: /开始分析并出题/ })).toBeDisabled();
+    view.rerender(<ReviewCoachWorkbench {...baseProps} planningBlocks={[{ ...oversized, estimatedTokens: 800 }]} onAnalyze={onAnalyze} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /开始分析并出题/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /开始分析并出题/ }));
+    await waitFor(() => expect(onAnalyze).toHaveBeenLastCalledWith(["large"], false));
+  });
   const traceEnter = vi.fn();
   beforeEach(() => {
     traceEnter.mockClear();

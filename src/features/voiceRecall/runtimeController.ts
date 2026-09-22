@@ -79,13 +79,16 @@ export class VoiceRecallRuntimeController {
     const id = crypto.randomUUID();
     this.state = createVoiceRecallState(request.mode);
     this.state = transitionVoiceRecallState(this.state, { type: "SET_INPUT_MODE", mode: request.inputMode });
+    const source = request.mode === "free-topic"
+      ? { kind: "free-topic" as const, recordIds: [], topic: request.source.topic, returnIdentity: request.source.returnIdentity }
+      : request.source;
     this.session = {
       id,
       mode: request.mode,
-      sourceKind: request.source.kind,
-      source: structuredClone(request.source),
-      sourceRecordIds: [...(request.source.recordIds ?? [])],
-      sourceTaskId: request.source.taskId,
+      sourceKind: source.kind,
+      source: structuredClone(source),
+      sourceRecordIds: [...(source.recordIds ?? [])],
+      sourceTaskId: "taskId" in source ? source.taskId : undefined,
       status: this.state.status,
       provider: {},
       memory: { learningGoal: "", coveredPoints: [], misconceptions: [], pendingTopics: [] },
@@ -100,6 +103,10 @@ export class VoiceRecallRuntimeController {
   }
 
   async restoreSession(id: string) {
+    if (this.session?.id === id) {
+      await this.pause();
+      return;
+    }
     if (this.session) await this.end();
     const session = await this.repository.getSession(id);
     if (!session || session.sourceUnavailable || ["completed", "ending"].includes(session.status)) {
@@ -157,16 +164,23 @@ export class VoiceRecallRuntimeController {
     options: VoiceCaptureOptions,
     onFrame: (frame: VoiceAudioFrame) => void,
     onError?: (error: unknown) => void,
+    signal?: AbortSignal,
   ) {
     if (!this.state || !this.session) throw new Error("当前没有活动的语音复述会话");
     const generation = this.operationEpoch;
     await this.stopCapture();
-    if (!this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) return;
+    if (signal?.aborted || !this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) return;
     await this.focus.acquire();
-    if (!this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) return;
+    if (signal?.aborted || !this.isCurrentOperation(generation) || this.state?.status !== "listening" || this.state.userMuted || this.state.systemCaptureGate) {
+      await this.focus.release();
+      return;
+    }
     this.capture = adapter;
     this.captureController = new AbortController();
     const turnSignal = this.captureController.signal;
+    const abortCapture = () => { void this.stopCapture(); };
+    signal?.addEventListener("abort", abortCapture, { once: true });
+    turnSignal.addEventListener("abort", () => signal?.removeEventListener("abort", abortCapture), { once: true });
     this.captureTask = (async () => {
       for await (const frame of adapter.start(options, turnSignal)) {
         if (turnSignal.aborted) break;
