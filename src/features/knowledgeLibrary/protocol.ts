@@ -1,13 +1,14 @@
 import { canonicalKnowledge, groupIdentity, knowledgeBytes, knowledgeHash, referenceIdentity, revisionIdentity } from "./canonical";
-import { KNOWLEDGE_LIMITS, KNOWLEDGE_PROTOCOL, KnowledgeError, ROOT_NODE, type KnowledgeCommand, type KnowledgeEntity, type KnowledgePosition, type KnowledgeRevision, type KnowledgeState, type KnowledgeUnit, type KnowledgeValue } from "./domain";
+import { KNOWLEDGE_LIMITS, KNOWLEDGE_PROTOCOL, KnowledgeError, ROOT_NODE, type KnowledgeCandidate, type KnowledgeCommand, type KnowledgeEntity, type KnowledgeGroup, type KnowledgePosition, type KnowledgeReceipt, type KnowledgeRevision, type KnowledgeState, type KnowledgeUnit, type KnowledgeValue } from "./domain";
 import { isOrderKey } from "./orderKey";
 
 const allowedUnits = { workspace: ["title", "note", "archived", "deleted"], node: ["title", "note", "position", "deleted"], reference: ["remark", "deleted"] } as const;
 const validId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_:@.-]{1,180}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value);
+const validStoredId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_:@.-]{1,200}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value);
 export const revisionValue = (state: KnowledgeState, revisionId: string): KnowledgeValue | undefined => {
   const seen = new Set<string>();
   let revision = state.revisions[revisionId];
-  while (revision && typeof revision.value === "object" && "revisionValueId" in revision.value) {
+  while (revision && revision.value && typeof revision.value === "object" && "revisionValueId" in revision.value) {
     if (seen.has(revision.id)) throw new KnowledgeError("invalid", "知识内容引用存在环");
     seen.add(revision.id);
     revision = state.revisions[revision.value.revisionValueId];
@@ -99,6 +100,120 @@ export const assertKnowledgeTree = (state: KnowledgeState): void => {
     if (!target || target.kind !== "node" || target.workspaceId !== entity.workspaceId) throw new KnowledgeError("missing", "引用节点不属于当前专题");
   }
 };
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const assertExactKeys = (value: unknown, keys: string[], message: string): void => {
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !== [...keys].sort().join(",")) throw new KnowledgeError("invalid", message);
+};
+function assertStateMap(value: unknown, message: string): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) throw new KnowledgeError("invalid", message);
+  for (const [key, row] of Object.entries(value)) if (!validStoredId(key) || !isRecord(row)) throw new KnowledgeError("invalid", message);
+}
+const assertRevisionIdentity = (state: KnowledgeState, revision: KnowledgeRevision): void => {
+  const normalId = revisionIdentity(revision.commandId, revision.unit);
+  if (revision.id === normalId) {
+    validateKnowledgeValue(revision.unit, revision.value as KnowledgeValue);
+    return;
+  }
+  if (!/^join-[a-f0-9]{64}$/.test(revision.id) || revision.parents.length !== 2 || revision.id !== "join-" + knowledgeHash({ parents: revision.parents })) throw new KnowledgeError("invalid", "知识版本身份无效");
+  if (!isRecord(revision.value) || Object.keys(revision.value).sort().join(",") !== "revisionValueId" || revision.value.revisionValueId !== normalId || revision.parents[1] !== normalId) throw new KnowledgeError("invalid", "合并版本身份无效");
+  const source = state.revisions[normalId];
+  if (!source || source.entityId !== revision.entityId || source.unit !== revision.unit) throw new KnowledgeError("invalid", "合并版本缺少对应命令版本");
+};
+const assertKnowledgeEntity = (state: KnowledgeState, entity: KnowledgeEntity, id: string): void => {
+  if (entity.id !== id || !validId(entity.id) || !["workspace", "node", "reference"].includes(entity.kind) || !validId(entity.workspaceId) || !isRecord(entity.units)) throw new KnowledgeError("invalid", "知识实体字段无效");
+  assertExactKeys(entity, ["id", "kind", "workspaceId", "nodeId", "recordId", "units"], "知识实体字段不完整或包含未知字段");
+  if (entity.kind === "workspace" && (entity.workspaceId !== entity.id || entity.nodeId !== "" || entity.recordId !== "")) throw new KnowledgeError("invalid", "专题实体身份无效");
+  if (entity.kind === "node" && (entity.nodeId !== "" || entity.recordId !== "")) throw new KnowledgeError("invalid", "节点实体身份无效");
+  if (entity.kind === "reference" && (!validId(entity.nodeId) || !validId(entity.recordId) || entity.id !== referenceIdentity(entity.nodeId, entity.recordId))) throw new KnowledgeError("invalid", "引用实体身份无效");
+  const required = allowedUnits[entity.kind];
+  if (Object.keys(entity.units).sort().join(",") !== [...required].sort().join(",")) throw new KnowledgeError("invalid", "知识实体缺少正式字段");
+  for (const [unit, revisionId] of Object.entries(entity.units)) {
+    if (!(required as readonly string[]).includes(unit) || !validStoredId(revisionId)) throw new KnowledgeError("invalid", "知识实体字段引用无效");
+    const revision = state.revisions[revisionId];
+    if (!revision || revision.entityId !== entity.id || revision.unit !== unit) throw new KnowledgeError("invalid", "知识实体正式版本无效");
+  }
+};
+const assertKnowledgeRevision = (state: KnowledgeState, revision: KnowledgeRevision, id: string): void => {
+  const entity = state.entities[revision.entityId];
+  if (revision.id !== id || !validStoredId(revision.id) || !validId(revision.entityId) || !entity || !Object.hasOwn(allowedUnits, entity.kind) || !validId(revision.commandId) || !Array.isArray(revision.parents) || revision.parents.length > 5 || new Set(revision.parents).size !== revision.parents.length) throw new KnowledgeError("invalid", "知识版本字段无效");
+  assertExactKeys(revision, ["id", "entityId", "unit", "value", "parents", "commandId"], "知识版本字段不完整或包含未知字段");
+  if (!(allowedUnits[entity.kind] as readonly string[]).includes(revision.unit)) throw new KnowledgeError("invalid", "知识版本字段与实体类型不匹配");
+  assertRevisionIdentity(state, revision);
+  for (const parentId of revision.parents) {
+    if (!validStoredId(parentId)) throw new KnowledgeError("invalid", "知识版本父链身份无效");
+    const parent = state.revisions[parentId];
+    if (!parent || parent.entityId !== revision.entityId || parent.unit !== revision.unit) throw new KnowledgeError("invalid", "知识版本父链实体或字段不一致");
+  }
+  if (isRecord(revision.value) && Object.hasOwn(revision.value, "revisionValueId")) {
+    assertExactKeys(revision.value, ["revisionValueId"], "知识版本内容引用字段无效");
+    const revisionValueId = revision.value.revisionValueId;
+    if (!validStoredId(revisionValueId)) throw new KnowledgeError("invalid", "知识版本内容引用身份无效");
+    const source = state.revisions[revisionValueId];
+    if (!source || source.entityId !== revision.entityId || source.unit !== revision.unit || !revision.parents.includes(source.id)) throw new KnowledgeError("invalid", "知识版本内容引用无效");
+  } else {
+    validateKnowledgeValue(revision.unit, revision.value as KnowledgeValue);
+  }
+};
+const assertKnowledgeCandidate = (state: KnowledgeState, candidate: KnowledgeCandidate, id: string): void => {
+  if (candidate.id !== id || !validStoredId(candidate.id) || candidate.id !== candidate.revisionId || !validStoredId(candidate.revisionId) || !validId(candidate.groupId) || (candidate.consumedBy !== null && !validStoredId(candidate.consumedBy))) throw new KnowledgeError("invalid", "知识候选字段无效");
+  assertExactKeys(candidate, ["id", "groupId", "revisionId", "consumedBy"], "知识候选字段不完整或包含未知字段");
+  const revision = state.revisions[candidate.revisionId];
+  const group = state.groups[candidate.groupId];
+  if (!revision || !group || revision.id !== revisionIdentity(revision.commandId, revision.unit) || group.id !== groupIdentity(revision.entityId, revision.unit)) throw new KnowledgeError("invalid", "知识候选实体或冲突组不一致");
+  const current = state.revisions[group.currentRevisionId];
+  if (!current || current.entityId !== revision.entityId || current.unit !== revision.unit || candidate.revisionId === group.currentRevisionId) throw new KnowledgeError("invalid", "知识候选不属于当前冲突字段");
+  if (candidate.consumedBy !== null) {
+    const consumer = state.revisions[candidate.consumedBy];
+    if (!consumer || consumer.entityId !== revision.entityId || consumer.unit !== revision.unit || consumer.id === revision.id || consumer.id !== revisionIdentity(consumer.commandId, consumer.unit) || !consumer.parents.includes(revision.id)) throw new KnowledgeError("invalid", "知识候选消费因果关系无效");
+  }
+};
+const assertKnowledgeGroup = (state: KnowledgeState, group: KnowledgeGroup, id: string): void => {
+  if (group.id !== id || !validId(group.id) || !Number.isSafeInteger(group.generation) || group.generation < 1 || typeof group.setToken !== "string" || !/^[a-f0-9]{64}$/.test(group.setToken) || !Number.isSafeInteger(group.unresolvedCount) || group.unresolvedCount < 0 || !validStoredId(group.currentRevisionId)) throw new KnowledgeError("invalid", "知识冲突组字段无效");
+  assertExactKeys(group, ["id", "generation", "setToken", "unresolvedCount", "currentRevisionId"], "知识冲突组字段不完整或包含未知字段");
+  const current = state.revisions[group.currentRevisionId];
+  if (!current || !state.entities[current.entityId] || state.entities[current.entityId].units[current.unit] !== current.id || group.id !== groupIdentity(current.entityId, current.unit)) throw new KnowledgeError("invalid", "知识冲突组当前版本无效");
+  const unresolved = Object.values(state.candidates).filter(candidate => candidate.groupId === group.id && candidate.consumedBy === null).length;
+  if (group.unresolvedCount !== unresolved) throw new KnowledgeError("invalid", "知识冲突组未解决数量不一致");
+};
+const assertKnowledgeReceipt = (receipt: KnowledgeReceipt, id: string, sequence: number): void => {
+  if (receipt.id !== id || !validId(receipt.id) || !/^[a-f0-9]{64}$/.test(receipt.hash) || !Number.isSafeInteger(receipt.sequence) || receipt.sequence < 1 || receipt.sequence > sequence) throw new KnowledgeError("invalid", "知识回执字段无效");
+  assertExactKeys(receipt, ["id", "hash", "sequence"], "知识回执字段不完整或包含未知字段");
+};
+export const validateKnowledgeState = (state: KnowledgeState): void => {
+  assertExactKeys(state, ["sequence", "entities", "revisions", "candidates", "groups", "receipts"], "知识状态字段不完整或包含未知字段");
+  if (!Number.isSafeInteger(state.sequence) || state.sequence < 0) throw new KnowledgeError("invalid", "知识状态序号无效");
+  assertStateMap(state.entities, "知识实体索引无效");
+  assertStateMap(state.revisions, "知识版本索引无效");
+  assertStateMap(state.candidates, "知识候选索引无效");
+  assertStateMap(state.groups, "知识冲突组索引无效");
+  assertStateMap(state.receipts, "知识回执索引无效");
+  for (const [id, entity] of Object.entries(state.entities)) assertKnowledgeEntity(state, entity as KnowledgeEntity, id);
+  for (const [id, revision] of Object.entries(state.revisions)) assertKnowledgeRevision(state, revision as KnowledgeRevision, id);
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  for (const id of Object.keys(state.revisions)) {
+    const pending = [{ id, exit: false }];
+    while (pending.length) {
+      const entry = pending.pop()!;
+      if (entry.exit) { visiting.delete(entry.id); visited.add(entry.id); continue; }
+      if (visited.has(entry.id)) continue;
+      if (visiting.has(entry.id)) throw new KnowledgeError("invalid", "知识版本存在因果环");
+      visiting.add(entry.id);
+      pending.push({ id: entry.id, exit: true });
+      for (const parent of state.revisions[entry.id].parents) pending.push({ id: parent, exit: false });
+    }
+  }
+  for (const revision of Object.values(state.revisions)) {
+    const value = revisionValue(state, revision.id);
+    if (value === undefined) throw new KnowledgeError("invalid", "知识版本缺少正文");
+    validateKnowledgeValue(revision.unit, value);
+    if (revision.id !== revisionIdentity(revision.commandId, revision.unit) && canonicalKnowledge(value) !== canonicalKnowledge(revisionValue(state, revision.parents[0]))) throw new KnowledgeError("invalid", "合并版本内容不一致");
+  }
+  for (const [id, candidate] of Object.entries(state.candidates)) assertKnowledgeCandidate(state, candidate as KnowledgeCandidate, id);
+  for (const [id, group] of Object.entries(state.groups)) assertKnowledgeGroup(state, group as KnowledgeGroup, id);
+  for (const [id, receipt] of Object.entries(state.receipts)) assertKnowledgeReceipt(receipt as KnowledgeReceipt, id, state.sequence);
+  assertKnowledgeTree(state);
+};
 export const isKnowledgeVisible = (state: KnowledgeState, entity: KnowledgeEntity): boolean => {
   const seen = new Set<string>();
   let current: KnowledgeEntity | undefined = entity;
@@ -184,6 +299,7 @@ export const applyKnowledgeCommand = (before: KnowledgeState, command: Knowledge
       for (const candidateId of consumed) {
         const candidate = state.candidates[candidateId];
         if (!candidate || candidate.groupId !== groupId || candidate.consumedBy !== null) throw new KnowledgeError("stale", "候选已被其他操作处理");
+        assertKnowledgeCandidate(state, candidate, candidateId);
         parents.push(candidate.revisionId);
       }
     }

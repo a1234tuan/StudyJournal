@@ -5,7 +5,8 @@ import { StudyJournalDatabase } from "../../db/database";
 import { knowledgeHash } from "./canonical";
 import { capturePortableKnowledge, createKnowledgeEnvelope, restorePortableKnowledge, validateKnowledgeEnvelope } from "./backup";
 import { KnowledgeRepository, knowledgeTables } from "./repository";
-import type { KnowledgeCommand } from "./domain";
+import { emptyKnowledgeState, type KnowledgeCommand } from "./domain";
+import { applyKnowledgeCommand } from "./protocol";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -60,5 +61,22 @@ describe("portable knowledge backups", () => {
     envelope.checksum = knowledgeHash({ version: envelope.version, scope: envelope.scope, libraries: envelope.libraries });
     await expect(database.transaction("rw", knowledgeTables(database), () => restorePortableKnowledge(database, envelope, "deviceGuest", "bad"))).rejects.toThrow();
     expect(await database.knowledgeLibraries.count()).toBe(1);
+  });
+
+  it("rejects a candidate whose revision belongs to another unit", () => {
+    const initial = applyKnowledgeCommand(emptyKnowledgeState(), command);
+    const current = applyKnowledgeCommand(initial, { ...command, id: "first-edit", operation: "edit", expected: { note: initial.entities.topic.units.note! }, changes: { note: "当前正文" } });
+    const conflict = applyKnowledgeCommand(current, { ...command, id: "second-edit", operation: "edit", expected: { note: initial.entities.topic.units.note! }, changes: { note: "并发正文" } });
+    const envelope = createKnowledgeEnvelope([{
+      archiveLibraryId: "archive-library",
+      title: "专题",
+      entities: Object.values(conflict.entities),
+      revisions: Object.values(conflict.revisions),
+      candidates: Object.values(conflict.candidates),
+      groups: Object.values(conflict.groups),
+    }]);
+    envelope.libraries[0].candidates[0].revisionId = initial.entities.topic.units.title!;
+    envelope.checksum = knowledgeHash({ version: envelope.version, scope: envelope.scope, libraries: envelope.libraries });
+    expect(() => validateKnowledgeEnvelope(envelope)).toThrow();
   });
 });

@@ -1,7 +1,7 @@
 import { collection, doc, getDocFromServer, getDocsFromServer, limit, orderBy, query, runTransaction, where, type Firestore } from "firebase/firestore";
 import { knowledgeHash } from "./canonical";
 import { KnowledgeError } from "./domain";
-import type { KnowledgeCloudCommit, KnowledgeCloudPacket, KnowledgeCloudReceipt, KnowledgeCloudRow } from "./cloudProtocol";
+import { normalizeKnowledgeCloudSlot, type KnowledgeCloudCommit, type KnowledgeCloudPacket, type KnowledgeCloudReceipt, type KnowledgeCloudRow } from "./cloudProtocol";
 import { registerDefaultLibrary, type KnowledgeRegistry } from "./scope";
 import type { KnowledgeTransport } from "./sync";
 
@@ -50,15 +50,16 @@ export const createKnowledgeTransport = (database: Firestore, uid: string): Know
         const commit = document.data() as KnowledgeCloudCommit;
         if (commit.protocolVersion !== 1 || !Array.isArray(commit.slots) || commit.slots.length > 15) throw new KnowledgeError("invalid", "知识提交版本或范围无效");
         const rows: KnowledgeCloudPacket["rows"] = [];
-        for (const [slot, item] of commit.slots.entries()) {
-          if (!["entities", "conflicts", "revisions"].includes(item.collection) || !/^[A-Za-z0-9_:@.-]{1,200}$/.test(item.id)) throw new KnowledgeError("invalid", "知识提交引用无效");
+        for (const [slot, rawItem] of commit.slots.entries()) {
+          const item = normalizeKnowledgeCloudSlot(rawItem);
           if (item.collection === "revisions") {
             const revision = await withKnowledgeTimeout(getDocFromServer(doc(database, root(libraryId) + "/revisions/" + item.id)));
             if (!revision.exists()) throw new KnowledgeError("missing", "知识不可变版本尚未完整到达");
-            rows.push({ collection: item.collection, id: item.id, data: revision.data() as KnowledgeCloudRow });
+            const data = revision.data() as KnowledgeCloudRow;
+            if (data.kind !== "revisions") throw new KnowledgeError("invalid", "知识版本行类型不一致，请重新同步");
+            rows.push({ collection: item.collection, id: item.id, data });
           } else {
-            const kind = item.collection === "entities" ? "entities" : item.id.startsWith("group-") ? "groups" : "candidates";
-            rows.push({ collection: item.collection, id: item.id, data: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId, slot, payload: item.payload, hash: item.hash, kind } });
+            rows.push({ collection: item.collection, id: item.id, data: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId, slot, payload: item.payload, hash: item.hash, kind: item.kind } });
           }
         }
         packets.push({ commit, rows, head: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId }, receipt: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId, commandHash: commit.commandHash, registration: false } });

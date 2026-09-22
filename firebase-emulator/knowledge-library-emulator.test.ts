@@ -6,6 +6,7 @@ import { groupIdentity, knowledgeHash } from "../src/features/knowledgeLibrary/c
 import { emptyKnowledgeState, type KnowledgeCommand } from "../src/features/knowledgeLibrary/domain";
 import { applyKnowledgeCommand } from "../src/features/knowledgeLibrary/protocol";
 import { applyKnowledgeCloudPacket, knowledgeCloudPacket, type KnowledgeCloudPacket } from "../src/features/knowledgeLibrary/cloudProtocol";
+import { createKnowledgeTransport } from "../src/features/knowledgeLibrary/firestoreTransport";
 
 let environment: RulesTestEnvironment;
 const uid = "knowledge-protocol-" + crypto.randomUUID();
@@ -74,12 +75,19 @@ describe("knowledge P0 isolated atomic protocol", () => {
       await assertSucceeds(publish(database, libraryId, knowledgeCloudPacket(conflicted, changed, concurrent)));
       conflicted = changed;
     }
+    const prefixedCommand: KnowledgeCommand = { ...edit, id: "group-user-edit", expected: { note: edit.expected.note }, changes: { note: "前缀候选" } };
+    const prefixed = applyKnowledgeCommand(conflicted, prefixedCommand);
+    await assertSucceeds(publish(database, libraryId, knowledgeCloudPacket(conflicted, prefixed, prefixedCommand)));
+    const fetched = await createKnowledgeTransport(database, uid).commits(libraryId, conflicted.sequence, prefixed.sequence);
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0].rows.find(row => row.data.kind === "candidates")?.data.kind).toBe("candidates");
+    conflicted = prefixed;
     const group = conflicted.groups[groupIdentity("topic", "note")];
     const resolution: KnowledgeCommand = { ...edit, id: "resolve-four", operation: "resolve", expected: { note: conflicted.entities.topic.units.note! }, changes: { note: "a".repeat(16384) }, resolution: { unit: "note", setToken: group.setToken, generation: group.generation, candidates: Object.keys(conflicted.candidates).slice(0, 4) } };
     const resolved = applyKnowledgeCommand(conflicted, resolution);
     const resolutionPacket = knowledgeCloudPacket(conflicted, resolved, resolution);
     await assertSucceeds(publish(database, libraryId, resolutionPacket));
-    expect(resolved.groups[group.id].unresolvedCount).toBe(1);
+    expect(resolved.groups[group.id].unresolvedCount).toBe(2);
     const noOpCommand = { ...edit, id: "no-op-receipt" };
     const noOpState = structuredClone(resolved);
     noOpState.sequence += 1;

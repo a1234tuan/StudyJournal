@@ -2,6 +2,7 @@ import Dexie from "dexie";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 import { StudyJournalDatabase } from "../../db/database";
+import { canonicalKnowledge, knowledgeHash } from "./canonical";
 import { KnowledgeError, type KnowledgeCommand } from "./domain";
 import { editKnowledgeEntity } from "./commands";
 import { capturePortableKnowledge } from "./backup";
@@ -38,6 +39,32 @@ class MemoryKnowledgeCloud implements KnowledgeTransport {
 const topic = (libraryId: string): KnowledgeCommand => ({ protocolVersion: 1, id: "topic-create", libraryId, operation: "create", entity: { id: "topic", kind: "workspace", workspaceId: "topic", nodeId: "", recordId: "" }, expected: { title: null, note: null, archived: null, deleted: null }, changes: { title: "云专题", note: "原说明", archived: false, deleted: false } });
 
 describe("knowledge independent-device sync", () => {
+  it("rejects a semantically forged cloud packet without advancing the pull cursor", async () => {
+    const cloud = new MemoryKnowledgeCloud();
+    const phone = await device();
+    await phone.createLibrary("手机", "phone-library");
+    const sync = new KnowledgeSync(phone, cloud);
+    await sync.connect("phone-library");
+    const view = await phone.open("phone-library");
+    await phone.execute(view.context, topic("phone-library"));
+    await sync.synchronize(view.context);
+    const forged = structuredClone(cloud.packets[0]);
+    const row = forged.rows.find(candidate => candidate.collection === "entities")!;
+    const slot = forged.commit.slots[row.data.slot];
+    const entity = JSON.parse(row.data.payload) as Record<string, unknown>;
+    (entity.units as Record<string, unknown>).title = 123;
+    row.data.payload = canonicalKnowledge(entity);
+    row.data.hash = knowledgeHash(entity);
+    slot.payload = row.data.payload;
+    slot.hash = row.data.hash;
+    slot.bytes = new TextEncoder().encode(slot.payload).byteLength;
+    forged.commit.budget = 16384 + forged.commit.slots.reduce((total, item) => total + item.bytes * (item.collection === "revisions" ? 2 : 4), 0);
+    cloud.packets[0] = forged;
+    await phone.database.knowledgeSyncState.update("phone-library", { cursor: 0 });
+    await expect(sync.pull(view.context)).rejects.toThrow();
+    expect((await phone.database.knowledgeSyncState.get("phone-library"))?.cursor).toBe(0);
+  });
+
   it("retains a stale pending restore without blocking unrelated pull or upload", async () => {
     const cloud = new MemoryKnowledgeCloud();
     const phone = await device();

@@ -1,7 +1,7 @@
 import type { StudyJournalDatabase } from "../../db/database";
 import { knowledgeHash, revisionIdentity } from "./canonical";
 import { emptyKnowledgeState, KnowledgeError, type KnowledgeBackupScope, type KnowledgeCommand, type KnowledgeContext, type KnowledgeDraft, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeOwner, type KnowledgeState, type KnowledgeSyncState, type KnowledgeUnit } from "./domain";
-import { applyKnowledgeCommand, knowledgeWrites, revisionValue } from "./protocol";
+import { applyKnowledgeCommand, knowledgeWrites, revisionValue, validateKnowledgeState } from "./protocol";
 import { KNOWLEDGE_SCHEMA_25_STORES, type StoredKnowledgeConflict } from "./schema";
 
 export const knowledgeTables = (database: StudyJournalDatabase) => Object.keys(KNOWLEDGE_SCHEMA_25_STORES).map(name => database.table(name));
@@ -21,6 +21,7 @@ export const readKnowledgeState = async (database: StudyJournalDatabase, library
   return state;
 };
 export const writeKnowledgeStateDelta = async (database: StudyJournalDatabase, libraryId: string, before: KnowledgeState, after: KnowledgeState): Promise<void> => {
+  validateKnowledgeState(after);
   for (const entity of Object.values(before.entities)) {
     if (!after.entities[entity.id]) {
       await knowledgeEntityTable(database, entity.kind).delete([libraryId, entity.id]);

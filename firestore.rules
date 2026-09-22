@@ -24,12 +24,20 @@ service cloud.firestore {
           let head = headAfter();
           return commit.protocolVersion == 1 && commit.sequence == head.sequence && commit.commandId == head.commandId;
         }
+        function validSlot(slot) {
+          return slot.keys().hasOnly(['collection', 'kind', 'id', 'hash', 'bytes', 'payload'])
+            && slot.collection in ['entities', 'revisions', 'conflicts']
+            && slot.kind in ['entities', 'revisions', 'candidates', 'groups']
+            && ((slot.collection == 'entities' && slot.kind == 'entities')
+              || (slot.collection == 'revisions' && slot.kind == 'revisions' && slot.payload == '')
+              || (slot.collection == 'conflicts' && slot.kind in ['candidates', 'groups'] && slot.payload != ''));
+        }
         function slotPresent(commit, index) {
           let slot = commit.slots[index];
           let row = getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/$(slot.collection)/$(slot.id)).data;
-          return slot.collection in ['entities', 'revisions', 'conflicts'] && row.sequence == commit.sequence && row.commandId == commit.commandId && row.slot == index;
+          return row.sequence == commit.sequence && row.commandId == commit.commandId && row.slot == index && row.kind == slot.kind;
         }
-        function slotValid(commit, index) { return commit.slots.size() <= index || slotPresent(commit, index); }
+        function slotValid(commit, index) { return commit.slots.size() <= index || (validSlot(commit.slots[index]) && slotPresent(commit, index)); }
         function slotCost(commit, index) {
           return commit.slots.size() <= index ? 0 : commit.slots[index].bytes * (commit.slots[index].collection == 'revisions' ? 2 : 4);
         }
@@ -42,7 +50,7 @@ service cloud.firestore {
             && row.protocolVersion == 1 && row.sequence == commit.sequence && row.commandId == commit.commandId
             && row.slot is int && row.slot >= 0 && row.slot < commit.slots.size()
             && slot.collection == collection && slot.id == entityId && slot.hash == row.hash
-            && row.payload is string && slot.bytes == row.payload.toUtf8().size()
+            && slot.kind == row.kind && row.payload is string && slot.bytes == row.payload.toUtf8().size()
             && ((collection == 'revisions' && row.kind == 'revisions' && slot.payload == '')
               || (collection == 'entities' && row.kind == 'entities' && slot.payload == row.payload)
               || (collection == 'conflicts' && row.kind in ['candidates', 'groups'] && slot.payload == row.payload));
