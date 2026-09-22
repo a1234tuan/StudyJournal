@@ -796,7 +796,7 @@ export interface AppSettings {
 
 export interface BackupManifest {
   format: "408-study-journal" | "study-journal";
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   exportedAt: ISODateTime;
   appVersion: string;
   counts: {
@@ -818,6 +818,7 @@ export interface BackupManifest {
 }
 
 export interface BackupPayload {
+  knowledge?: import("./features/knowledgeLibrary/backup").KnowledgeEnvelope;
   manifest: BackupManifest;
   entries: DayEntry[];
   blocks: Block[];
@@ -1003,6 +1004,7 @@ export interface ImportProgress {
 }
 
 export interface ImportOptions {
+  restoreSessionId?: string;
   onProgress?: (progress: ImportProgress) => void;
   signal?: AbortSignal;
 }

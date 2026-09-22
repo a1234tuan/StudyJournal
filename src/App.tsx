@@ -1,3 +1,6 @@
+import { KnowledgeLibraryPage } from "./features/knowledgeLibrary/KnowledgeLibraryPage";
+import { initialKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
+import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, SystemBars, SystemBarsStyle } from "@capacitor/core";
@@ -280,11 +283,13 @@ export const App = () => {
   const lastBackPressRef = useRef(0);
   const backToastTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef<NavigationState>({ activeTab, tabMemory, activeAiSessionId });
+  const knowledgeOriginsRef = useRef<Array<{ state: NavigationState; scrollY: number }>>([]);
   const webNavigationSessionRef = useRef<string | null>(null);
   const webNavigationIndexRef = useRef(0);
   const historyScrollRestoreRef = useRef(0);
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
+  useEffect(() => startKnowledgeRuntime(), []);
   // Pulled out by name so the plan-reclaim wiring below can depend on these
   // stable callbacks instead of the freshly-built `app` object literal.
   const { reclaimPlanRecords: reclaimPlanRecordsFromApp, initialized: appInitialized } = app;
@@ -386,6 +391,9 @@ export const App = () => {
 
   const commitNavigation = useCallback((next: NavigationState, options: NavigationCommitOptions = {}) => {
     const current = navigationStateRef.current;
+    if (current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && (next.activeTab !== "more" || next.tabMemory.more.subRoute !== "knowledge" || next.tabMemory.more.recordId || next.tabMemory.more.knowledge?.libraryId !== current.tabMemory.more.knowledge?.libraryId)) {
+      const leave = new Event("knowledge-navigation-leave", { cancelable: true }); window.dispatchEvent(leave); if (leave.defaultPrevented) return;
+    }
     const historyMode = options.history ?? "push";
     const sessionId = webNavigationSessionRef.current;
     const webNavigationEnabled = !Capacitor.isNativePlatform() && !isDesktopPlatform() && Boolean(sessionId);
@@ -554,6 +562,12 @@ export const App = () => {
 
   const popCurrentTabDepth = useCallback(() => {
     const current = navigationStateRef.current;
+    if (current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && knowledgeOriginsRef.current.length) {
+      const origin = knowledgeOriginsRef.current.pop()!;
+      commitNavigation(origin.state, { motion: "back", history: "replace", scrollToTop: false });
+      window.requestAnimationFrame(() => window.scrollTo(0, origin.scrollY));
+      return;
+    }
     const voiceRoute = current.activeTab === "review" ? current.tabMemory.review.voiceRecall : undefined;
     if (voiceRoute) {
       commitNavigation({
@@ -788,6 +802,11 @@ export const App = () => {
         return;
       }
 
+      const current = navigationStateRef.current;
+      if (snapshot.navigationIndex !== webNavigationIndexRef.current && current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId) {
+        const leave = new Event("knowledge-navigation-leave", { cancelable: true }); window.dispatchEvent(leave);
+        if (leave.defaultPrevented) { window.history.go(webNavigationIndexRef.current - snapshot.navigationIndex); return; }
+      }
       clearBackHint();
       const motion: NavigationMotionIntent = snapshot.navigationIndex > webNavigationIndexRef.current
         ? "forward"
@@ -872,6 +891,11 @@ export const App = () => {
     };
 
     void CapacitorApp.addListener("backButton", () => {
+      if (activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !tabMemory.more.recordId) {
+        const event = new Event("knowledge-back", { cancelable: true });
+        window.dispatchEvent(event);
+        if (event.defaultPrevented) return;
+      }
       if (document.querySelector(".image-lightbox")) {
         return;
       }
@@ -1166,6 +1190,11 @@ export const App = () => {
 
   const renderRecordPage = (record: RecordBlock, highlightedAssetId?: string) => (
     <RecordEditorPage
+      onOpenKnowledge={location => {
+        const current = navigationStateRef.current;
+        knowledgeOriginsRef.current.push({ state: current, scrollY: window.scrollY });
+        commitNavigation({ ...current, activeTab: "more", tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, subRoute: "knowledge", recordId: undefined, referenceStack: [], knowledge: { ...initialKnowledgeNavigation(), ...location, addRecordId: location ? undefined : record.id } } } }, { motion: "forward", history: "push" });
+      }}
       record={record}
       initialEditing={Boolean(currentRecordState.recordEditing)}
       onEditingChange={setCurrentRecordEditing}
@@ -1221,6 +1250,11 @@ export const App = () => {
     }
 
     switch (tabMemory.more.subRoute) {
+      case "knowledge":
+        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onNavigation={(patch, push = false) => {
+          const current = navigationStateRef.current;
+          commitNavigation({ ...current, tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, knowledge: { ...(current.tabMemory.more.knowledge ?? initialKnowledgeNavigation()), ...patch } } } }, { history: push ? "push" : "none", motion: push ? "forward" : "none", scrollToTop: false });
+        }} />;
       case "templates":
         return (
           <TemplateLibraryPage
@@ -1490,6 +1524,7 @@ export const App = () => {
         // one: one destination, one back behaviour, no drift between them.
         return (
           <MorePage
+            onOpenKnowledge={() => openMoreSubRoute("knowledge")}
             onOpenBackup={() => openMoreSubRoute("backup")}
             onOpenAi={() => openMoreSubRoute("ai")}
             onOpenOcrSettings={() => openMoreSubRoute("ocrSettings")}
@@ -1621,6 +1656,7 @@ export const App = () => {
           />
         ) : (
           <JournalPage
+            onOpenKnowledge={() => openMoreSubRoute("knowledge")}
             blocks={app.blocks}
             subjects={app.subjects}
             month={tabMemory.journal.month}

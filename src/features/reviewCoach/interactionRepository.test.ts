@@ -2,6 +2,7 @@ import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { KNOWLEDGE_SCHEMA_VERSION } from "../knowledgeLibrary/schema";
 import { StudyJournalDatabase } from "../../db/database";
 import { REVIEW_COACH_SCHEMA_VERSION } from "../../db/reviewCoachSchema";
 import { getReviewCoachFormalSnapshot, reviewCoachFormalTables, reviewCoachRestoreTables } from "./repository";
@@ -100,7 +101,7 @@ describe("review coach interaction trace boundary", () => {
     database.close();
     await database.open();
 
-    expect(database.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(database.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(await database.reviewCoachInteractionSegments.count()).toBe(1);
     expect(await database.decisionBlocks.count()).toBe(1);
     expect(await database.blocks.count()).toBe(1);

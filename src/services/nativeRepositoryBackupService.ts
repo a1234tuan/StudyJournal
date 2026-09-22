@@ -1,3 +1,4 @@
+import { containerForPayload, validateBackupContainer, validateBackupPayloadVersion, type KnowledgeContainer } from "../features/knowledgeLibrary/backupContainer";
 import type {
   Asset,
   BackupAssetMeta,
@@ -57,6 +58,7 @@ interface RepositoryManifest {
 }
 
 interface RepositorySnapshotFile extends StreamableBackupSnapshot {
+  container?: KnowledgeContainer;
   format?: typeof REPOSITORY_SNAPSHOT_FORMAT;
   version?: 1;
   exportedAt?: string;
@@ -109,12 +111,14 @@ const fileMapByPath = (files: NativeRepositoryFile[]) =>
 const totalPositiveSize = (files: NativeRepositoryFile[]) =>
   files.reduce((total, file) => total + (file.size > 0 ? file.size : 0), 0);
 
+export const createNativeRepository = (repositoryName = REPOSITORY_NAME) => {
+  if (!/^study-journal-backup(?:-[a-f0-9-]{1,80})?$/.test(repositoryName)) throw new Error("备份仓库身份无效。");
 const writeRepositoryBlob = async (
   path: string,
   blob: Blob,
   mimeType: string,
 ): Promise<{ size: number; lastModified?: number }> => {
-  const session = await beginNativeBackupRepositoryFileWrite(REPOSITORY_NAME, path, mimeType);
+  const session = await beginNativeBackupRepositoryFileWrite(repositoryName, path, mimeType);
   try {
     for await (const chunk of blobToBase64Chunks(blob, ENTRY_CHUNK_BYTES)) {
       await appendNativeBackupRepositoryFileWrite(session.sessionId, chunk.data);
@@ -131,7 +135,7 @@ const readRepositoryBlob = async (path: string, mimeType: string): Promise<Blob>
   let offset = 0;
   while (true) {
     const chunk = await readNativeBackupRepositoryFileChunk(
-      REPOSITORY_NAME,
+      repositoryName,
       path,
       offset,
       ENTRY_CHUNK_BYTES,
@@ -149,7 +153,7 @@ const readRepositoryBlob = async (path: string, mimeType: string): Promise<Blob>
 
 const readManifest = async (): Promise<RepositoryManifest | undefined> => {
   try {
-    const result = await readNativeBackupRepositoryTextFile(REPOSITORY_NAME, "manifest.json");
+    const result = await readNativeBackupRepositoryTextFile(repositoryName, "manifest.json");
     const parsed = JSON.parse(result.text) as RepositoryManifest;
     if (parsed.format !== REPOSITORY_MANIFEST_FORMAT || parsed.version !== 1) {
       return undefined;
@@ -165,15 +169,20 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
   if (
     !payload?.manifest ||
     !["408-study-journal", "study-journal"].includes(payload.manifest.format) ||
-    ![1, 2, 3, 4, 5, 6].includes(payload.manifest.version)
+    ![1, 2, 3, 4, 5, 6, 7].includes(payload.manifest.version)
   ) {
     throw new Error("自动备份仓库快照格式不兼容或已损坏。");
   }
+  validateBackupPayloadVersion(payload);
+  if (payload.manifest.version === 7) validateBackupContainer(parsed.container, { ...payload, assets: parsed.assets } as typeof payload);
   const blocks = migrateBlocksToRecords(payload.blocks ?? []);
   const recordBlocks = blocks.filter((block): block is RecordBlock => block.type === "record");
   return {
     payload: {
       manifest: payload.manifest,
+      ...(payload.knowledge !== undefined ? { knowledge: payload.knowledge } : {}),
+      templates: payload.templates ?? [],
+      podcasts: payload.podcasts,
       entries: payload.entries ?? [],
       blocks,
       recordDrafts: payload.recordDrafts ?? parsed.recordDrafts ?? [],
@@ -211,14 +220,14 @@ const snapshotSummary = (snapshot: StreamableBackupSnapshot): ImportSummary =>
 
 const hasRecoverableData = (snapshot: StreamableBackupSnapshot): boolean => {
   const summary = snapshotSummary(snapshot);
-  return summary.records > 0 || summary.deletedRecords > 0 || summary.assets > 0;
+  return summary.records > 0 || summary.deletedRecords > 0 || summary.assets > 0 || snapshot.payload.knowledge !== undefined;
 };
 
 const listRepositorySize = async () => {
   const [root, assets, snapshots] = await Promise.all([
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, ""),
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, "assets"),
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, "snapshots"),
+    listNativeBackupRepositoryFiles(repositoryName, ""),
+    listNativeBackupRepositoryFiles(repositoryName, "assets"),
+    listNativeBackupRepositoryFiles(repositoryName, "snapshots"),
   ]);
   return totalPositiveSize(root) + totalPositiveSize(assets) + totalPositiveSize(snapshots);
 };
@@ -234,7 +243,7 @@ const loadKeptAssetPaths = async (
       continue;
     }
     try {
-      const text = (await readNativeBackupRepositoryTextFile(REPOSITORY_NAME, snapshot.path)).text;
+      const text = (await readNativeBackupRepositoryTextFile(repositoryName, snapshot.path)).text;
       const parsed = JSON.parse(text) as RepositorySnapshotFile;
       const snapshotAssetPaths = parsed.assetPaths ?? Object.fromEntries((parsed.assets ?? []).map((asset) => [asset.id, assetPath(asset)]));
       Object.values(snapshotAssetPaths).forEach((path) => paths.add(path));
@@ -254,18 +263,18 @@ const cleanupRepository = async (
     const keptSnapshotPaths = new Set(keptSnapshots.map((snapshot) => snapshot.path));
     const keptAssetPaths = await loadKeptAssetPaths(keptSnapshots, currentSnapshotId, currentAssetPaths);
     const [snapshots, assets] = await Promise.all([
-      listNativeBackupRepositoryFiles(REPOSITORY_NAME, "snapshots"),
-      listNativeBackupRepositoryFiles(REPOSITORY_NAME, "assets"),
+      listNativeBackupRepositoryFiles(repositoryName, "snapshots"),
+      listNativeBackupRepositoryFiles(repositoryName, "assets"),
     ]);
     await Promise.all(
       snapshots
         .filter((file) => !keptSnapshotPaths.has(file.path))
-        .map((file) => deleteNativeBackupRepositoryFile(REPOSITORY_NAME, file.path).catch(() => undefined)),
+        .map((file) => deleteNativeBackupRepositoryFile(repositoryName, file.path).catch(() => undefined)),
     );
     await Promise.all(
       assets
         .filter((file) => !keptAssetPaths.has(file.path))
-        .map((file) => deleteNativeBackupRepositoryFile(REPOSITORY_NAME, file.path).catch(() => undefined)),
+        .map((file) => deleteNativeBackupRepositoryFile(repositoryName, file.path).catch(() => undefined)),
     );
     return undefined;
   } catch (error) {
@@ -273,7 +282,7 @@ const cleanupRepository = async (
   }
 };
 
-export const writeNativeRepositoryBackupSnapshot = async (
+const writeNativeRepositoryBackupSnapshot = async (
   snapshot: StreamableBackupSnapshot,
   getAsset: (assetId: string) => Promise<Asset | undefined>,
   options: ExportOptions = {},
@@ -284,8 +293,8 @@ export const writeNativeRepositoryBackupSnapshot = async (
 
   const portableSnapshot = sanitizeStreamableSnapshotForExport(snapshot);
   options.onProgress?.({ stage: "preparing", message: "正在准备增量备份仓库。" });
-  const repository = await ensureNativeBackupRepository(REPOSITORY_NAME);
-  const existingAssets = fileMapByPath(await listNativeBackupRepositoryFiles(REPOSITORY_NAME, "assets"));
+  const repository = await ensureNativeBackupRepository(repositoryName);
+  const existingAssets = fileMapByPath(await listNativeBackupRepositoryFiles(repositoryName, "assets"));
   const assetPaths: Record<string, string> = {};
   let bytesWritten = 0;
 
@@ -316,6 +325,7 @@ export const writeNativeRepositoryBackupSnapshot = async (
   const snapshotId = nowSnapshotId();
   const snapshotPath = `snapshots/${snapshotId}.json`;
   const snapshotFile: RepositorySnapshotFile = {
+    ...(portableSnapshot.payload.manifest.version === 7 ? { container: containerForPayload({ ...portableSnapshot.payload, assets: portableSnapshot.assets }) } : {}),
     format: REPOSITORY_SNAPSHOT_FORMAT,
     version: 1,
     exportedAt: portableSnapshot.payload.manifest.exportedAt,
@@ -373,14 +383,14 @@ export const writeNativeRepositoryBackupSnapshot = async (
     repositorySize,
     assetCount: portableSnapshot.assets.length,
     snapshotId,
-    displayName: REPOSITORY_NAME,
+    displayName: repositoryName,
     verifiedAt: Date.now(),
     lastModified: manifestWrite.lastModified,
     warning: cleanupWarning,
   };
 };
 
-export const writeNativeRepositoryBackup = async (
+const writeNativeRepositoryBackup = async (
   store: StorageAdapter,
   options: ExportOptions = {},
 ): Promise<RepositoryWriteSummary> => {
@@ -401,7 +411,7 @@ const loadSnapshotFromManifest = async (
 
   let firstLoaded: LoadedRepositorySnapshot | undefined;
   for (const candidate of candidates) {
-    const text = (await readNativeBackupRepositoryTextFile(REPOSITORY_NAME, candidate.path)).text;
+    const text = (await readNativeBackupRepositoryTextFile(repositoryName, candidate.path)).text;
     const parsed = parseSnapshotFile(text);
     const loaded = { ...parsed, snapshotId: candidate.id };
     firstLoaded ??= loaded;
@@ -417,13 +427,13 @@ const loadSnapshotFromManifest = async (
 };
 
 const scanLatestSnapshot = async (): Promise<LoadedRepositorySnapshot> => {
-  const files = (await listNativeBackupRepositoryFiles(REPOSITORY_NAME, "snapshots"))
+  const files = (await listNativeBackupRepositoryFiles(repositoryName, "snapshots"))
     .filter((file) => file.displayName.endsWith(".json"))
     .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0) || b.displayName.localeCompare(a.displayName));
   let firstLoaded: LoadedRepositorySnapshot | undefined;
   for (const file of files) {
     try {
-      const text = (await readNativeBackupRepositoryTextFile(REPOSITORY_NAME, file.path)).text;
+      const text = (await readNativeBackupRepositoryTextFile(repositoryName, file.path)).text;
       const parsed = parseSnapshotFile(text);
       const loaded = { ...parsed, snapshotId: file.displayName.replace(/\.json$/i, "") };
       firstLoaded ??= loaded;
@@ -456,7 +466,7 @@ const verifyRepositoryAssets = async (
   assets: BackupAssetMeta[],
   assetPaths: Record<string, string>,
 ) => {
-  const files = fileMapByPath(await listNativeBackupRepositoryFiles(REPOSITORY_NAME, "assets"));
+  const files = fileMapByPath(await listNativeBackupRepositoryFiles(repositoryName, "assets"));
   for (const meta of assets) {
     const path = assetPaths[meta.id] ?? assetPath(meta);
     const file = files.get(path);
@@ -472,7 +482,7 @@ const verifyRepositoryAssets = async (
   }
 };
 
-export const restoreNativeRepositoryBackup = async (
+const restoreNativeRepositoryBackup = async (
   store: StorageAdapter,
   options: NativeRepositoryRestoreOptions = {},
 ): Promise<ImportSummary> =>
@@ -505,18 +515,23 @@ export const restoreNativeRepositoryBackup = async (
     return summary;
   });
 
-export const diagnoseNativeRepositoryBackup = async () => {
-  await ensureNativeBackupRepository(REPOSITORY_NAME);
+const diagnoseNativeRepositoryBackup = async () => {
+  await ensureNativeBackupRepository(repositoryName);
   const [root, assets, snapshots] = await Promise.all([
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, ""),
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, "assets"),
-    listNativeBackupRepositoryFiles(REPOSITORY_NAME, "snapshots"),
+    listNativeBackupRepositoryFiles(repositoryName, ""),
+    listNativeBackupRepositoryFiles(repositoryName, "assets"),
+    listNativeBackupRepositoryFiles(repositoryName, "snapshots"),
   ]);
   return {
-    repositoryName: REPOSITORY_NAME,
+    repositoryName: repositoryName,
     root,
     assets,
     snapshots,
     repositorySize: totalPositiveSize(root) + totalPositiveSize(assets) + totalPositiveSize(snapshots),
   };
 };
+
+  return { writeNativeRepositoryBackupSnapshot, writeNativeRepositoryBackup, restoreNativeRepositoryBackup, diagnoseNativeRepositoryBackup };
+};
+
+export const { writeNativeRepositoryBackupSnapshot, writeNativeRepositoryBackup, restoreNativeRepositoryBackup, diagnoseNativeRepositoryBackup } = createNativeRepository();

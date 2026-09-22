@@ -1,3 +1,4 @@
+import { restoreKnowledgeNavigation } from "../features/knowledgeLibrary/navigation";
 import {
   createInitialReviewLibraryState,
   createInitialTabMemory,
@@ -283,6 +284,7 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
     },
     more: {
       ...moreBase,
+      ...(value.more.knowledge ? { knowledge: restoreKnowledgeNavigation(value.more.knowledge) } : {}),
       subRoute,
       aiScreen: value.more.aiScreen === "scope" ? "scope" : "chat",
       recordingsState: {

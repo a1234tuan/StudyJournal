@@ -5,7 +5,8 @@ import type { AppSettings, AutoBackupSettings, ExportKind, ExportProgress, Impor
 import { exportFullBackupFromStorage } from "../services/knowledgeExportService";
 import { importAndRestoreSnapshot } from "../services/importRestoreService";
 import { nativeBackupAdapter, pickNativeZipFile } from "../services/nativeBackupAdapter";
-import { restoreNativeRepositoryBackup } from "../services/nativeRepositoryBackupService";
+import { createNativeRepository, restoreNativeRepositoryBackup } from "../services/nativeRepositoryBackupService";
+import { currentKnowledgeBackupDirectory } from "../features/knowledgeLibrary/autoBackup";
 import { storage } from "../services/storageAdapter";
 import { manualZipSyncAdapter } from "../services/syncAdapters";
 import { isNativePlatform } from "../lib/platform";
@@ -188,7 +189,9 @@ export const BackupPage = ({ settings, autoBackupState, onRestored }: BackupPage
       let activeSummary: ImportSummary | undefined;
       setImportStatus({ state: "parsing", title: "检查自动备份仓库", detail: "正在校验 manifest、snapshot 和资源文件。" });
       try {
-        const summary = await restoreNativeRepositoryBackup(storage, {
+        const directory = await currentKnowledgeBackupDirectory();
+        const restoreRepository = directory ? createNativeRepository(directory).restoreNativeRepositoryBackup : restoreNativeRepositoryBackup;
+        const summary = await restoreRepository(storage, {
           onRestored,
           onProgress: (progress) => {
             if (progress.stage === "restoring" && activeSummary) {

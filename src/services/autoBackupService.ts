@@ -1,3 +1,6 @@
+import { db } from "../db/database";
+import { freezeKnowledgeBackup, completeKnowledgeBackup, authorizeKnowledgeBackup } from "../features/knowledgeLibrary/autoBackup";
+import { currentKnowledgeOwner, knowledgeContextGeneration, assertKnowledgeOwner } from "../features/knowledgeLibrary/context";
 import type { AutoBackupSettings, StorageAdapter } from "../types";
 import { nowISO } from "../lib/date";
 import { autoBackupAdapter, type AutoBackupAdapter } from "./autoBackupAdapter";
@@ -5,6 +8,8 @@ import { storage } from "./storageAdapter";
 
 const DEFAULT_DEBOUNCE_MS = 600_000;
 
+let binding = false;
+let runningOwner: string | undefined;
 let runningPromise: Promise<AutoBackupSettings> | undefined;
 let dirtyTimer: number | undefined;
 let dirtyGeneration = 0;
@@ -52,7 +57,10 @@ export const setAutoBackupEnabled = async (
   adapter: AutoBackupAdapter = autoBackupAdapter,
   store: StorageAdapter = storage,
 ): Promise<AutoBackupSettings> => {
+  const owner = currentKnowledgeOwner();
+  const generation = knowledgeContextGeneration();
   const state = withAutoBackupDefaults(await store.getAutoBackupState());
+  assertKnowledgeOwner(owner, generation);
   if (enabled && !adapter.isAvailable()) {
     throw new Error("当前环境不支持自动备份文件夹绑定，请使用手动导出 zip。");
   }
@@ -72,7 +80,14 @@ export const bindAutoBackupFolder = async (
   if (!adapter.isAvailable()) {
     throw new Error("当前环境不支持自动备份文件夹绑定，请使用手动导出 zip。");
   }
+  if (runningPromise || binding) throw new Error("正在备份或绑定目录，请稍后重试。");
+  binding = true;
+  try {
+  const owner = currentKnowledgeOwner();
+  const generation = knowledgeContextGeneration();
   const bound = await adapter.bindFolder();
+  assertKnowledgeOwner(owner, generation);
+  if (store === storage) await authorizeKnowledgeBackup();
   const state = withAutoBackupDefaults(await store.getAutoBackupState());
   const next: AutoBackupSettings = {
     ...currentAutoBackup(state),
@@ -80,8 +95,10 @@ export const bindAutoBackupFolder = async (
     folderName: bound.folderName,
     lastError: undefined,
   };
+  assertKnowledgeOwner(owner, generation);
   await store.saveAutoBackupState(next);
   return next;
+  } finally { binding = false; }
 };
 
 export const flushAutoBackupNow = async (
@@ -90,12 +107,15 @@ export const flushAutoBackupNow = async (
   store: StorageAdapter = storage,
 ): Promise<AutoBackupSettings> => {
   void reason;
-  if (suspended) {
+  if (suspended || binding) {
     return withAutoBackupDefaults(await store.getAutoBackupState());
   }
   if (runningPromise) {
-    return runningPromise;
+    return runningOwner === currentKnowledgeOwner() ? runningPromise : withAutoBackupDefaults(await store.getAutoBackupState());
   }
+  const taskOwner = currentKnowledgeOwner();
+  const taskGeneration = knowledgeContextGeneration();
+  runningOwner = taskOwner;
 
   runningPromise = (async () => {
     const state = withAutoBackupDefaults(await store.getAutoBackupState());
@@ -103,7 +123,9 @@ export const flushAutoBackupNow = async (
       return state;
     }
 
+    if (currentKnowledgeOwner() !== taskOwner || knowledgeContextGeneration() !== taskGeneration) return state;
     const bound = await adapter.isBound();
+    if (currentKnowledgeOwner() !== taskOwner || knowledgeContextGeneration() !== taskGeneration) return state;
     if (!bound.bound) {
       const next: AutoBackupSettings = {
         ...currentAutoBackup(state),
@@ -114,8 +136,13 @@ export const flushAutoBackupNow = async (
     }
 
     try {
-      const result = await adapter.writeLatest(store);
+      const captured = store === storage ? await db.transaction("r", db.tables, async () => ({ scope: await freezeKnowledgeBackup(), snapshot: await store.createSnapshot() })) : undefined;
+      const scope = captured?.scope;
+      assertKnowledgeOwner(taskOwner, taskGeneration);
+      const result = await adapter.writeLatest(store, scope, captured?.snapshot);
       ensureValidWriteResult(result);
+      if (scope) await completeKnowledgeBackup(scope);
+      assertKnowledgeOwner(taskOwner, taskGeneration);
       const next: AutoBackupSettings = {
         ...currentAutoBackup(state),
         enabled: true,
@@ -137,6 +164,7 @@ export const flushAutoBackupNow = async (
       await store.saveAutoBackupState(next);
       return next;
     } catch (error) {
+      if (currentKnowledgeOwner() !== taskOwner || knowledgeContextGeneration() !== taskGeneration) return state;
       const next: AutoBackupSettings = {
         ...currentAutoBackup(state),
         lastError: error instanceof Error ? error.message : "自动备份失败。",
@@ -150,6 +178,7 @@ export const flushAutoBackupNow = async (
     return await runningPromise;
   } finally {
     runningPromise = undefined;
+    runningOwner = undefined;
   }
 };
 

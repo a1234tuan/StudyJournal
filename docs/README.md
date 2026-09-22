@@ -1,6 +1,14 @@
 # 项目文档索引
 
-更新日期：2026-09-21。首次接手请先阅读根目录 README.md、AGENTS.md 和 CHANGELOG.md。日期化冻结/审计文件保存当时结论，不能直接当作当前所有能力的验收证明。
+更新日期：2026-09-22。首次接手请先阅读根目录 README.md、AGENTS.md 和 CHANGELOG.md。日期化冻结/审计文件保存当时结论，不能直接当作当前所有能力的验收证明。
+
+## 知识库：v1 已实现，待最终人工验收
+
+- [最终分阶段开发方案](knowledge-library-v1-final-implementation-plan-2026-09-22.md)：推荐取舍、P0–P7任务、逐阶段测试/退出标准及最终统一人工验收；D11–D12补齐默认库发现、引用删除/恢复、候选分批、空包副本与身份备份范围及21项专项用例；知识库 v1 已按方案实现并完成自动化回归；实施证据见实现记录，APK/EXE 已生成但未安装，生产规则和真实账号验收仍待授权。
+- [总体完整版 R3](knowledge-library-v1-design-r3-complete-2026-09-22.md)：完整功能、数据可靠性与视觉交互；执行安排以最终开发方案为准。
+- [范围记录](studyjournal-scope-unfreeze-2026-09-22-knowledge-library.md)、[使用流程](knowledge-library-user-flow-2026-09-22.md)：保留日志真源及既有学习事实边界。
+- [数据设计独立裁定](knowledge-library-v1-review-adjudication-2026-09-22.md)、[视觉独立审查](knowledge-library-visual-review-2026-09-22.md)：历史评审证据，R1/R2 不再作为现行执行规格。
+- [SJ-AUD-01 修复记录](sj-aud-01-lifecycle-write-fix-2026-09-22.md)：代码/自动化验证已完成，人工复验按最新安排并入最终验收，不能描述为用户已经验收。
 
 ## 当前接入与验收
 

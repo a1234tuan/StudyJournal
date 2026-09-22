@@ -4,5 +4,101 @@ service cloud.firestore {
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+    match /knowledgeUsers/{userId} {
+      function owner() { return request.auth != null && request.auth.uid == userId; }
+      match /registry/default {
+        allow read: if owner();
+        allow create: if owner()
+          && request.resource.data.keys().hasOnly(['protocolVersion', 'cloudLibraryId', 'registrationRevision'])
+          && request.resource.data.protocolVersion == 1
+          && request.resource.data.cloudLibraryId is string
+          && request.resource.data.registrationRevision is string
+          && getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(request.resource.data.cloudLibraryId)/state/head).data.sequence == 0
+          && getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(request.resource.data.cloudLibraryId)/state/head).data.commandId == request.resource.data.registrationRevision;
+      }
+      match /libraries/{libraryId} {
+        function headAfter() { return getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/state/head).data; }
+        function commitAfter(commandId) { return getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/commits/$(commandId)).data; }
+        function receiptAfter(commandId) { return getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/receipts/$(commandId)).data; }
+        function nextCommit(commit) {
+          let head = headAfter();
+          return commit.protocolVersion == 1 && commit.sequence == head.sequence && commit.commandId == head.commandId;
+        }
+        function slotPresent(commit, index) {
+          let slot = commit.slots[index];
+          let row = getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/$(slot.collection)/$(slot.id)).data;
+          return slot.collection in ['entities', 'revisions', 'conflicts'] && row.sequence == commit.sequence && row.commandId == commit.commandId && row.slot == index;
+        }
+        function slotValid(commit, index) { return commit.slots.size() <= index || slotPresent(commit, index); }
+        function slotCost(commit, index) {
+          return commit.slots.size() <= index ? 0 : commit.slots[index].bytes * (commit.slots[index].collection == 'revisions' ? 2 : 4);
+        }
+        function validMutation(collection, entityId) {
+          let row = request.resource.data;
+          let commit = commitAfter(row.commandId);
+          let slot = commit.slots[row.slot];
+          return row.keys().hasOnly(['protocolVersion', 'sequence', 'commandId', 'slot', 'payload', 'hash', 'kind'])
+            && nextCommit(commit)
+            && row.protocolVersion == 1 && row.sequence == commit.sequence && row.commandId == commit.commandId
+            && row.slot is int && row.slot >= 0 && row.slot < commit.slots.size()
+            && slot.collection == collection && slot.id == entityId && slot.hash == row.hash
+            && row.payload is string && slot.bytes == row.payload.toUtf8().size()
+            && ((collection == 'revisions' && row.kind == 'revisions' && slot.payload == '')
+              || (collection == 'entities' && row.kind == 'entities' && slot.payload == row.payload)
+              || (collection == 'conflicts' && row.kind in ['candidates', 'groups'] && slot.payload == row.payload));
+        }
+        function validHeadUpdate() {
+          let commit = commitAfter(request.resource.data.commandId);
+          let receipt = receiptAfter(request.resource.data.commandId);
+          return request.resource.data.keys().hasOnly(['protocolVersion', 'sequence', 'commandId'])
+            && request.resource.data.protocolVersion == 1 && request.resource.data.sequence == resource.data.sequence + 1
+            && commit.sequence == request.resource.data.sequence && receipt.sequence == request.resource.data.sequence
+            && slotValid(commit, 0) && slotValid(commit, 1) && slotValid(commit, 2) && slotValid(commit, 3) && slotValid(commit, 4) && slotValid(commit, 5) && slotValid(commit, 6);
+        }
+        match /state/head {
+          allow read: if owner();
+          allow create: if owner()
+            && request.resource.data.keys().hasOnly(['protocolVersion', 'sequence', 'commandId'])
+            && request.resource.data.protocolVersion == 1 && request.resource.data.sequence == 0
+            && getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/registry/default).data.cloudLibraryId == libraryId
+            && getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/registry/default).data.registrationRevision == request.resource.data.commandId
+            && receiptAfter(request.resource.data.commandId).registration == true;
+          allow update: if owner() && validHeadUpdate();
+        }
+        match /commits/{commandId} {
+          allow read: if owner();
+          allow create: if owner()
+            && request.resource.data.keys().hasOnly(['protocolVersion', 'sequence', 'commandId', 'commandHash', 'slots', 'budget'])
+            && request.resource.data.commandId == commandId && nextCommit(request.resource.data)
+            && request.resource.data.slots is list && request.resource.data.slots.size() <= 15
+            && request.resource.data.commandHash == receiptAfter(commandId).commandHash
+            && request.resource.data.budget == 16384 + slotCost(request.resource.data, 0) + slotCost(request.resource.data, 1) + slotCost(request.resource.data, 2) + slotCost(request.resource.data, 3) + slotCost(request.resource.data, 4) + slotCost(request.resource.data, 5) + slotCost(request.resource.data, 6) + slotCost(request.resource.data, 7) + slotCost(request.resource.data, 8) + slotCost(request.resource.data, 9) + slotCost(request.resource.data, 10) + slotCost(request.resource.data, 11) + slotCost(request.resource.data, 12) + slotCost(request.resource.data, 13) + slotCost(request.resource.data, 14)
+            && request.resource.data.budget <= 65536
+            && slotValid(request.resource.data, 7)
+            && slotValid(request.resource.data, 8)
+            && slotValid(request.resource.data, 9)
+            && slotValid(request.resource.data, 10)
+            && slotValid(request.resource.data, 11)
+            && slotValid(request.resource.data, 12)
+            && slotValid(request.resource.data, 13)
+            && slotValid(request.resource.data, 14);
+        }
+        match /receipts/{commandId} {
+          allow read: if owner();
+          allow create: if owner()
+            && request.resource.data.keys().hasOnly(['protocolVersion', 'sequence', 'commandId', 'commandHash', 'registration'])
+            && request.resource.data.commandId == commandId && nextCommit(request.resource.data)
+            && request.resource.data.commandHash is string && request.resource.data.commandHash.size() == 64
+            && ((request.resource.data.registration == true && request.resource.data.sequence == 0)
+              || (request.resource.data.registration == false && request.resource.data.sequence > 0
+                && commitAfter(commandId).commandHash == request.resource.data.commandHash));
+        }
+        match /{collection}/{entityId} {
+          allow read: if owner() && collection in ['entities', 'revisions', 'conflicts'];
+          allow create: if owner() && collection in ['entities', 'revisions', 'conflicts'] && validMutation(collection, entityId);
+          allow update: if owner() && collection in ['entities', 'conflicts'] && validMutation(collection, entityId);
+        }
+      }
+    }
   }
 }

@@ -2,6 +2,7 @@ import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { KNOWLEDGE_SCHEMA_VERSION } from "../features/knowledgeLibrary/schema";
 import {
   openLearningCoachMigrationFixture,
   schema11MigrationFixture,
@@ -55,7 +56,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     await database.open();
 
-    expect(database.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(database.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(database.tables.some((table) => table.name === "reviewAnnotationDrafts")).toBe(true);
     expect(database.tables.map((table) => table.name)).toEqual(expect.arrayContaining([
       "voiceRecallSessions", "voiceRecallTurns", "voiceRecallLocalHistory",
@@ -79,7 +80,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     await database.open();
 
-    expect(database.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(database.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(await database.learningEvidence.count()).toBe(1);
     expect(await database.knowledgePoints.count()).toBe(2);
     expect(await database.recordKnowledgePointLinks.count()).toBe(1);
@@ -154,7 +155,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
       idempotencyKey: "verification-task", createdAt: "2026-09-07T08:00:00.000Z", updatedAt: "2026-09-07T08:00:00.000Z",
     });
 
-    expect(database.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(database.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(await database.adaptiveReviewTasks.where("blueprintId").equals("blueprint-1").count()).toBe(2);
     database.close();
   });
@@ -185,7 +186,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     const retried = new StudyJournalDatabase(name);
     await retried.open();
-    expect(retried.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(retried.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(await retried.learningEvidence.count()).toBe(1);
     expect(await retried.coachMigrationBackups.get("schema-17")).toMatchObject({ status: "completed" });
     retried.close();
@@ -211,7 +212,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
 
     const retried = new StudyJournalDatabase(name);
     await retried.open();
-    expect(retried.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(retried.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(await retried.settings.get("settings")).toMatchObject({ theme: "system" });
     expect(await retried.voiceRecallSessions.count()).toBe(0);
     retried.close();
@@ -245,7 +246,7 @@ describe("StudyJournalDatabase review-coach migrations", () => {
     const upgraded = new StudyJournalDatabase(name);
     await upgraded.open();
 
-    expect(upgraded.verno).toBe(REVIEW_COACH_SCHEMA_VERSION);
+    expect(upgraded.verno).toBe(KNOWLEDGE_SCHEMA_VERSION);
     expect(upgraded.tables.map((table) => table.name)).toContain("dailyPlans");
     // Additive migration: pre-existing rows and settings must survive untouched.
     expect(await upgraded.blocks.get("existing-record")).toMatchObject({ title: "升级前就存在的日志" });

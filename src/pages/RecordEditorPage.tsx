@@ -1,3 +1,4 @@
+import { KnowledgeRecordLinks, type KnowledgeRecordLocation } from "../features/knowledgeLibrary/KnowledgeRecordLinks";
 import { ArrowLeft, CalendarCheck, Download, Edit3, FilePlus, ImagePlus, Mic, MoreHorizontal, PanelRight, Pi, RotateCcw, Save, Search, Star, Trash2, Volume2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
@@ -41,6 +42,7 @@ import {
 import type { DecisionBlockArchive } from "../features/reviewCoach/domain";
 
 interface RecordEditorPageProps {
+  onOpenKnowledge?: (location?: KnowledgeRecordLocation) => void;
   record: RecordBlock;
   initialEditing?: boolean;
   onEditingChange?: (editing: boolean) => void;
@@ -178,6 +180,7 @@ const draftDecisionBlockOptions = (
 });
 
 export const RecordEditorPage = ({
+  onOpenKnowledge,
   record,
   initialEditing = false,
   onEditingChange,
@@ -938,6 +941,7 @@ export const RecordEditorPage = ({
     <main className={`${interactionLocked ? "page record-editor-page restore-locked" : "page record-editor-page"}${wideContent ? " wide-content" : ""}`} aria-busy={interactionLocked}>
       {draftLoading && <p className="status-message draft-status">正在读取草稿，编辑已暂时锁定。</p>}
       {!draftLoading && restoreLocked && <p className="status-message draft-status">正在恢复备份，编辑已暂时锁定。</p>}
+      {!editing && onOpenKnowledge && <KnowledgeRecordLinks recordId={record.id} onOpen={onOpenKnowledge} />}
       <section className="record-editor-topbar">
         <button type="button" className="secondary-button" onClick={() => void back()} disabled={draftLoading}>
           <ArrowLeft size={18} />

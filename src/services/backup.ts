@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { containerForPayload, KNOWLEDGE_PAYLOAD_ENTRY, validateBackupContainer, validateBackupPayloadVersion } from "../features/knowledgeLibrary/backupContainer";
 import { saveAs } from "file-saver";
 
 import type { Asset, BackupPayload, ExportOptions, ImportOptions, ImportSummary, RecordBlock, StorageSnapshot } from "../types";
@@ -40,9 +41,11 @@ export const snapshotToZip = async (snapshot: StorageSnapshot, options: ExportOp
     },
   };
 
-  zip.file("manifest.json", JSON.stringify(payload.manifest, null, 2));
+  validateBackupPayloadVersion(payload);
+  const archivePayload = { ...payload, recordDrafts: snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? [], assets: portableAssets.map(serializeAssetMeta) };
+  zip.file("manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
   zip.file(
-    "data.json",
+    payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
     JSON.stringify(
       {
         ...payload,
@@ -138,7 +141,8 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
   }
 
   options.onProgress?.({ stage: "parsing", message: "正在检查备份结构和 data.json。" });
-  const dataFile = zip.file("data.json");
+  const versioned = zip.file(KNOWLEDGE_PAYLOAD_ENTRY);
+  const dataFile = versioned ?? zip.file("data.json");
   if (!dataFile) {
     throw new Error("不是学习日志完整备份：备份包缺少 data.json。");
   }
@@ -157,12 +161,19 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
   if (
     !data.manifest ||
     !["408-study-journal", "study-journal"].includes(data.manifest.format) ||
-    ![1, 2, 3, 4, 5, 6].includes(data.manifest.version)
+    ![1, 2, 3, 4, 5, 6, 7].includes(data.manifest.version)
   ) {
     const format = data.manifest?.format ?? "未知";
     const version = data.manifest?.version ?? "未知";
     throw new Error(`备份格式不兼容：format=${format}，version=${version}。`);
   }
+
+  validateBackupPayloadVersion(data);
+  if (versioned) {
+    const manifest = zip.file("manifest.json");
+    if (!manifest) throw new Error("新版备份缺少外层校验清单。");
+    validateBackupContainer(JSON.parse(await manifest.async("string")), data);
+  } else if (data.manifest.version === 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
 
   const migratedBlocks = migrateBlocksToRecords(data.blocks ?? []);
   const recordBlocks = migratedBlocks.filter((block) => block.type === "record");
@@ -194,6 +205,7 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
   return {
     payload: {
       manifest: data.manifest,
+      ...(data.knowledge !== undefined ? { knowledge: data.knowledge } : {}),
       entries: data.entries ?? [],
       blocks: migratedBlocks,
       templates: data.templates ?? [],

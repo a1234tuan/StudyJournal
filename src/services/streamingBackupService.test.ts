@@ -1,3 +1,5 @@
+import { createKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
+import { validateBackupContainer } from "../features/knowledgeLibrary/backupContainer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { StorageAdapter, StreamableBackupSnapshot } from "../types";
@@ -12,12 +14,12 @@ vi.mock("./nativeZipArchive", () => ({
     appendEntry: vi.fn(),
     finishEntry: vi.fn(),
     finishExport: vi.fn(async () => ({ uri: "file:///backup.zip", size: 1 })),
-    cancelExport: vi.fn(),
+    cancelExport: vi.fn(async () => undefined),
     beginImport: vi.fn(async () => ({ sessionId: "import-1", entries: ["data.json"] })),
     readEntry: vi.fn(),
     readEntryChunk: vi.fn(),
     finishImport: vi.fn(),
-    cancelImport: vi.fn(),
+    cancelImport: vi.fn(async () => undefined),
   },
 }));
 
@@ -100,6 +102,29 @@ const snapshot: StreamableBackupSnapshot = {
 };
 
 describe("streaming backup", () => {
+  it("writes and validates the v7 container and imports an explicitly empty knowledge range", async () => {
+    const versioned = structuredClone(snapshot);
+    versioned.payload.manifest.version = 7;
+    versioned.payload.knowledge = createKnowledgeEnvelope([]);
+    const entries = new Map<string, string>();
+    let path = "";
+    vi.mocked(NativeZipArchive.beginEntry).mockImplementation(async entry => { path = entry.path; });
+    vi.mocked(NativeZipArchive.appendEntry).mockImplementation(async entry => { entries.set(path, (entries.get(path) ?? "") + decodeTextEntry(entry.data)); });
+    await writeNativeStreamableBackupSnapshot(versioned, "cache-share", vi.fn());
+    expect(entries.has("data.json")).toBe(false);
+    const payload = JSON.parse(entries.get("snapshot-v7.json")!);
+    expect(() => validateBackupContainer(JSON.parse(entries.get("manifest.json")!), payload)).not.toThrow();
+    vi.mocked(NativeZipArchive.beginImport).mockResolvedValueOnce({ sessionId: "v7", entries: [...entries.keys()] });
+    vi.mocked(NativeZipArchive.readEntry).mockImplementation(async entry => ({ data: encodeTextEntry(entries.get(entry.path)!) }));
+    const store = { restoreStreamableSnapshot: vi.fn(async () => undefined) } as unknown as StorageAdapter;
+    await importNativeStreamableBackupAndRestore("content://v7.zip", store);
+    expect(vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0].payload.knowledge).toEqual(versioned.payload.knowledge);
+    entries.set("manifest.json", JSON.stringify({ ...JSON.parse(entries.get("manifest.json")!), checksum: "invalid" }));
+    vi.mocked(NativeZipArchive.beginImport).mockResolvedValueOnce({ sessionId: "bad", entries: [...entries.keys()] });
+    await expect(importNativeStreamableBackupAndRestore("content://bad.zip", store)).rejects.toThrow();
+    expect(store.restoreStreamableSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

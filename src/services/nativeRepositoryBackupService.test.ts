@@ -1,3 +1,4 @@
+import { createKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Asset, StorageAdapter, StreamableBackupSnapshot } from "../types";
@@ -221,6 +222,22 @@ const asset = (id: string): Asset => ({
 const nextMillisecond = () => new Promise((resolve) => setTimeout(resolve, 2));
 
 describe("native repository backup service", () => {
+  it("round-trips a v7 empty knowledge library without falling back to an older nonempty snapshot", async () => {
+    await writeNativeRepositoryBackupSnapshot(snapshot(), async id => asset(id));
+    await nextMillisecond();
+    const versioned = emptySnapshot();
+    versioned.payload.manifest.version = 7;
+    versioned.payload.knowledge = createKnowledgeEnvelope([]);
+    const written = await writeNativeRepositoryBackupSnapshot(versioned, async () => undefined);
+    const file = JSON.parse((await readNativeBackupRepositoryTextFile("study-journal-backup", "snapshots/" + written.snapshotId + ".json")).text);
+    expect(file.container.version).toBe(7);
+    expect(file.payload.knowledge).toEqual(versioned.payload.knowledge);
+    const store = { restoreStreamableSnapshot: vi.fn(async () => undefined) } as unknown as StorageAdapter;
+    await restoreNativeRepositoryBackup(store);
+    const restored = vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0];
+    expect(restored.payload.blocks).toHaveLength(0);
+    expect(restored.payload.knowledge).toEqual(versioned.payload.knowledge);
+  });
   beforeEach(() => {
     nativeMock.__repositoryFiles.clear();
     nativeMock.__repositorySessions.clear();

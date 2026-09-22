@@ -1,0 +1,92 @@
+import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
+import { doc, getDoc, runTransaction, setDoc, writeBatch, type Firestore } from "firebase/firestore";
+import { groupIdentity, knowledgeHash } from "../src/features/knowledgeLibrary/canonical";
+import { emptyKnowledgeState, type KnowledgeCommand } from "../src/features/knowledgeLibrary/domain";
+import { applyKnowledgeCommand } from "../src/features/knowledgeLibrary/protocol";
+import { applyKnowledgeCloudPacket, knowledgeCloudPacket, type KnowledgeCloudPacket } from "../src/features/knowledgeLibrary/cloudProtocol";
+
+let environment: RulesTestEnvironment;
+const uid = "knowledge-protocol-" + crypto.randomUUID();
+const root = (libraryId: string) => `knowledgeUsers/${uid}/libraries/${libraryId}`;
+beforeAll(async () => { environment = await initializeTestEnvironment({ projectId: "demo-noteproject-stage9", firestore: { rules: readFileSync("firestore.rules", "utf8") } }); });
+afterAll(async () => { await environment.cleanup(); });
+const register = (database: Firestore, libraryId: string, requestId: string) => runTransaction(database, async transaction => {
+  const registry = doc(database, `knowledgeUsers/${uid}/registry/default`);
+  const existing = await transaction.get(registry);
+  if (existing.exists()) return existing.data().cloudLibraryId as string;
+  transaction.set(registry, { protocolVersion: 1, cloudLibraryId: libraryId, registrationRevision: requestId });
+  transaction.set(doc(database, root(libraryId) + "/state/head"), { protocolVersion: 1, sequence: 0, commandId: requestId });
+  transaction.set(doc(database, root(libraryId) + "/receipts/" + requestId), { protocolVersion: 1, sequence: 0, commandId: requestId, commandHash: knowledgeHash({ requestId, libraryId }), registration: true });
+  return libraryId;
+});
+const publish = (database: Firestore, libraryId: string, packet: KnowledgeCloudPacket, omitLast = false) => {
+  const batch = writeBatch(database);
+  const path = root(libraryId);
+  batch.set(doc(database, path + "/state/head"), packet.head);
+  batch.set(doc(database, path + "/commits/" + packet.commit.commandId), packet.commit);
+  batch.set(doc(database, path + "/receipts/" + packet.receipt.commandId), packet.receipt);
+  for (const row of omitLast ? packet.rows.slice(0, -1) : packet.rows) batch.set(doc(database, path + "/" + row.collection + "/" + row.id), row.data);
+  return batch.commit();
+};
+
+describe("knowledge P0 isolated atomic protocol", () => {
+  it("BIND-01: competing first registrations adopt one immutable default with no orphan head", async () => {
+    const phone = environment.authenticatedContext(uid).firestore();
+    const desktop = environment.authenticatedContext(uid).firestore();
+    const libraries = await Promise.all([register(phone, "phone-library", "phone-registration"), register(desktop, "desktop-library", "desktop-registration")]);
+    expect(libraries[0]).toBe(libraries[1]);
+    const loser = libraries[0] === "phone-library" ? "desktop-library" : "phone-library";
+    expect((await getDoc(doc(phone, root(loser) + "/state/head"))).exists()).toBe(false);
+    await assertFails(setDoc(doc(phone, `knowledgeUsers/${uid}/registry/default`), { protocolVersion: 1, cloudLibraryId: "replacement", registrationRevision: "replacement" }));
+    await assertFails(getDoc(doc(environment.authenticatedContext("stranger").firestore(), `knowledgeUsers/${uid}/registry/default`)));
+  });
+  it("accepts complete bounded commits and refuses missing rows, old head, immutable rewrites and excessive budgets", async () => {
+    const database = environment.authenticatedContext(uid).firestore();
+    const libraryId = await register(database, "fallback-library", "fallback-register");
+    const initial = emptyKnowledgeState();
+    const create: KnowledgeCommand = { protocolVersion: 1, id: "create-topic", libraryId, operation: "create", entity: { id: "topic", kind: "workspace", workspaceId: "topic", nodeId: "", recordId: "" }, expected: { title: null, note: null, archived: null, deleted: null }, changes: { title: "数据结构", note: "", archived: false, deleted: false } };
+    const next = applyKnowledgeCommand(initial, create);
+    const packet = knowledgeCloudPacket(initial, next, create);
+    await assertFails(publish(database, libraryId, packet, true));
+    expect((await getDoc(doc(database, root(libraryId) + "/state/head"))).data()?.sequence).toBe(0);
+    await assertSucceeds(publish(database, libraryId, packet));
+    expect(applyKnowledgeCloudPacket(initial, packet)).toEqual(next);
+    await assertFails(publish(database, libraryId, packet));
+    const revision = packet.rows.find(row => row.collection === "revisions")!;
+    await assertFails(setDoc(doc(database, root(libraryId) + "/revisions/" + revision.id), { ...revision.data, payload: "overwritten" }));
+    const edit: KnowledgeCommand = { ...create, id: "edit-note", operation: "edit", expected: { note: next.entities.topic.units.note }, changes: { note: "a".repeat(16384) } };
+    const edited = applyKnowledgeCommand(next, edit);
+    const editPacket = knowledgeCloudPacket(next, edited, edit);
+    await assertFails(publish(database, libraryId, { ...editPacket, commit: { ...editPacket.commit, budget: 65537 } }));
+    await assertSucceeds(publish(database, libraryId, editPacket));
+    expect((await getDoc(doc(database, root(libraryId) + "/state/head"))).data()?.sequence).toBe(2);
+    const oldEntity = packet.rows.find(row => row.collection === "entities")!;
+    await assertFails(setDoc(doc(database, root(libraryId) + "/entities/" + oldEntity.id), oldEntity.data));
+    const foreign = environment.authenticatedContext("wrong-owner").firestore();
+    await assertFails(publish(foreign, libraryId, editPacket));
+    await assertFails(publish(database, "wrong-library", editPacket));
+    let conflicted = edited;
+    for (let index = 0; index < 5; index += 1) {
+      const concurrent: KnowledgeCommand = { ...edit, id: "peer-" + index, changes: { note: "不同说明" + index } };
+      const changed = applyKnowledgeCommand(conflicted, concurrent);
+      await assertSucceeds(publish(database, libraryId, knowledgeCloudPacket(conflicted, changed, concurrent)));
+      conflicted = changed;
+    }
+    const group = conflicted.groups[groupIdentity("topic", "note")];
+    const resolution: KnowledgeCommand = { ...edit, id: "resolve-four", operation: "resolve", expected: { note: conflicted.entities.topic.units.note! }, changes: { note: "a".repeat(16384) }, resolution: { unit: "note", setToken: group.setToken, generation: group.generation, candidates: Object.keys(conflicted.candidates).slice(0, 4) } };
+    const resolved = applyKnowledgeCommand(conflicted, resolution);
+    const resolutionPacket = knowledgeCloudPacket(conflicted, resolved, resolution);
+    await assertSucceeds(publish(database, libraryId, resolutionPacket));
+    expect(resolved.groups[group.id].unresolvedCount).toBe(1);
+    const noOpCommand = { ...edit, id: "no-op-receipt" };
+    const noOpState = structuredClone(resolved);
+    noOpState.sequence += 1;
+    noOpState.receipts[noOpCommand.id] = { id: noOpCommand.id, hash: knowledgeHash(noOpCommand), sequence: noOpState.sequence };
+    await assertSucceeds(publish(database, libraryId, knowledgeCloudPacket(resolved, noOpState, noOpCommand)));
+    const changedReceipt = { ...resolutionPacket.receipt, commandHash: "f".repeat(64) };
+    await assertFails(setDoc(doc(database, root(libraryId) + "/receipts/resolve-four"), changedReceipt));
+    await assertFails(setDoc(doc(database, root(libraryId) + "/entities/unlinked"), { protocolVersion: 1, sequence: 2, commandId: "edit-note", slot: 0, hash: "x", payload: "{}", kind: "entities" }));
+  });
+});

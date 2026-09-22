@@ -32,7 +32,11 @@ export const CloudSyncButton = ({ onSignedOut, onRestored, className = "" }: Clo
       cloudSyncStore.isCurrent(token) && getCurrentCloudUser()?.uid === user.uid;
     cloudSyncStore.setConflict(undefined);
     cloudSyncStore.setMessage(reconciling ? "正在核对上一次同步结果。" : "正在检查本机和云端的更改。");
+    let knowledgeSummary = "";
     try {
+      const { synchronizeBoundKnowledge } = await import("../features/knowledgeLibrary/runtime");
+      knowledgeSummary = await synchronizeBoundKnowledge();
+      if (!isCurrentOperation()) return;
       const result = await synchronizeCloudChanges(user, {
         onProgress: (event) => {
           if (isCurrentOperation()) cloudSyncStore.setMessage(event.message);
@@ -72,11 +76,11 @@ export const CloudSyncButton = ({ onSignedOut, onRestored, className = "" }: Clo
         if (!isCurrentOperation()) return;
         cloudSyncStore.setOutcome(
           noChange ? "no-change" : "success",
-          noChange ? "同步完成：本机和云端均无新变化。" : `同步完成：上传 ${result.uploaded} 项，下载 ${result.downloaded} 项。`,
+          (noChange ? "普通日志：本机和云端均无新变化。" : `普通日志：上传 ${result.uploaded} 项，下载 ${result.downloaded} 项。`) + " " + knowledgeSummary,
         );
       }
     } catch (error) {
-      if (isCurrentOperation()) cloudSyncStore.setOutcome("error", errorMessage(error));
+      if (isCurrentOperation()) cloudSyncStore.setOutcome("error", "普通日志：" + errorMessage(error) + " " + knowledgeSummary);
     } finally {
       cloudSyncStore.finishBusy(token);
     }

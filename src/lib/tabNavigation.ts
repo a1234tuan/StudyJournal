@@ -5,6 +5,7 @@ export type TabKey = "today" | "journal" | "categories" | "review" | "more";
  * source of truth: web history restoration validates against it, so a route
  * added only to the type union would silently break the browser Back button. */
 export const MORE_SUB_ROUTE_VALUES = [
+  "knowledge",
   "stats",
   "settings",
   "ai",
@@ -140,6 +141,7 @@ export type TabMemory = {
     voiceRecall?: VoiceRecallNavigationRoute;
   };
   more: RecordTabState & {
+    knowledge?: import("../features/knowledgeLibrary/navigation").KnowledgeNavigation;
     subRoute: MoreSubRoute;
     aiScreen: AiWorkspaceScreen;
     recordingsState: {
@@ -275,6 +277,7 @@ export const getTabDepth = (tab: TabKey, memory: TabMemory): number => {
       if (memory.more.recordId) {
         return 2 + referenceDepth(memory.more);
       }
+      if (memory.more.subRoute === "knowledge" && memory.more.knowledge?.workspaceId) return 2;
       if (memory.more.subRoute === "ai" && memory.more.aiScreen === "scope") {
         return 2;
       }
@@ -449,6 +452,7 @@ export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
           more: { ...memory.more, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined },
         };
       }
+      if (memory.more.subRoute === "knowledge" && memory.more.knowledge?.workspaceId) return { ...memory, more: { ...memory.more, knowledge: { ...memory.more.knowledge, workspaceId: undefined, selectedNodeId: undefined } } };
       if (memory.more.subRoute === "ai" && memory.more.aiScreen === "scope") {
         return {
           ...memory,

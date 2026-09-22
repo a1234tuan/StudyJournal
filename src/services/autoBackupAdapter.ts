@@ -1,4 +1,7 @@
-import type { StorageAdapter } from "../types";
+import { createNativeRepository } from "./nativeRepositoryBackupService";
+import type { KnowledgeBackupToken } from "../features/knowledgeLibrary/scope";
+import { currentKnowledgeOwner, knowledgeContextGeneration, assertKnowledgeOwner } from "../features/knowledgeLibrary/context";
+import type { StorageAdapter, StorageSnapshot } from "../types";
 import { snapshotToZip } from "./backup";
 import {
   bindNativeAutoBackupFolder,
@@ -33,9 +36,10 @@ export interface AutoBackupAdapter {
   isAvailable(): boolean;
   bindFolder(): Promise<{ folderName: string }>;
   isBound(): Promise<{ bound: boolean; folderName?: string }>;
-  writeLatest(store: StorageAdapter): Promise<AutoBackupWriteResult>;
+  writeLatest(store: StorageAdapter, scope?: KnowledgeBackupToken, capturedSnapshot?: StorageSnapshot): Promise<AutoBackupWriteResult>;
 }
 
+let destinationBusy = false;
 const webFolderName = (handle: FileSystemDirectoryHandle | undefined): string | undefined =>
   handle?.name;
 
@@ -45,8 +49,11 @@ export const autoBackupAdapter: AutoBackupAdapter = {
   },
 
   async bindFolder(): Promise<{ folderName: string }> {
+    if (destinationBusy) throw new Error("正在写入备份，暂时不能更换目的地。");
+    destinationBusy = true;
+    try {
     if (canUseNativeAutoBackup()) {
-      return bindNativeAutoBackupFolder();
+      return await bindNativeAutoBackupFolder();
     }
     const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
     if (!picker) {
@@ -54,6 +61,7 @@ export const autoBackupAdapter: AutoBackupAdapter = {
     }
     webDirectoryHandle = await picker();
     return { folderName: webDirectoryHandle.name };
+    } finally { destinationBusy = false; }
   },
 
   async isBound(): Promise<{ bound: boolean; folderName?: string }> {
@@ -63,15 +71,32 @@ export const autoBackupAdapter: AutoBackupAdapter = {
     return { bound: Boolean(webDirectoryHandle), folderName: webFolderName(webDirectoryHandle) };
   },
 
-  async writeLatest(store: StorageAdapter): Promise<AutoBackupWriteResult> {
+  async writeLatest(store: StorageAdapter, scope?: KnowledgeBackupToken, capturedSnapshot?: StorageSnapshot): Promise<AutoBackupWriteResult> {
+    if (destinationBusy) throw new Error("备份目的地正在使用，请稍后重试。");
+    destinationBusy = true;
+    try {
+    const owner = currentKnowledgeOwner();
+    const generation = knowledgeContextGeneration();
+    if (scope && scope.ownerScope !== owner) throw new Error("备份账号已变化。");
+    if (scope && !capturedSnapshot) throw new Error("范围备份必须使用同一事务捕获的快照。");
+    const snapshot = capturedSnapshot;
+    assertKnowledgeOwner(owner, generation);
+    const scopedStore = snapshot ? new Proxy(store, { get(target, property) {
+      if (property === "createSnapshot") return async () => snapshot;
+      if (property === "createStreamableSnapshot") return async () => ({ ...snapshot, assets: snapshot.assets.map(({ data: _data, ...meta }) => meta) });
+      if (property === "getAsset") return async (id: string) => snapshot.assets.find(asset => asset.id === id);
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) : store;
     if (canUseNativeAutoBackup()) {
-      return writeNativeRepositoryBackup(store);
+      return await (scope ? createNativeRepository("study-journal-backup-" + scope.destinationId).writeNativeRepositoryBackup(scopedStore) : writeNativeRepositoryBackup(store));
     }
     if (!webDirectoryHandle) {
       throw new Error("尚未绑定自动备份文件夹。");
     }
-    const zip = await snapshotToZip(await store.createSnapshot());
-    const fileHandle = await webDirectoryHandle.getFileHandle(LATEST_FILE_NAME, { create: true });
+    const directory = scope ? await webDirectoryHandle.getDirectoryHandle("study-journal-backup-" + scope.destinationId, { create: true }) : webDirectoryHandle;
+    const zip = await snapshotToZip(await scopedStore.createSnapshot());
+    const fileHandle = await directory.getFileHandle(LATEST_FILE_NAME, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(zip);
     await writable.close();
@@ -83,5 +108,6 @@ export const autoBackupAdapter: AutoBackupAdapter = {
       lastModified: file.lastModified,
       verifiedAt: Date.now(),
     };
+    } finally { destinationBusy = false; }
   },
 };

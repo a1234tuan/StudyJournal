@@ -1,3 +1,7 @@
+import { capturePortableKnowledge, restorePortableKnowledge, validateKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
+import { initialKnowledgeScope, knowledgeTables } from "../features/knowledgeLibrary/repository";
+import { currentKnowledgeOwner, knowledgeContextGeneration, assertKnowledgeOwner } from "../features/knowledgeLibrary/context";
+import { validateBackupPayloadVersion } from "../features/knowledgeLibrary/backupContainer";
 import Dexie, { liveQuery } from "dexie";
 
 import { StaleRecordError } from "../lib/uiError";
@@ -938,7 +942,10 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async getAutoBackupState(): Promise<AutoBackupSettings> {
-    const row = await db.autoBackupState.get("autoBackup");
+    const owner = currentKnowledgeOwner();
+    const scope = await db.knowledgeBackupScopes.get(owner);
+    if (scope?.autoBackupState) return scope.autoBackupState;
+    const row = owner === "deviceGuest" ? await db.autoBackupState.get("autoBackup") : undefined;
     if (row) {
       const { id: _id, ...state } = row;
       return state;
@@ -947,7 +954,14 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async saveAutoBackupState(state: AutoBackupSettings): Promise<void> {
-    await db.autoBackupState.put({ id: "autoBackup", ...state });
+    const owner = currentKnowledgeOwner();
+    const generation = knowledgeContextGeneration();
+    await db.transaction("rw", [db.knowledgeBackupScopes, db.autoBackupState], async () => {
+      const scope = await db.knowledgeBackupScopes.get(owner) ?? initialKnowledgeScope(owner);
+      assertKnowledgeOwner(owner, generation);
+      await db.knowledgeBackupScopes.put({ ...scope, autoBackupState: state });
+      if (owner === "deviceGuest") await db.autoBackupState.put({ id: "autoBackup", ...state });
+    });
   }
 
   private async migrateAutoBackupToLocalTable(): Promise<void> {
@@ -1596,18 +1610,24 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async deleteBlock(blockId: string): Promise<void> {
-    const block = await db.blocks.get(blockId);
-    if (!block) {
+    const expectedBlock = await db.blocks.get(blockId);
+    if (!expectedBlock) {
       return;
     }
-    await markCloudSyncMutation();
-    await db.transaction("rw", db.blocks, db.recordDrafts, db.recordReviews, async () => {
-      await db.blocks.put({ ...block, deletedAt: nowISO(), updatedAt: nowISO() });
+    await db.transaction("rw", [db.blocks, db.recordDrafts, db.recordReviews, db.cloudSyncMutation], async () => {
+      const block = await db.blocks.get(blockId);
+      if (!block || !deepEqualIgnoring(block, expectedBlock, [])) {
+        throw new StaleRecordError();
+      }
+      if (block.deletedAt !== undefined) return;
+      const stamp = nowISO();
+      await db.blocks.put({ ...block, deletedAt: stamp, updatedAt: stamp });
       await db.recordDrafts.delete(blockId);
       const review = await db.recordReviews.get(blockId);
       if (review) {
-        await db.recordReviews.put({ ...review, status: "removed", nextReviewDate: undefined, updatedAt: nowISO() });
+        await db.recordReviews.put({ ...review, status: "removed", nextReviewDate: undefined, updatedAt: stamp });
       }
+      await bumpCloudSyncMutationInTransaction();
     });
   }
 
@@ -1619,15 +1639,22 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async restoreBlock(blockId: string): Promise<RecordBlock | undefined> {
-    const block = await db.blocks.get(blockId);
-    if (!block || block.type !== "record") {
+    const expectedBlock = await db.blocks.get(blockId);
+    if (!expectedBlock || expectedBlock.type !== "record") {
       return undefined;
     }
-    const { deletedAt: _deletedAt, ...restored } = block;
-    const saved = { ...restored, updatedAt: nowISO() };
-    await markCloudSyncMutation();
-    await db.blocks.put(saved);
-    return saved;
+    return db.transaction("rw", [db.blocks, db.cloudSyncMutation], async () => {
+      const block = await db.blocks.get(blockId);
+      if (!block || block.type !== "record" || !deepEqualIgnoring(block, expectedBlock, [])) {
+        throw new StaleRecordError();
+      }
+      if (block.deletedAt === undefined) return block;
+      const { deletedAt: _deletedAt, ...restored } = block;
+      const saved = { ...restored, updatedAt: nowISO() };
+      await db.blocks.put(saved);
+      await bumpCloudSyncMutationInTransaction();
+      return saved;
+    });
   }
 
   /**
@@ -1724,17 +1751,19 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async toggleRecordFavorite(blockId: string, favorite: boolean): Promise<RecordBlock | undefined> {
-    const block = await db.blocks.get(blockId);
-    if (!block || block.type !== "record") {
-      return undefined;
-    }
-    if (block.favorite === favorite) {
-      return block;
-    }
-    const saved = { ...block, favorite, updatedAt: nowISO() };
-    await markCloudSyncMutation();
-    await db.blocks.put(saved);
-    return saved;
+    return db.transaction("rw", [db.blocks, db.cloudSyncMutation], async () => {
+      const block = await db.blocks.get(blockId);
+      if (!block || block.type !== "record") {
+        return undefined;
+      }
+      if (block.favorite === favorite) {
+        return block;
+      }
+      const saved = { ...block, favorite, updatedAt: nowISO() };
+      await db.blocks.put(saved);
+      await bumpCloudSyncMutationInTransaction();
+      return saved;
+    });
   }
 
   async reorderBlocks(date: string, blockIds: string[]): Promise<void> {
@@ -2024,22 +2053,25 @@ export class DexieStorageAdapter implements StorageAdapter {
     patch: Partial<Omit<Asset, "id" | "data">>,
     options: { mutation?: "content" | "operational" } = {},
   ): Promise<Asset | undefined> {
-    const existing = await db.assets.get(id);
-    if (!existing) {
-      return undefined;
-    }
     const { data: _ignoredData, id: _ignoredId, ...safePatch } = patch as Partial<Asset>;
-    const next = { ...existing, ...safePatch, data: existing.data };
-    // Blob fields can't round-trip through JSON, so compare everything except updatedAt/data.
-    if (deepEqualIgnoring(existing, next, ["updatedAt", "data"])) {
-      return existing;
-    }
-    const saved = touch(next);
-    if (options.mutation !== "operational") {
-      await markCloudSyncMutation();
-    }
-    await db.assets.put(saved);
-    return saved;
+    const tables = options.mutation === "operational" ? [db.assets] : [db.assets, db.cloudSyncMutation];
+    return db.transaction("rw", tables, async () => {
+      const existing = await db.assets.get(id);
+      if (!existing) {
+        return undefined;
+      }
+      const next = { ...existing, ...safePatch, data: existing.data };
+      // Blob fields can't round-trip through JSON, so compare everything except updatedAt/data.
+      if (deepEqualIgnoring(existing, next, ["updatedAt", "data"])) {
+        return existing;
+      }
+      const saved = touch(next);
+      await db.assets.put(saved);
+      if (options.mutation !== "operational") {
+        await bumpCloudSyncMutationInTransaction();
+      }
+      return saved;
+    });
   }
 
   async renameAssetTitle(assetId: string, title: string): Promise<void> {
@@ -2048,50 +2080,52 @@ export class DexieStorageAdapter implements StorageAdapter {
       return;
     }
 
-    const existing = await db.assets.get(assetId);
-    if (!existing) {
-      return;
-    }
-
-    const [blocks, drafts, templates] = await Promise.all([db.blocks.toArray(), db.recordDrafts.toArray(), db.templates.toArray()]);
-    const renamedBlocks: Block[] = [];
-    const renamedDrafts: RecordDraft[] = [];
-    const renamedTemplates: ContentTemplate[] = [];
-
-    for (const block of blocks) {
-      if (block.type !== "record") {
-        continue;
+    await db.transaction("rw", [db.assets, db.blocks, db.recordDrafts, db.templates, db.cloudSyncMutation], async () => {
+      const existing = await db.assets.get(assetId);
+      if (!existing) {
+        return;
       }
-      const result = renameRecordAssetTitle(block, assetId, nextTitle);
-      if (result.changed) {
-        renamedBlocks.push(touch(result.record));
-      }
-    }
 
-    for (const draft of drafts) {
-      const result = renameRecordAssetTitle(draft.draft, assetId, nextTitle);
-      if (result.changed) {
-        renamedDrafts.push({
-          ...draft,
-          draft: result.record,
-          updatedAt: nowISO(),
-        });
-      }
-    }
+      const [blocks, drafts, templates] = await Promise.all([db.blocks.toArray(), db.recordDrafts.toArray(), db.templates.toArray()]);
+      const renamedBlocks: Block[] = [];
+      const renamedDrafts: RecordDraft[] = [];
+      const renamedTemplates: ContentTemplate[] = [];
 
-    for (const template of templates) {
-      const result = renameAssetTitleInContent(template.contentHtml, assetId, nextTitle);
-      if (result.changed) {
-        renamedTemplates.push(touch({ ...template, contentHtml: result.contentHtml }));
+      for (const block of blocks) {
+        if (block.type !== "record") {
+          continue;
+        }
+        const result = renameRecordAssetTitle(block, assetId, nextTitle);
+        if (result.changed) {
+          renamedBlocks.push(touch(result.record));
+        }
       }
-    }
 
-    // Renaming to the asset's current title is a no-op for the asset row itself — the blocks/drafts/
-    // templates loops above already skip entities where the title reference didn't actually change.
-    const savedAsset = existing.title === nextTitle ? existing : touch({ ...existing, title: nextTitle, data: existing.data });
-    await markCloudSyncMutation();
-    await db.transaction("rw", db.assets, db.blocks, db.recordDrafts, db.templates, async () => {
-      await db.assets.put(savedAsset);
+      for (const draft of drafts) {
+        const result = renameRecordAssetTitle(draft.draft, assetId, nextTitle);
+        if (result.changed) {
+          renamedDrafts.push({
+            ...draft,
+            draft: result.record,
+            updatedAt: nowISO(),
+          });
+        }
+      }
+
+      for (const template of templates) {
+        const result = renameAssetTitleInContent(template.contentHtml, assetId, nextTitle);
+        if (result.changed) {
+          renamedTemplates.push(touch({ ...template, contentHtml: result.contentHtml }));
+        }
+      }
+
+      const assetChanged = existing.title !== nextTitle;
+      if (!assetChanged && renamedBlocks.length === 0 && renamedDrafts.length === 0 && renamedTemplates.length === 0) {
+        return;
+      }
+      if (assetChanged) {
+        await db.assets.put(touch({ ...existing, title: nextTitle, data: existing.data }));
+      }
       if (renamedBlocks.length > 0) {
         await db.blocks.bulkPut(renamedBlocks);
       }
@@ -2101,6 +2135,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       if (renamedTemplates.length > 0) {
         await db.templates.bulkPut(renamedTemplates);
       }
+      await bumpCloudSyncMutationInTransaction();
     });
   }
 
@@ -2293,10 +2328,12 @@ export class DexieStorageAdapter implements StorageAdapter {
     }
   }
 
-  async createSnapshot(): Promise<StorageSnapshot> {
+  async createSnapshot(includeKnowledge = true): Promise<StorageSnapshot> {
+    const owner = currentKnowledgeOwner();
+    const ownerGeneration = knowledgeContextGeneration();
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db)],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
       async () => {
         const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
           db.entries.toArray(),
@@ -2316,7 +2353,9 @@ export class DexieStorageAdapter implements StorageAdapter {
           // deletions stop propagating to other devices.
           db.dailyPlans.toArray(),
         ]);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans };
+        const knowledge = includeKnowledge ? await capturePortableKnowledge(db, owner) : undefined;
+        assertKnowledgeOwner(owner, ownerGeneration);
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, knowledge };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2327,7 +2366,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       payload: {
         manifest: {
           format: "study-journal",
-          version: 6,
+          version: includeKnowledge ? 7 : 6,
           exportedAt: nowISO(),
           appVersion: "0.1.0",
           counts: {
@@ -2346,6 +2385,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             reviewCoach: reviewCoachCounts(snapshot.reviewCoach),
           },
         },
+        ...(snapshot.knowledge ? { knowledge: snapshot.knowledge } : {}),
         entries: snapshot.entries,
         blocks: cleanedBlocks,
         templates: cleanedTemplates,
@@ -2370,13 +2410,16 @@ export class DexieStorageAdapter implements StorageAdapter {
   }
 
   async createCloudSyncSnapshot(): Promise<StorageSnapshot> {
-    return this.createSnapshot();
+    return this.createSnapshot(false);
   }
 
   async createStreamableSnapshot(): Promise<StreamableBackupSnapshot> {
+    const owner = currentKnowledgeOwner();
+    const ownerGeneration = knowledgeContextGeneration();
+    const includeKnowledge = true;
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db)],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
       async () => {
         const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
           db.entries.toArray(),
@@ -2394,7 +2437,9 @@ export class DexieStorageAdapter implements StorageAdapter {
           getReviewCoachFormalSnapshot(db),
           db.dailyPlans.toArray(),
         ]);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans };
+        const knowledge = includeKnowledge ? await capturePortableKnowledge(db, owner) : undefined;
+        assertKnowledgeOwner(owner, ownerGeneration);
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, knowledge };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2406,7 +2451,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       payload: {
         manifest: {
           format: "study-journal",
-          version: 6,
+          version: includeKnowledge ? 7 : 6,
           exportedAt: nowISO(),
           appVersion: "0.1.0",
           counts: {
@@ -2425,6 +2470,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             reviewCoach: reviewCoachCounts(snapshot.reviewCoach),
           },
         },
+        ...(snapshot.knowledge ? { knowledge: snapshot.knowledge } : {}),
         entries: snapshot.entries,
         blocks: cleanedBlocks,
         templates: cleanedTemplates,
@@ -2449,8 +2495,13 @@ export class DexieStorageAdapter implements StorageAdapter {
   private async restoreSnapshotData(
     snapshot: StorageSnapshot,
     expectedEpoch?: number,
-    options: { preservePodcasts?: boolean; preserveLocalSettings?: boolean; clearLocalAnnotationDrafts?: boolean; clearLocalVoiceRecallTransient?: boolean } = {},
+    options: { preservePodcasts?: boolean; preserveLocalSettings?: boolean; clearLocalAnnotationDrafts?: boolean; clearLocalVoiceRecallTransient?: boolean; restoreSessionId?: string } = {},
   ): Promise<void> {
+    validateBackupPayloadVersion(snapshot.payload);
+    const knowledge = Object.hasOwn(snapshot.payload, "knowledge") ? validateKnowledgeEnvelope(snapshot.payload.knowledge) : undefined;
+    const owner = currentKnowledgeOwner();
+    const ownerGeneration = knowledgeContextGeneration();
+    const restoreSessionId = options.restoreSessionId ?? newId();
     const restoredBlocks = normalizeSnapshotRecords(migrateBlocksToRecords(snapshot.payload.blocks));
     const restoredDrafts = normalizeSnapshotRecordDrafts(snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []);
     const restoredTemplates = normalizeSnapshotTemplates(snapshot.payload.templates);
@@ -2490,8 +2541,11 @@ export class DexieStorageAdapter implements StorageAdapter {
         db.voiceRecallTurns,
         db.dailyPlans,
         ...reviewCoachRestoreTables(db),
+        ...(knowledge ? knowledgeTables(db) : []),
       ],
       async () => {
+        assertKnowledgeOwner(owner, ownerGeneration);
+        if (knowledge) await restorePortableKnowledge(db, knowledge, owner, restoreSessionId);
         const [currentEpoch, currentPodcasts, currentPodcastAssets, currentSettings, currentAssets] = await Promise.all([
           db.cloudSyncMutation.get("local"),
           options.preservePodcasts ? db.knowledgePodcasts.toArray() : Promise.resolve([]),
@@ -2578,6 +2632,11 @@ export class DexieStorageAdapter implements StorageAdapter {
     readAsset: StreamedAssetReader,
     options: StreamingImportOptions = {},
   ): Promise<void> {
+    validateBackupPayloadVersion(snapshot.payload);
+    const knowledge = Object.hasOwn(snapshot.payload, "knowledge") ? validateKnowledgeEnvelope(snapshot.payload.knowledge) : undefined;
+    const owner = currentKnowledgeOwner();
+    const ownerGeneration = knowledgeContextGeneration();
+    const restoreSessionId = options.restoreSessionId ?? newId();
     const restoredBlocks = normalizeSnapshotRecords(migrateBlocksToRecords(snapshot.payload.blocks));
     const restoredDrafts = normalizeSnapshotRecordDrafts(snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []);
     const restoredTemplates = normalizeSnapshotTemplates(snapshot.payload.templates);
@@ -2614,8 +2673,10 @@ export class DexieStorageAdapter implements StorageAdapter {
       await markCloudSyncMutation();
       await db.transaction(
         "rw",
-        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, ...reviewCoachRestoreTables(db)],
+        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, ...reviewCoachRestoreTables(db), ...(knowledge ? knowledgeTables(db) : [])],
         async () => {
+          assertKnowledgeOwner(owner, ownerGeneration);
+          if (knowledge) await restorePortableKnowledge(db, knowledge, owner, restoreSessionId);
           const currentSettings = await db.settings.get("settings");
           await Promise.all([
             db.entries.clear(), db.blocks.clear(), db.templates.clear(), db.recordDrafts.clear(), db.recordReviews.clear(), db.recordReviewLogs.clear(),

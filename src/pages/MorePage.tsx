@@ -7,6 +7,7 @@ import { formatBytes } from "../lib/format";
 import { ListRow, PageHeader } from "../components/ui";
 
 interface MorePageProps {
+  onOpenKnowledge?: () => void;
   onOpenBackup: () => void;
   onOpenAi: () => void;
   onOpenOcrSettings: () => void;
@@ -55,6 +56,7 @@ const buildAiMeta = (settings: AppSettings): string => {
 };
 
 export const MorePage = ({
+  onOpenKnowledge,
   onOpenBackup,
   onOpenAi,
   onOpenOcrSettings,
@@ -118,6 +120,7 @@ export const MorePage = ({
 
     <section className="more-section more-hub-section">
       <h2>应用</h2>
+      {onOpenKnowledge && <ListRow icon={<BookOpen size={19} />} title="知识库" description="用大纲与导图整理日志" onClick={onOpenKnowledge} />}
       <div className="more-list">
         <ListRow icon={<ListChecks size={19} />} title="今日计划" trailing={<ChevronRight size={17} />} onClick={onOpenDailyPlan} />
         <ListRow icon={<Layers3 size={19} />} title="分类管理" trailing={<ChevronRight size={17} />} onClick={onOpenCategories} />

@@ -9,6 +9,7 @@ import { getRecordBlocks, getRecordDatesForMonth, getRecordsForDateSubject } fro
 import { PageHeader } from "../components/ui";
 
 interface JournalPageProps {
+  onOpenKnowledge?: () => void;
   blocks: Block[];
   subjects: SubjectConfig[];
   month: Date;
@@ -38,6 +39,7 @@ interface JournalPageProps {
 export const JOURNAL_PAGE_SIZE = 20;
 
 export const JournalPage = ({
+  onOpenKnowledge,
   blocks,
   subjects,
   month,
@@ -121,10 +123,10 @@ export const JournalPage = ({
         subtitle="浏览、分类和回看所有学习日志。"
         density="compact"
         actions={(
-          <button type="button" className="secondary-button journal-search-button" onClick={onOpenSearch} title="全局搜索" aria-label="全局搜索">
+          <><button type="button" className="secondary-button" onClick={onOpenKnowledge} hidden={!onOpenKnowledge}>知识库</button><button type="button" className="secondary-button journal-search-button" onClick={onOpenSearch} title="全局搜索" aria-label="全局搜索">
             <Search size={18} />
             <span>全局搜索</span>
-          </button>
+          </button></>
         )}
       />
 

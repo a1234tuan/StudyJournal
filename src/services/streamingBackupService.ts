@@ -1,3 +1,4 @@
+import { containerForPayload, KNOWLEDGE_PAYLOAD_ENTRY, validateBackupContainer, validateBackupPayloadVersion } from "../features/knowledgeLibrary/backupContainer";
 import type {
   Asset,
   BackupAssetMeta,
@@ -67,10 +68,12 @@ export const writeNativeStreamableBackupSnapshot = async (
       reviews: [],
       recordDrafts: portableSnapshot.payload.recordDrafts ?? portableSnapshot.recordDrafts ?? [],
     };
-    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest, null, 2));
+    validateBackupPayloadVersion(payload);
+    const archivePayload = { ...payload, assets: portableSnapshot.assets };
+    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
     await writeTextEntry(
       session.sessionId,
-      "data.json",
+      payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
       JSON.stringify({ ...payload, assets: portableSnapshot.assets }, null, 2),
     );
 
@@ -180,18 +183,25 @@ export const importNativeStreamableBackupAndRestore = async (
   options.onProgress?.({ stage: "indexing", message: "正在索引备份 zip。" });
   const session = await NativeZipArchive.beginImport({ path });
   try {
+    const versioned = session.entries.includes(KNOWLEDGE_PAYLOAD_ENTRY);
     const data = await readJsonEntry<StreamableBackupSnapshot["payload"] & { assets?: BackupAssetMeta[] }>(
       session.sessionId,
-      "data.json",
+      versioned ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
     );
+    validateBackupPayloadVersion(data);
+    if (versioned) validateBackupContainer(await readJsonEntry(session.sessionId, "manifest.json"), data);
+    else if (data.manifest.version === 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
     const blocks = migrateBlocksToRecords(data.blocks ?? []);
     const recordBlocks = blocks.filter((block): block is RecordBlock => block.type === "record");
     const snapshot: StreamableBackupSnapshot = {
       payload: {
         manifest: data.manifest,
+        ...(data.knowledge !== undefined ? { knowledge: data.knowledge } : {}),
+        templates: data.templates ?? [],
+        podcasts: data.podcasts,
+        reviewCoach: data.reviewCoach,
         entries: data.entries ?? [],
         blocks,
-        templates: data.templates ?? [],
         recordDrafts: data.recordDrafts ?? [],
         mistakes: [],
         tags: data.tags ?? [],

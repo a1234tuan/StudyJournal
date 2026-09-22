@@ -83,6 +83,7 @@ export const AutoBackupPanel = ({ autoBackupState, onChanged }: AutoBackupPanelP
         </div>
         <ShieldCheck size={22} />
       </header>
+      <p>完整备份包含设备上的普通日志，以及当前身份拥有的全部本机知识库。普通日志不按账号分区；其他账号的知识库不纳入。首次启用请确认范围并绑定备份文件夹。</p>
       <div className="auto-backup-status">
         <div>
           <span>状态</span>
@@ -187,8 +188,8 @@ export const AutoBackupPanel = ({ autoBackupState, onChanged }: AutoBackupPanelP
         <p className="helper-text">
           建议选择网盘同步目录或手机公共文档目录。断网不影响本地记录，但卸载 App、清理应用数据或浏览器站点数据会删除本地库；Web 端自动备份会覆盖同一份 latest zip。
           {desktop
-            ? "桌面端会写入 study-journal-backup 增量文件夹仓库，只同步新增或缺失资源，并保留最近 5 个快照。绑定后会立即完成首次备份，之后在打开应用、内容静默 10 分钟以及最小化或关闭窗口前同步。"
-            : `Android 端会写入 study-journal-backup 增量文件夹仓库，只同步新增或缺失资源，并保留最近 5 个快照。自动备份会在打开 App 时同步一次；编辑过程中需要立刻备份时，请点击"立即同步"。绑定只授予文件夹权限；从旧仓库拉取请使用"从自动备份文件夹恢复"。`}
+            ? "桌面端写入当前身份专属的增量备份子目录，只同步新增或缺失资源，并保留最近 5 个快照。绑定不立即备份；开启后在打开应用、内容静默 10 分钟以及关闭窗口前同步。"
+            : `Android 端会写入当前身份专属的增量备份子目录，只同步新增或缺失资源，并保留最近 5 个快照。自动备份会在打开 App 时同步一次；编辑过程中需要立刻备份时，请点击"立即同步"。绑定只授予文件夹权限；从旧仓库拉取请使用"从自动备份文件夹恢复"。`}
         </p>
       </details>
     </section>

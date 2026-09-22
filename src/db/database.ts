@@ -65,6 +65,9 @@ import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain
 import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "../features/voiceRecall/localTypes";
 import type { ReviewCoachInteractionSegmentLocal } from "../features/reviewCoach/interactionTrace";
 
+import { KNOWLEDGE_SCHEMA_25_STORES, type StoredKnowledgeEntity, type StoredKnowledgeRevision, type StoredKnowledgeConflict, type StoredKnowledgeRemote, type StoredKnowledgeCommand, type StoredKnowledgeDraft } from "../features/knowledgeLibrary/schema";
+import type { KnowledgeLibrary, KnowledgeSyncState, KnowledgeBackupScope } from "../features/knowledgeLibrary/domain";
+
 export interface RestoreStagingAsset {
   stagingId: string;
   sessionId: string;
@@ -72,6 +75,17 @@ export interface RestoreStagingAsset {
 }
 
 export class StudyJournalDatabase extends Dexie {
+  knowledgeLibraries!: Table<KnowledgeLibrary, string>;
+  knowledgeWorkspaces!: Table<StoredKnowledgeEntity, [string, string]>;
+  knowledgeNodes!: Table<StoredKnowledgeEntity, [string, string]>;
+  knowledgeReferences!: Table<StoredKnowledgeEntity, [string, string]>;
+  knowledgeRevisions!: Table<StoredKnowledgeRevision, [string, string]>;
+  knowledgeConflicts!: Table<StoredKnowledgeConflict, [string, string]>;
+  knowledgeRemoteEntities!: Table<StoredKnowledgeRemote, [string, string]>;
+  knowledgeCommands!: Table<StoredKnowledgeCommand, [string, string]>;
+  knowledgeSyncState!: Table<KnowledgeSyncState, string>;
+  knowledgeDrafts!: Table<StoredKnowledgeDraft, [string, string]>;
+  knowledgeBackupScopes!: Table<KnowledgeBackupScope, string>;
   aiAttachments!: Table<AiChatAttachment, string>;
   aiSessions!: Table<AiChatSession, string>;
   aiMessages!: Table<AiChatMessage, string>;
@@ -351,6 +365,7 @@ export class StudyJournalDatabase extends Dexie {
     this.version(22).stores(REVIEW_COACH_SCHEMA_22_STORES);
     this.version(23).stores(REVIEW_COACH_SCHEMA_23_STORES);
     this.version(24).stores(DAILY_PLAN_SCHEMA_24_STORES);
+    this.version(25).stores(KNOWLEDGE_SCHEMA_25_STORES);
   }
 }
 
