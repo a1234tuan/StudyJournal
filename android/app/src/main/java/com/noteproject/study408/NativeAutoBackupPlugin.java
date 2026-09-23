@@ -31,6 +31,7 @@ public class NativeAutoBackupPlugin extends Plugin {
     private static final String PREFS = "native_auto_backup";
     private static final String KEY_TREE_URI = "tree_uri";
     private static final String KEY_FOLDER_NAME = "folder_name";
+    private static final String KEY_BINDING_GENERATION = "binding_generation";
     private static final String LATEST_FILE_NAME = "study-journal-latest.zip";
     private final Map<String, WriteSession> writeSessions = new ConcurrentHashMap<>();
     private final Map<String, ZipWriteSession> zipWriteSessions = new ConcurrentHashMap<>();
@@ -57,6 +58,7 @@ public class NativeAutoBackupPlugin extends Plugin {
         final String path;
         final String displayName;
         long size;
+        String bindingGeneration;
 
         WriteSession(Uri uri, OutputStream output) {
             this(uri, output, "", LATEST_FILE_NAME);
@@ -164,6 +166,7 @@ public class NativeAutoBackupPlugin extends Plugin {
         prefs().edit()
             .putString(KEY_TREE_URI, treeUri.toString())
             .putString(KEY_FOLDER_NAME, folderName)
+            .putString(KEY_BINDING_GENERATION, UUID.randomUUID().toString())
             .apply();
 
         JSObject response = new JSObject();
@@ -300,6 +303,7 @@ public class NativeAutoBackupPlugin extends Plugin {
 
         execute(() -> {
             try {
+                if (session.bindingGeneration != null && !session.bindingGeneration.equals(prefs().getString(KEY_BINDING_GENERATION, "legacy"))) throw new IllegalStateException("备份文件夹绑定已变化，请重新备份。");
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 session.output.write(bytes);
                 session.size += bytes.length;
@@ -588,6 +592,7 @@ public class NativeAutoBackupPlugin extends Plugin {
         String repositoryName = safePathSegment(call.getString("repositoryName", "study-journal-backup"));
         String path = normalizeRepositoryPath(call.getString("path", ""));
         String mimeType = call.getString("mimeType", mimeTypeForPath(path));
+        String bindingGeneration = prefs().getString(KEY_BINDING_GENERATION, "legacy");
         String treeUriText = prefs().getString(KEY_TREE_URI, null);
         if (treeUriText == null) {
             call.reject("尚未绑定自动备份文件夹。");
@@ -601,6 +606,7 @@ public class NativeAutoBackupPlugin extends Plugin {
         execute(() -> {
             try {
                 Uri treeUri = Uri.parse(treeUriText);
+                if (!bindingGeneration.equals(prefs().getString(KEY_BINDING_GENERATION, "legacy")) || !treeUriText.equals(prefs().getString(KEY_TREE_URI, null))) throw new IllegalStateException("备份文件夹绑定已变化，请重新备份。");
                 Uri fileUri = findOrCreateRepositoryFile(treeUri, repositoryName, path, mimeType);
                 OutputStream output = getContext().getContentResolver().openOutputStream(fileUri, "wt");
                 if (output == null) {
@@ -608,7 +614,10 @@ public class NativeAutoBackupPlugin extends Plugin {
                 }
 
                 String sessionId = UUID.randomUUID().toString();
-                writeSessions.put(sessionId, new WriteSession(fileUri, output, path, lastPathSegment(path)));
+                WriteSession session = new WriteSession(fileUri, output, path, lastPathSegment(path));
+                session.bindingGeneration = bindingGeneration;
+                if (!bindingGeneration.equals(prefs().getString(KEY_BINDING_GENERATION, "legacy")) || !treeUriText.equals(prefs().getString(KEY_TREE_URI, null))) { closeQuietly(output); throw new IllegalStateException("备份文件夹绑定已变化，请重新备份。"); }
+                writeSessions.put(sessionId, session);
 
                 JSObject response = new JSObject();
                 response.put("sessionId", sessionId);
@@ -642,6 +651,7 @@ public class NativeAutoBackupPlugin extends Plugin {
 
         execute(() -> {
             try {
+                if (session.bindingGeneration != null && !session.bindingGeneration.equals(prefs().getString(KEY_BINDING_GENERATION, "legacy"))) throw new IllegalStateException("备份文件夹绑定已变化，请重新备份。");
                 session.output.flush();
                 session.output.close();
                 RepositoryDocument document = readDocument(session.uri);
@@ -842,15 +852,9 @@ public class NativeAutoBackupPlugin extends Plugin {
 
     private boolean isRepositoryRoot(Uri rootUri, String repositoryName) throws Exception {
         RepositoryDocument root = readDocument(rootUri);
-        if (repositoryName.equals(root.displayName) && isDirectoryDocument(root)) {
-            return true;
-        }
-
         RepositoryDocument manifest = findChild(rootUri, "manifest.json");
         RepositoryDocument snapshots = findChild(rootUri, "snapshots");
-        return manifest != null
-            && !isDirectoryDocument(manifest)
-            && isDirectoryDocument(snapshots);
+        return BackupRepositoryRootPolicy.matches(root.displayName, repositoryName, isDirectoryDocument(root), manifest != null && !isDirectoryDocument(manifest) && isDirectoryDocument(snapshots));
     }
 
     private Uri resolveRepositoryRoot(Uri treeUri, String repositoryName, boolean create) throws Exception {

@@ -34,8 +34,9 @@ describe("knowledge explicit copy-in", () => {
     const envelopeBefore = await capturePortableKnowledge(database, "account:owner");
     const target = await repository.open("target");
     await prepareKnowledgeImport(repository, "source", target.context, "session");
-    const session = (await repository.assertContext(target.context)).sync.importSessions!.session;
-    await repository.execute(target.context, session.commands[0], undefined, "session");
+    const session = (await database.knowledgeImportSessions.get(["target", "session"]))!;
+    const step = (await database.knowledgeImportSteps.get(["target", "session", 0]))!;
+    await repository.execute(target.context, step.command, undefined, "session");
     await resumeKnowledgeImport(repository, target.context, "session");
     await resumeKnowledgeImport(repository, target.context, "session");
     await prepareKnowledgeImport(repository, "source", target.context, "session");
@@ -45,6 +46,8 @@ describe("knowledge explicit copy-in", () => {
     expect(Object.values(copied.entities).some(entity => valueOf(copied, entity, "note") === "current")).toBe(true);
     const envelopeAfter = await capturePortableKnowledge(database, "account:owner");
     expect(envelopeAfter.libraries.find(library => library.title === "source")).toEqual(envelopeBefore.libraries.find(library => library.title === "source"));
-    expect((await repository.assertContext(target.context)).sync.importSessions!.session.next).toBe(session.commands.length);
+    expect((await database.knowledgeImportSessions.get(["target", "session"]))?.next).toBe(session.total);
+    expect(await database.knowledgeImportSteps.count()).toBe(0);
+    expect((await repository.assertContext(target.context)).sync.importSessions).toBeUndefined();
   });
 });

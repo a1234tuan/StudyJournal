@@ -7,6 +7,8 @@ export const knowledgeDiagnostics = (): readonly KnowledgeFailure[] => diagnosti
 export function knowledgeUiError(error: unknown, stage = "本机操作"): KnowledgeFailure {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.replace(/^firestore\//, "") : "unknown";
   const domainMessages: Record<string, string> = {
+    corrupt: "知识库云提交校验失败，已安全停止且未跳过历史。本机内容仍保留；可重试或保全副本，持续失败需修复云端历史。",
+    protected: "此恢复副本正在保全待确认内容，只能查看。请先另存可编辑副本或处理依赖操作。",
     stale: "内容已在其他位置更新。你的输入仍保留，请重新打开并比较后保存。",
     scope: "账号或知识库已变化，请重新打开当前知识库。",
     budget: "本次内容太多，请减少所选内容后重试。",

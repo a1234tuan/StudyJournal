@@ -69,7 +69,16 @@ export interface KnowledgeLibrary {
 export interface KnowledgeImportSession {
   id: string; sourceLibraryId: string; sourceGeneration: number; sourceHash: string; next: number; commands: KnowledgeCommand[];
 }
+export interface KnowledgeImportProgress {
+  libraryId: string; id: string; sourceLibraryId: string; sourceGeneration: number; sourceHash: string;
+  next: number; total: number; status: "active" | "completed";
+}
+export interface KnowledgeImportStep { libraryId: string; sessionId: string; ordinal: number; command: KnowledgeCommand }
+export interface KnowledgeSyncFailure {
+  code: "invalid" | "receipt" | "cycle"; cursor: number; sequence: number; fingerprint: string; attempts: number; recoveryLibraryId?: string;
+}
 export interface KnowledgeSyncState {
+  failure?: KnowledgeSyncFailure;
   importSessions?: Record<string, KnowledgeImportSession>;
   libraryId: string;
   dataGeneration: number;
@@ -89,7 +98,7 @@ export interface KnowledgeBackupScope {
   capturedGenerations: Record<string, number>;
 }
 export class KnowledgeError extends Error {
-  constructor(readonly code: "invalid" | "stale" | "budget" | "cycle" | "scope" | "missing" | "receipt", message: string) {
+  constructor(readonly code: "invalid" | "stale" | "budget" | "cycle" | "scope" | "missing" | "receipt" | "protected" | "corrupt", message: string) {
     super(message);
     this.name = "KnowledgeError";
   }

@@ -5,7 +5,7 @@ import { valueOf } from "./protocol";
 import { knowledgeLabel } from "./query";
 import { flattenKnowledgeOutline } from "./presentation";
 import type { RecordBlock } from "../../types";
-import type { KnowledgeNavigation } from "./navigation";
+import { knowledgeOutlineScroll, type KnowledgeNavigation } from "./navigation";
 
 export interface KnowledgeTitleEditor { entityId: string; text: string; isNew: boolean; busy: boolean; onChange: (text: string) => void; onSave: () => void; onCancel: () => void }
 export function KnowledgeTitleInput({ editor, label = "节点标题" }: { editor: KnowledgeTitleEditor; label?: string }) {
@@ -26,7 +26,7 @@ interface Props {
 export function KnowledgeOutline({ state, workspaceId, navigation, editor, records, onOpenRecord, onSelect, onEdit, onCreate, onOutdent, onToggle, onScrollPosition }: Props) {
   const rows = useMemo(() => flattenKnowledgeOutline(state, workspaceId, new Set(navigation.collapsed)), [state, workspaceId, navigation.collapsed]);
   const viewport = useRef<HTMLDivElement>(null);
-  const [scroll, setScroll] = useState(navigation.scrollTop);
+  const [scroll, setScroll] = useState(() => knowledgeOutlineScroll(navigation, navigation.libraryId, workspaceId));
   const [height, setHeight] = useState(700);
   const rowHeight = 48;
   const currentScroll = useRef(scroll);
@@ -35,10 +35,11 @@ export function KnowledgeOutline({ state, workspaceId, navigation, editor, recor
   saveScroll.current = onScrollPosition;
   useEffect(() => {
     if (!viewport.current) return;
-    viewport.current.scrollTop = navigation.scrollTop;
+    const position = knowledgeOutlineScroll(navigation, navigation.libraryId, workspaceId);
+    viewport.current.scrollTop = position; currentScroll.current = position; setScroll(position);
     const observer = new ResizeObserver(entries => setHeight(entries[0].contentRect.height));
     observer.observe(viewport.current);
-    return () => { observer.disconnect(); window.clearTimeout(clickTimer.current); saveScroll.current(currentScroll.current); };
+    return () => { observer.disconnect(); window.clearTimeout(clickTimer.current); };
   }, [workspaceId]);
   const reveal = (index: number) => {
     if (!viewport.current || index < 0) return;
@@ -51,7 +52,7 @@ export function KnowledgeOutline({ state, workspaceId, navigation, editor, recor
   }, [rows.length, height]);
   const start = Math.max(0, Math.floor(scroll / rowHeight) - 3);
   const end = Math.min(rows.length, start + Math.ceil(height / rowHeight) + 7);
-  return <div className="knowledge-outline" ref={viewport} role="tree" aria-label="专题大纲" onScroll={event => { currentScroll.current = event.currentTarget.scrollTop; setScroll(currentScroll.current); }} onKeyDown={event => {
+  return <div className="knowledge-outline" ref={viewport} role="tree" aria-label="专题大纲" onScroll={event => { currentScroll.current = event.currentTarget.scrollTop; setScroll(currentScroll.current); saveScroll.current(currentScroll.current); }} onKeyDown={event => {
     if ((event.target as HTMLElement).closest("input, textarea, form") || event.nativeEvent.isComposing) return;
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-outline-id]");
     const selected = rows.find(row => row.id === target?.dataset.outlineId) ?? rows.find(row => row.id === navigation.selectedNodeId);

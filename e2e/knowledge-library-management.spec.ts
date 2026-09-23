@@ -155,3 +155,142 @@ test("clears deleted branches but preserves archives and blocks cloud-library pu
   await page.getByRole("button", { name: "关闭操作窗口" }).click(); await manage(page);
   await expect(page.getByRole("button", { name: "删除本机库", exact: true })).toBeDisabled();
 });
+
+test("keeps recovery copies with unresolved blocked commands undeletable", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.evaluate(async () => {
+    const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    const { db } = await import("/src/db/database.ts");
+    await repository.createLibrary("依赖来源库", "blocked-source");
+    await repository.createLibrary("待确认恢复副本", "blocked-recovery", true);
+    await db.knowledgeCommands.put({
+      libraryId: "blocked-source",
+      id: "blocked-command",
+      command: { protocolVersion: 1, id: "blocked-command", libraryId: "blocked-source", operation: "create", entity: { id: "topic", kind: "workspace", workspaceId: "topic", nodeId: "", recordId: "" }, expected: { title: null, note: null, archived: null, deleted: null }, changes: { title: "待确认", note: "", archived: false, deleted: false } },
+      hash: "a".repeat(64), status: "blocked", blockedReason: "stale", recoveryLibraryId: "blocked-recovery", localSequence: 1,
+    });
+  });
+  await home(page);
+  await manage(page);
+  await pointerClick(page, page.getByRole("dialog").locator(".knowledge-library-list button").filter({ hasText: "待确认恢复副本" }));
+  if (await page.getByRole("dialog").count()) await page.getByRole("dialog").getByRole("button", { name: "关闭操作窗口" }).click();
+  await manage(page);
+  const deleteButton = page.getByRole("button", { name: "删除本机库", exact: true });
+  await expect(deleteButton).toBeDisabled();
+  await expect(page.getByText("该恢复副本仍被待确认操作引用，请先处理待确认版本。", { exact: true })).toBeVisible();
+  await capture(page, "protected-recovery-library.png");
+});
+
+test("can leave an inline editor after draft persistence fails without overwriting the old draft", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.evaluate(async () => {
+    const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
+    await repository.createLibrary("草稿验证", "draft-recheck");
+    const opened = await repository.open("draft-recheck");
+    const topic = createKnowledgeEntity("draft-recheck", "workspace", "草稿专题");
+    topic.entity.id = topic.entity.workspaceId = "draft-topic";
+    await repository.execute(opened.context, topic);
+    const node = createKnowledgeEntity("draft-recheck", "node", "原节点标题", topic.entity.id);
+    node.entity.id = "draft-node";
+    await repository.execute(opened.context, node);
+  });
+  await home(page);
+  await active(page).getByRole("button", { name: "草稿专题", exact: true }).click();
+  await active(page).getByRole("button", { name: "原节点标题", exact: true }).dblclick();
+  const input = active(page).getByRole("textbox", { name: "节点标题", exact: true });
+  await expect(input).toBeVisible();
+  await page.evaluate(async () => {
+    const { db } = await import("/src/db/database.ts");
+    await db.knowledgeDrafts.put({ libraryId: "draft-recheck", id: "draft-node:title", entityId: "draft-node", unit: "title", text: "必须保留的旧稿", expectedRevision: null, dataGeneration: 0 });
+  });
+  await input.fill("本次未保存输入");
+  await expect(active(page).getByRole("button", { name: "放弃本次输入并退出", exact: true })).toBeVisible();
+  await capture(page, "inline-draft-failure-exit.png");
+  page.once("dialog", dialog => dialog.accept());
+  await active(page).getByRole("button", { name: "放弃本次输入并退出", exact: true }).click();
+  await expect(input).toHaveCount(0);
+  expect(await page.evaluate(async () => (await (await import("/src/db/database.ts")).db.knowledgeDrafts.get(["draft-recheck", "draft-node:title"]))?.text)).toBe("必须保留的旧稿");
+  await expect(active(page).getByRole("button", { name: "原节点标题", exact: true })).toBeVisible();
+});
+
+test("resets outline position when changing topics and does not reuse a stale record origin", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.evaluate(async () => {
+    const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
+    const { db } = await import("/src/db/database.ts");
+    await repository.createLibrary("导航测试", "navigation-test");
+    const opened = await repository.open("navigation-test");
+    for (const [id, count] of [["长专题", 25], ["短专题", 1]] as const) {
+      const topic = createKnowledgeEntity("navigation-test", "workspace", id);
+      await repository.execute(opened.context, topic);
+      for (let index = 0; index < count; index += 1) {
+        const node = createKnowledgeEntity("navigation-test", "node", id + index, topic.entity.id);
+        await repository.execute(opened.context, node);
+        if (count === 1) await repository.execute(opened.context, createKnowledgeEntity("navigation-test", "reference", "", topic.entity.id, "@root", "origin-record", node.entity.id));
+      }
+    }
+    await db.blocks.put({ id: "origin-record", type: "record", title: "来源日志", subject: "算法", date: "2026-09-23", createdAt: "2026-09-23T00:00:00.000Z", updatedAt: "2026-09-23T00:00:00.000Z", order: 0, contentHtml: "<p>导航回归</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await home(page);
+  await active(page).getByRole("button", { name: "长专题", exact: true }).click();
+  await active(page).locator(".knowledge-outline").evaluate(element => { element.scrollTop = 900; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  await expect.poll(() => active(page).locator(".knowledge-outline").evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await active(page).getByRole("button", { name: "返回", exact: true }).click();
+  await active(page).getByRole("button", { name: "短专题", exact: true }).click();
+  await expect.poll(() => active(page).locator(".knowledge-outline").evaluate(element => element.scrollTop)).toBe(0);
+  await capture(page, "topic-scroll-reset.png");
+  await active(page).getByRole("button", { name: "来源日志", exact: true }).click();
+  await expect(active(page).locator(".record-editor-page")).toBeVisible();
+  await active(page).getByRole("button", { name: "更多操作", exact: true }).click();
+  await active(page).getByRole("button", { name: "加入专题", exact: true }).click();
+  await expect(active(page).getByRole("heading", { name: "知识库", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "今天", exact: true }).last().click();
+  await home(page);
+  await active(page).getByRole("button", { name: "返回", exact: true }).click();
+  await expect(active(page).locator(".record-editor-page")).toHaveCount(0);
+  await expect(active(page).getByRole("button", { name: "知识库", exact: true })).toBeVisible();
+});
+
+test("shows safe cloud-history recovery without skipping damaged commits", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.evaluate(async () => {
+    const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    await repository.createLibrary("云历史异常", "broken-library");
+    await repository.recordSyncFailure((await repository.open("broken-library")).context, "invalid", { cursor: 0, sequence: 1, fingerprint: "f".repeat(64) });
+  });
+  await home(page);
+  await expect(active(page).getByText("云提交校验失败，知识库同步已停止。本机内容和待同步操作仍保留。", { exact: true })).toBeVisible();
+  await capture(page, "cloud-history-recovery.png");
+  await active(page).getByRole("button", { name: "保全并打开本机副本", exact: true }).click();
+  await expect(active(page).getByText("此恢复副本正在保全待确认内容，只能查看。", { exact: true })).toBeVisible();
+  await expect(active(page).getByRole("button", { name: "创建第一个专题", exact: true })).toBeDisabled();
+  await capture(page, "cloud-history-preserved-copy.png");
+});
+test("renders a resumable copy when its original source no longer exists", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.evaluate(async () => {
+    const { db } = await import("/src/db/database.ts");
+    await db.knowledgeLibraries.put({ id: "copy-target", ownerScope: "account:copy-preview", cloudLibraryId: "cloud-preview", title: "账号知识库", createdAt: new Date().toISOString(), detached: false });
+    await db.knowledgeImportSessions.put({ libraryId: "copy-target", id: "interrupted", sourceLibraryId: "removed-source", sourceGeneration: 0, sourceHash: "preview", next: 2, total: 100, status: "active" });
+    const { default: React } = await import("/node_modules/.vite/deps/react.js");
+    const { default: ReactDOM } = await import("/node_modules/.vite/deps/react-dom_client.js");
+    const { default: Settings } = await import("/src/features/knowledgeLibrary/KnowledgeSyncSettings.tsx");
+    const host = document.createElement("section");
+    host.style.cssText = "position:fixed;inset:0;z-index:9999;background:var(--color-bg);padding:24px;overflow:auto";
+    document.body.appendChild(host);
+    ReactDOM.createRoot(host).render(React.createElement(Settings, { uid: "copy-preview", disabled: false }));
+  });
+  await expect(page.getByText("未完成复制 · 账号知识库 · 2/100", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "继续未完成复制", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("复制来源知识库")).toHaveCount(0);
+  await capture(page, "resume-copy-without-source.png");
+});

@@ -6,6 +6,7 @@ const { randomUUID, createHmac, createHash } = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { recognizePaddleOcr } = require("./ocr.cjs");
+const { safeRepositoryName, assertRepositoryPath } = require("./backupRepositoryPaths.cjs");
 const { buildDesktopContextMenuTemplate } = require("./contextMenu.cjs");
 
 const APP_SCHEME = "study-journal";
@@ -355,7 +356,7 @@ const readDesktopBackupBinding = async () => {
     if (!parsed || typeof parsed.folderPath !== "string" || !path.isAbsolute(parsed.folderPath)) {
       return undefined;
     }
-    return { folderPath: path.normalize(parsed.folderPath) };
+    return { folderPath: path.normalize(parsed.folderPath), generation: parsed.generation ?? parsed.updatedAt ?? "legacy" };
   } catch {
     return undefined;
   }
@@ -364,12 +365,12 @@ const readDesktopBackupBinding = async () => {
 const writeDesktopBackupBinding = async (folderPath) => {
   await fs.mkdir(app.getPath("userData"), { recursive: true });
   const temporaryPath = `${desktopBackupBindingPath()}.${process.pid}.tmp`;
-  await fs.writeFile(temporaryPath, JSON.stringify({ folderPath, updatedAt: new Date().toISOString() }), "utf8");
+  await fs.writeFile(temporaryPath, JSON.stringify({ folderPath, generation: randomUUID(), updatedAt: new Date().toISOString() }), "utf8");
   await fs.rename(temporaryPath, desktopBackupBindingPath());
 };
 
 const safeRepositoryRelativePath = (value) => {
-  if (typeof value !== "string" || !value || path.isAbsolute(value)) {
+  if (typeof value !== "string" || !value || path.isAbsolute(value) || value.includes(":") || value.includes("\0")) {
     throw new Error("备份仓库文件路径无效。");
   }
   const normalized = path.normalize(value).replace(/\\/g, "/");
@@ -379,30 +380,34 @@ const safeRepositoryRelativePath = (value) => {
   return normalized;
 };
 
+
 const isInsideDirectory = (root, candidate) => candidate === root || candidate.startsWith(`${root}${path.sep}`);
 
-const resolveDesktopBackupRepositoryRoot = async (create = false) => {
+const resolveDesktopBackupRepositoryRoot = async (repositoryName, create = false) => {
+  const safeName = safeRepositoryName(repositoryName);
   const binding = await readDesktopBackupBinding();
   if (!binding || !existsSync(binding.folderPath)) {
     throw new Error("尚未绑定有效的自动备份文件夹。");
   }
-  const repositoryRoot = path.resolve(binding.folderPath, DESKTOP_BACKUP_REPOSITORY_NAME);
+  const repositoryRoot = path.resolve(binding.folderPath, safeName);
+  await assertRepositoryPath(binding.folderPath, repositoryRoot);
   if (!isInsideDirectory(path.resolve(binding.folderPath), repositoryRoot)) {
     throw new Error("备份仓库路径无效。");
   }
   if (create) {
     await fs.mkdir(repositoryRoot, { recursive: true });
   }
-  return { repositoryRoot, folderName: path.basename(binding.folderPath) || binding.folderPath };
+  return { repositoryRoot, folderName: path.basename(binding.folderPath) || binding.folderPath, binding };
 };
 
-const resolveDesktopBackupFilePath = async (relativePath, createRepository = false) => {
-  const { repositoryRoot, folderName } = await resolveDesktopBackupRepositoryRoot(createRepository);
+const resolveDesktopBackupFilePath = async (repositoryName, relativePath, createRepository = false) => {
+  const { repositoryRoot, folderName, binding } = await resolveDesktopBackupRepositoryRoot(repositoryName, createRepository);
   const targetPath = path.resolve(repositoryRoot, safeRepositoryRelativePath(relativePath));
   if (!isInsideDirectory(repositoryRoot, targetPath)) {
     throw new Error("备份仓库文件路径超出绑定目录。");
   }
-  return { repositoryRoot, targetPath, folderName };
+  await assertRepositoryPath(repositoryRoot, targetPath);
+  return { repositoryRoot, targetPath, folderName, binding };
 };
 
 const desktopBackupStatus = async () => {
@@ -422,7 +427,7 @@ const bindDesktopBackupFolder = async () => {
     throw new Error("已取消绑定自动备份文件夹。");
   }
   const selectedPath = path.resolve(selection.filePaths[0]);
-  const folderPath = path.basename(selectedPath).toLowerCase() === DESKTOP_BACKUP_REPOSITORY_NAME
+  const folderPath = /^study-journal-backup(?:-[A-Za-z0-9_-]+)?$/i.test(path.basename(selectedPath))
     ? path.dirname(selectedPath)
     : selectedPath;
   await fs.mkdir(folderPath, { recursive: true });
@@ -430,13 +435,14 @@ const bindDesktopBackupFolder = async () => {
   return { folderName: path.basename(folderPath) || folderPath };
 };
 
-const listDesktopBackupRepositoryFiles = async (directory) => {
+const listDesktopBackupRepositoryFiles = async (repositoryName, directory) => {
   const relativeDirectory = directory ? safeRepositoryRelativePath(directory) : "";
-  const { repositoryRoot } = await resolveDesktopBackupRepositoryRoot(false);
+  const { repositoryRoot } = await resolveDesktopBackupRepositoryRoot(repositoryName, false);
   const directoryPath = path.resolve(repositoryRoot, relativeDirectory);
   if (!isInsideDirectory(repositoryRoot, directoryPath)) {
     throw new Error("备份仓库目录超出绑定文件夹。");
   }
+  await assertRepositoryPath(repositoryRoot, directoryPath);
   try {
     const entries = await fs.readdir(directoryPath, { withFileTypes: true });
     return Promise.all(entries.filter((entry) => entry.isFile()).map(async (entry) => {
@@ -457,13 +463,13 @@ const listDesktopBackupRepositoryFiles = async (directory) => {
   }
 };
 
-const beginDesktopBackupRepositoryFileWrite = async (relativePath) => {
-  const { targetPath } = await resolveDesktopBackupFilePath(relativePath, true);
+const beginDesktopBackupRepositoryFileWrite = async (repositoryName, relativePath) => {
+  const { targetPath, repositoryRoot, binding } = await resolveDesktopBackupFilePath(repositoryName, relativePath, true);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const sessionId = randomUUID();
   const temporaryPath = `${targetPath}.${sessionId}.partial`;
   const handle = await fs.open(temporaryPath, "w");
-  desktopBackupWriteSessions.set(sessionId, { targetPath, temporaryPath, handle, size: 0 });
+  desktopBackupWriteSessions.set(sessionId, { targetPath, temporaryPath, handle, size: 0, repositoryRoot, binding, repositoryName: safeRepositoryName(repositoryName) });
   return { sessionId, path: safeRepositoryRelativePath(relativePath) };
 };
 
@@ -476,6 +482,8 @@ const appendDesktopBackupRepositoryFileWrite = async (sessionId, data) => {
   if (bytes.byteLength === 0 && data) {
     throw new Error("备份写入数据格式无效。");
   }
+  const binding = await readDesktopBackupBinding();
+  if (!binding || binding.folderPath !== session.binding.folderPath || binding.generation !== session.binding.generation) throw new Error("备份文件夹绑定已变化，请重新备份。");
   await session.handle.write(bytes);
   session.size += bytes.byteLength;
   return { size: session.size };
@@ -489,6 +497,9 @@ const finishDesktopBackupRepositoryFileWrite = async (sessionId) => {
   desktopBackupWriteSessions.delete(sessionId);
   try {
     await session.handle.close();
+    const binding = await readDesktopBackupBinding();
+    if (!binding || binding.folderPath !== session.binding.folderPath || binding.generation !== session.binding.generation) throw new Error("备份文件夹绑定已变化，请重新备份。");
+    await assertRepositoryPath(session.repositoryRoot, session.targetPath);
     await fs.rename(session.temporaryPath, session.targetPath);
     const stat = await fs.stat(session.targetPath);
     return {
@@ -785,22 +796,23 @@ ipcMain.handle("study-journal:tts-cancel", (_event, requestId) => {
   return { cancelled: true };
 });
 ipcMain.handle("study-journal:desktop-backup-status", desktopBackupStatus);
-ipcMain.handle("study-journal:desktop-backup-ensure", async () => {
-  const { folderName } = await resolveDesktopBackupRepositoryRoot(true);
-  return { folderName, repositoryName: DESKTOP_BACKUP_REPOSITORY_NAME };
+ipcMain.handle("study-journal:desktop-backup-ensure", async (_event, repositoryName) => {
+  const safeName = safeRepositoryName(repositoryName);
+  const { folderName } = await resolveDesktopBackupRepositoryRoot(safeName, true);
+  return { folderName, repositoryName: safeName };
 });
-ipcMain.handle("study-journal:desktop-backup-list", (_event, directory) => listDesktopBackupRepositoryFiles(directory));
-ipcMain.handle("study-journal:desktop-backup-begin-write", (_event, pathValue) => beginDesktopBackupRepositoryFileWrite(pathValue));
+ipcMain.handle("study-journal:desktop-backup-list", (_event, repositoryName, directory) => listDesktopBackupRepositoryFiles(repositoryName, directory));
+ipcMain.handle("study-journal:desktop-backup-begin-write", (_event, repositoryName, pathValue) => beginDesktopBackupRepositoryFileWrite(repositoryName, pathValue));
 ipcMain.handle("study-journal:desktop-backup-append-write", (_event, sessionId, data) => appendDesktopBackupRepositoryFileWrite(sessionId, data));
 ipcMain.handle("study-journal:desktop-backup-finish-write", (_event, sessionId) => finishDesktopBackupRepositoryFileWrite(sessionId));
 ipcMain.handle("study-journal:desktop-backup-cancel-write", (_event, sessionId) => cancelDesktopBackupRepositoryFileWrite(sessionId));
-ipcMain.handle("study-journal:desktop-backup-read-text", async (_event, pathValue) => {
-  const { targetPath } = await resolveDesktopBackupFilePath(pathValue, false);
+ipcMain.handle("study-journal:desktop-backup-read-text", async (_event, repositoryName, pathValue) => {
+  const { targetPath } = await resolveDesktopBackupFilePath(repositoryName, pathValue, false);
   const text = await fs.readFile(targetPath, "utf8");
   return { text, size: Buffer.byteLength(text, "utf8") };
 });
-ipcMain.handle("study-journal:desktop-backup-read-chunk", async (_event, pathValue, offset, length) => {
-  const { targetPath } = await resolveDesktopBackupFilePath(pathValue, false);
+ipcMain.handle("study-journal:desktop-backup-read-chunk", async (_event, repositoryName, pathValue, offset, length) => {
+  const { targetPath } = await resolveDesktopBackupFilePath(repositoryName, pathValue, false);
   const stat = await fs.stat(targetPath);
   const safeOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
   const safeLength = Number.isSafeInteger(length) && length > 0 ? Math.min(length, 2 * 1024 * 1024) : 768 * 1024;
@@ -821,8 +833,8 @@ ipcMain.handle("study-journal:desktop-backup-read-chunk", async (_event, pathVal
     await handle.close();
   }
 });
-ipcMain.handle("study-journal:desktop-backup-delete", async (_event, pathValue) => {
-  const { targetPath } = await resolveDesktopBackupFilePath(pathValue, false);
+ipcMain.handle("study-journal:desktop-backup-delete", async (_event, repositoryName, pathValue) => {
+  const { targetPath } = await resolveDesktopBackupFilePath(repositoryName, pathValue, false);
   await fs.rm(targetPath, { force: true });
 });
 ipcMain.on("study-journal:backup-flush-complete", (_event, requestId) => {

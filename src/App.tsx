@@ -1,5 +1,6 @@
 import { KnowledgeLibraryPage } from "./features/knowledgeLibrary/KnowledgeLibraryPage";
-import { initialKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
+import { currentKnowledgeOwner } from "./features/knowledgeLibrary/context";
+import { initialKnowledgeNavigation, patchKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
 import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
@@ -242,6 +243,7 @@ type NavigationState = {
 };
 
 type NavigationCommitOptions = {
+  knowledgeEntry?: boolean;
   history?: "push" | "replace" | "none";
   scrollToTop?: boolean;
   motion?: NavigationMotionIntent;
@@ -283,13 +285,14 @@ export const App = () => {
   const lastBackPressRef = useRef(0);
   const backToastTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef<NavigationState>({ activeTab, tabMemory, activeAiSessionId });
-  const knowledgeOriginsRef = useRef<Array<{ state: NavigationState; scrollY: number }>>([]);
+  const knowledgeOriginsRef = useRef<Array<{ state: NavigationState; scrollY: number; owner: string }>>([]);
   const webNavigationSessionRef = useRef<string | null>(null);
   const webNavigationIndexRef = useRef(0);
   const historyScrollRestoreRef = useRef(0);
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
   useEffect(() => startKnowledgeRuntime(), []);
+  useEffect(() => { const clear = () => { knowledgeOriginsRef.current = []; }; window.addEventListener("knowledge-owner-changed", clear); return () => window.removeEventListener("knowledge-owner-changed", clear); }, []);
   // Pulled out by name so the plan-reclaim wiring below can depend on these
   // stable callbacks instead of the freshly-built `app` object literal.
   const { reclaimPlanRecords: reclaimPlanRecordsFromApp, initialized: appInitialized } = app;
@@ -394,6 +397,7 @@ export const App = () => {
     if (current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && (next.activeTab !== "more" || next.tabMemory.more.subRoute !== "knowledge" || next.tabMemory.more.recordId || next.tabMemory.more.knowledge?.libraryId !== current.tabMemory.more.knowledge?.libraryId)) {
       const leave = new Event("knowledge-navigation-leave", { cancelable: true }); window.dispatchEvent(leave); if (leave.defaultPrevented) return;
     }
+    if (options.knowledgeEntry || next.activeTab !== "more" || next.tabMemory.more.subRoute !== "knowledge") knowledgeOriginsRef.current = [];
     const historyMode = options.history ?? "push";
     const sessionId = webNavigationSessionRef.current;
     const webNavigationEnabled = !Capacitor.isNativePlatform() && !isDesktopPlatform() && Boolean(sessionId);
@@ -436,6 +440,7 @@ export const App = () => {
     if (options.scrollToTop) {
       window.scrollTo(0, 0);
     }
+    return true;
   }, []);
 
   const updateNavigationState = useCallback((update: (current: NavigationState) => NavigationState, history: "replace" | "none" = "replace") => {
@@ -503,7 +508,7 @@ export const App = () => {
       };
       commitNavigation(
         { ...current, activeTab: "more", tabMemory: nextMemory },
-        { motion: motion ?? (current.activeTab === "more" ? "forward" : "tab") },
+        { motion: motion ?? (current.activeTab === "more" ? "forward" : "tab"), knowledgeEntry: subRoute === "knowledge" },
       );
     },
     [clearBackHint, commitNavigation],
@@ -563,10 +568,12 @@ export const App = () => {
   const popCurrentTabDepth = useCallback(() => {
     const current = navigationStateRef.current;
     if (current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && knowledgeOriginsRef.current.length) {
-      const origin = knowledgeOriginsRef.current.pop()!;
-      commitNavigation(origin.state, { motion: "back", history: "replace", scrollToTop: false });
-      window.requestAnimationFrame(() => window.scrollTo(0, origin.scrollY));
-      return;
+      const origin = knowledgeOriginsRef.current.at(-1)!;
+      if (origin.owner === currentKnowledgeOwner()) {
+        if (commitNavigation(origin.state, { motion: "back", history: "replace", scrollToTop: false })) { if (knowledgeOriginsRef.current.at(-1) === origin) knowledgeOriginsRef.current.pop(); window.requestAnimationFrame(() => window.scrollTo(0, origin.scrollY)); }
+        return;
+      }
+      knowledgeOriginsRef.current = [];
     }
     const voiceRoute = current.activeTab === "review" ? current.tabMemory.review.voiceRecall : undefined;
     if (voiceRoute) {
@@ -811,6 +818,7 @@ export const App = () => {
       const motion: NavigationMotionIntent = snapshot.navigationIndex > webNavigationIndexRef.current
         ? "forward"
         : snapshot.navigationIndex < webNavigationIndexRef.current ? "back" : "replace";
+      knowledgeOriginsRef.current = [];
       webNavigationIndexRef.current = snapshot.navigationIndex;
       navigationStateRef.current = {
         activeTab: snapshot.activeTab,
@@ -1192,8 +1200,8 @@ export const App = () => {
     <RecordEditorPage
       onOpenKnowledge={location => {
         const current = navigationStateRef.current;
-        knowledgeOriginsRef.current.push({ state: current, scrollY: window.scrollY });
-        commitNavigation({ ...current, activeTab: "more", tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, subRoute: "knowledge", recordId: undefined, referenceStack: [], knowledge: { ...initialKnowledgeNavigation(), ...location, addRecordId: location ? undefined : record.id } } } }, { motion: "forward", history: "push" });
+        const origin = { state: current, scrollY: window.scrollY, owner: currentKnowledgeOwner() };
+        if (commitNavigation({ ...current, activeTab: "more", tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, subRoute: "knowledge", recordId: undefined, referenceStack: [], knowledge: { ...initialKnowledgeNavigation(), ...location, addRecordId: location ? undefined : record.id } } } }, { motion: "forward", history: "push" })) knowledgeOriginsRef.current = [...knowledgeOriginsRef.current.slice(-15), origin];
       }}
       record={record}
       initialEditing={Boolean(currentRecordState.recordEditing)}
@@ -1253,7 +1261,7 @@ export const App = () => {
       case "knowledge":
         return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onNavigation={(patch, push = false) => {
           const current = navigationStateRef.current;
-          commitNavigation({ ...current, tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, knowledge: { ...(current.tabMemory.more.knowledge ?? initialKnowledgeNavigation()), ...patch } } } }, { history: push ? "push" : "none", motion: push ? "forward" : "none", scrollToTop: false });
+          commitNavigation({ ...current, tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, knowledge: patchKnowledgeNavigation(current.tabMemory.more.knowledge ?? initialKnowledgeNavigation(), patch) } } }, { history: push ? "push" : "none", motion: push ? "forward" : "none", scrollToTop: false });
         }} />;
       case "templates":
         return (

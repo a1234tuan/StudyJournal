@@ -42,7 +42,7 @@ describe("knowledge repository transaction boundaries", () => {
     const second = new StudyJournalDatabase(name);
     try {
       await Promise.all([upgraded.open(), second.open()]);
-      expect(upgraded.verno).toBe(25);
+      expect(upgraded.verno).toBe(26);
       expect(await upgraded.blocks.get("old-record")).toEqual(record);
       const restoredAsset = await upgraded.assets.get("blob");
       expect(restoredAsset).toMatchObject({ id: asset.id, title: asset.title });
@@ -215,6 +215,21 @@ describe("knowledge library first-use and naming", () => {
     const cloud = await repository.open("trash-local");
     await expect(repository.purgeLocalTrash(cloud.context)).rejects.toMatchObject({ code: "invalid" });
     await expect(repository.deleteLibrary(cloud.context)).rejects.toMatchObject({ code: "invalid" });
+  });
+  it("protects a recovery library while blocked commands still reference it", async () => {
+    await repository.createLibrary("账号库", "account-library");
+    await repository.createLibrary("恢复副本", "recovery-library", true);
+    await database.knowledgeCommands.put({ libraryId: "account-library", id: "blocked-command", command: topic("account-library"), hash: "a".repeat(64), status: "blocked", blockedReason: "stale", recoveryLibraryId: "recovery-library", localSequence: 1 });
+    const recovery = await repository.open("recovery-library");
+    await expect(repository.deleteLibrary(recovery.context)).rejects.toMatchObject({ code: "protected" });
+    await expect(repository.purgeLocalTrash(recovery.context)).rejects.toMatchObject({ code: "protected" });
+    await expect(repository.execute(recovery.context, topic("recovery-library"))).rejects.toMatchObject({ code: "protected" });
+    const origin = await repository.open("account-library");
+    await expect(repository.abandonMissingRecovery(origin.context, "blocked-command", "a".repeat(64))).rejects.toMatchObject({ code: "stale" });
+    expect(await database.knowledgeLibraries.get("recovery-library")).toBeDefined();
+    await database.knowledgeCommands.delete(["account-library", "blocked-command"]);
+    await expect(repository.deleteLibrary(recovery.context)).resolves.toBeUndefined();
+    expect(await database.knowledgeLibraries.get("recovery-library")).toBeUndefined();
   });
   it("purges whole deleted branches, preserves archives and moved-out nodes, and invalidates captured drafts", async () => {
     await repository.createLibrary("本机库", "tree-trash");

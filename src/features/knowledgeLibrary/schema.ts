@@ -1,6 +1,6 @@
 import type { KnowledgeCandidate, KnowledgeCommand, KnowledgeDraft, KnowledgeEntity, KnowledgeGroup, KnowledgeReceipt, KnowledgeRevision, KnowledgeState } from "./domain";
 
-export const KNOWLEDGE_SCHEMA_VERSION = 25;
+export const KNOWLEDGE_SCHEMA_VERSION = 26;
 export const KNOWLEDGE_SCHEMA_25_STORES = {
   knowledgeLibraries: "id, ownerScope, [ownerScope+cloudLibraryId], [ownerScope+restoreSessionId]",
   knowledgeWorkspaces: "[libraryId+id], libraryId",
@@ -13,6 +13,11 @@ export const KNOWLEDGE_SCHEMA_25_STORES = {
   knowledgeSyncState: "libraryId",
   knowledgeDrafts: "[libraryId+id], libraryId",
   knowledgeBackupScopes: "ownerScope",
+} as const;
+export const KNOWLEDGE_SCHEMA_26_STORES = {
+  ...KNOWLEDGE_SCHEMA_25_STORES,
+  knowledgeImportSessions: "[libraryId+id], libraryId",
+  knowledgeImportSteps: "[libraryId+sessionId+ordinal], libraryId, [libraryId+sessionId]",
 } as const;
 export type StoredKnowledgeEntity = KnowledgeEntity & { libraryId: string };
 export type StoredKnowledgeRevision = KnowledgeRevision & { libraryId: string };

@@ -65,8 +65,9 @@ import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain
 import type { VoiceRecallLocalHistory, VoiceRecallSessionLocal, VoiceRecallTurnLocal } from "../features/voiceRecall/localTypes";
 import type { ReviewCoachInteractionSegmentLocal } from "../features/reviewCoach/interactionTrace";
 
-import { KNOWLEDGE_SCHEMA_25_STORES, type StoredKnowledgeEntity, type StoredKnowledgeRevision, type StoredKnowledgeConflict, type StoredKnowledgeRemote, type StoredKnowledgeCommand, type StoredKnowledgeDraft } from "../features/knowledgeLibrary/schema";
-import type { KnowledgeLibrary, KnowledgeSyncState, KnowledgeBackupScope } from "../features/knowledgeLibrary/domain";
+import { migrateKnowledgeImports } from "../features/knowledgeLibrary/importMigration";
+import { KNOWLEDGE_SCHEMA_26_STORES, KNOWLEDGE_SCHEMA_25_STORES, type StoredKnowledgeEntity, type StoredKnowledgeRevision, type StoredKnowledgeConflict, type StoredKnowledgeRemote, type StoredKnowledgeCommand, type StoredKnowledgeDraft } from "../features/knowledgeLibrary/schema";
+import type { KnowledgeLibrary, KnowledgeSyncState, KnowledgeBackupScope, KnowledgeImportProgress, KnowledgeImportStep } from "../features/knowledgeLibrary/domain";
 
 export interface RestoreStagingAsset {
   stagingId: string;
@@ -75,6 +76,8 @@ export interface RestoreStagingAsset {
 }
 
 export class StudyJournalDatabase extends Dexie {
+  knowledgeImportSessions!: Table<KnowledgeImportProgress, [string, string]>;
+  knowledgeImportSteps!: Table<KnowledgeImportStep, [string, string, number]>;
   knowledgeLibraries!: Table<KnowledgeLibrary, string>;
   knowledgeWorkspaces!: Table<StoredKnowledgeEntity, [string, string]>;
   knowledgeNodes!: Table<StoredKnowledgeEntity, [string, string]>;
@@ -366,6 +369,7 @@ export class StudyJournalDatabase extends Dexie {
     this.version(23).stores(REVIEW_COACH_SCHEMA_23_STORES);
     this.version(24).stores(DAILY_PLAN_SCHEMA_24_STORES);
     this.version(25).stores(KNOWLEDGE_SCHEMA_25_STORES);
+    this.version(26).stores(KNOWLEDGE_SCHEMA_26_STORES).upgrade(migrateKnowledgeImports);
   }
 }
 

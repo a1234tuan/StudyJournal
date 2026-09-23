@@ -77,6 +77,24 @@ export class KnowledgeSync {
   }
 
   async pull(context: KnowledgeContext): Promise<void> {
+    const baseline = await this.repository.assertContext(context);
+    let failed = { cursor: baseline.sync.cursor, sequence: baseline.sync.cursor + 1, fingerprint: knowledgeHash({ cursor: baseline.sync.cursor, phase: "transport" }) };
+    try {
+      await this.pullValidated(context, detail => { failed = detail; });
+      await this.repository.database.transaction("rw", knowledgeTables(this.repository.database), async () => {
+        const { sync } = await this.repository.assertContext(context);
+        if (sync.failure) { const { failure: _failure, ...current } = sync; await this.repository.database.knowledgeSyncState.put(current); }
+      });
+    } catch (error) {
+      if (error instanceof KnowledgeError && ["invalid", "receipt", "cycle"].includes(error.code)) {
+        await this.repository.recordSyncFailure(context, error.code as "invalid" | "receipt" | "cycle", failed);
+        throw new KnowledgeError("corrupt", "知识库历史校验失败，游标与本机内容保留");
+      }
+      throw error;
+    }
+  }
+
+  private async pullValidated(context: KnowledgeContext, onPacket: (detail: { cursor: number; sequence: number; fingerprint: string }) => void): Promise<void> {
     const database = this.repository.database;
     const { library, sync } = await this.repository.assertContext(context);
     if (!library.cloudLibraryId) return;
@@ -84,6 +102,7 @@ export class KnowledgeSync {
     if (end < sync.cursor) throw new KnowledgeError("invalid", "云知识提交历史不能倒退");
     let cursor = sync.cursor;
     while (cursor < end) {
+      onPacket({ cursor, sequence: cursor + 1, fingerprint: knowledgeHash({ cursor, end, phase: "transport" }) });
       const packets = await this.transport.commits(library.cloudLibraryId, cursor, end);
       if (!packets.length) throw new KnowledgeError("missing", "云提交尚未完整到达，请稍后重试");
       await database.transaction("rw", knowledgeTables(database), async () => {
@@ -91,6 +110,7 @@ export class KnowledgeSync {
         if (checked.sync.cursor !== cursor) throw new KnowledgeError("stale", "另一窗口已拉取，请重试");
         let remote = await readKnowledgeRemote(database, library.id);
         for (const packet of packets) {
+          onPacket({ cursor, sequence: remote.sequence + 1, fingerprint: knowledgeHash(packet) });
           if (packet.commit.sequence > end) throw new KnowledgeError("invalid", "拉取超出固定终点");
           remote = applyKnowledgeCloudPacket(remote, packet);
         }

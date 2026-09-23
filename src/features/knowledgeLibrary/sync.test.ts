@@ -39,6 +39,34 @@ class MemoryKnowledgeCloud implements KnowledgeTransport {
 const topic = (libraryId: string): KnowledgeCommand => ({ protocolVersion: 1, id: "topic-create", libraryId, operation: "create", entity: { id: "topic", kind: "workspace", workspaceId: "topic", nodeId: "", recordId: "" }, expected: { title: null, note: null, archived: null, deleted: null }, changes: { title: "云专题", note: "原说明", archived: false, deleted: false } });
 
 describe("knowledge independent-device sync", () => {
+  it("persists corruption diagnostics, preserves pending work, and resumes only after trusted history repair", async () => {
+    const cloud = new MemoryKnowledgeCloud();
+    const writer = await device(); const reader = await device();
+    const writerSync = new KnowledgeSync(writer, cloud); const readerSync = new KnowledgeSync(reader, cloud);
+    const writerLibrary = (await writerSync.connect()).library;
+    const readerLibrary = (await readerSync.connect()).library;
+    const writerView = await writer.open(writerLibrary.id); const readerView = await reader.open(readerLibrary.id);
+    const local = { ...topic(writerLibrary.cloudLibraryId!), id: "local-only", entity: { ...topic(writerLibrary.cloudLibraryId!).entity, id: "local-topic", workspaceId: "local-topic" } };
+    await reader.execute(readerView.context, local);
+    await writer.execute(writerView.context, topic(writerLibrary.cloudLibraryId!));
+    await writerSync.synchronize(writerView.context);
+    const valid = structuredClone(cloud.packets[0]);
+    cloud.packets[0].commit.sequence = 8;
+    await expect(readerSync.pull(readerView.context)).rejects.toMatchObject({ code: "corrupt" });
+    expect((await reader.database.knowledgeSyncState.get(readerLibrary.id))?.failure).toMatchObject({ cursor: 0, attempts: 1 });
+    const preservedId = await reader.preserveSyncFailure(readerView.context);
+    await expect(readerSync.pull(readerView.context)).rejects.toMatchObject({ code: "corrupt" });
+    expect(await reader.preserveSyncFailure(readerView.context)).toBe(preservedId);
+    expect((await reader.open(preservedId)).state.entities["local-topic"]).toBeDefined();
+    await expect(reader.deleteLibrary((await reader.open(preservedId)).context)).rejects.toMatchObject({ code: "protected" });
+    expect(await reader.database.knowledgeCommands.where("libraryId").equals(readerLibrary.id).count()).toBe(1);
+    cloud.packets[0] = valid;
+    await readerSync.synchronize(readerView.context);
+    expect((await reader.database.knowledgeSyncState.get(readerLibrary.id))?.failure).toBeUndefined();
+    expect((await reader.open(readerLibrary.id)).state.entities["local-topic"]).toBeDefined();
+    expect(await reader.database.knowledgeCommands.where("libraryId").equals(readerLibrary.id).count()).toBe(0);
+  });
+
   it("rejects a semantically forged cloud packet without advancing the pull cursor", async () => {
     const cloud = new MemoryKnowledgeCloud();
     const phone = await device();
