@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StudyJournalDatabase } from "../../db/database";
 import { DAILY_PLAN_SCHEMA_24_STORES } from "../../db/reviewCoachSchema";
 import type { KnowledgeCommand, KnowledgeOwner } from "./domain";
+import { createKnowledgeEntity, editKnowledgeEntity } from "./commands";
 import { KnowledgeRepository } from "./repository";
+import { capturePortableKnowledge } from "./backup";
 
 Dexie.dependencies.indexedDB = indexedDB;
 Dexie.dependencies.IDBKeyRange = IDBKeyRange;
@@ -120,5 +122,137 @@ describe("knowledge repository transaction boundaries", () => {
     await repository.undo(opened.context, command, "title", "undo");
     await expect(repository.undo(opened.context, command, "title", "undo-twice")).rejects.toMatchObject({ code: "stale" });
     expect((await repository.open("library")).state.revisions["undo:title"].value).toBe("知识专题");
+  });
+});
+
+
+describe("knowledge library first-use and naming", () => {
+
+  it("does not create two same-name libraries concurrently or cross an account generation", async () => {
+    const results = await Promise.allSettled([
+      repository.createNamedLibrary("命名库", "named-one", owner, 0),
+      repository.createNamedLibrary("命名库", "named-two", owner, 0),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(await database.knowledgeLibraries.count()).toBe(1);
+    await expect(repository.createNamedLibrary("其他", "named-three", owner, 1)).rejects.toMatchObject({ code: "scope" });
+  });
+  it("creates the first topic and its library atomically and retries the same intent without duplicates", async () => {
+    const intent = { id: "first-use", ownerScope: owner, sessionGeneration: 0 };
+    const first = await repository.createTopic("算法", intent);
+    const again = await repository.createTopic("算法", intent);
+    expect(again).toEqual(first);
+    expect(await database.knowledgeLibraries.count()).toBe(1);
+    expect(await database.knowledgeWorkspaces.count()).toBe(1);
+    expect(await database.knowledgeCommands.count()).toBe(1);
+    expect((await database.knowledgeLibraries.get(first.libraryId))?.title).toBe("我的知识库");
+  });
+  it("serializes simultaneous first topics into one library", async () => {
+    const second = new KnowledgeRepository(peer, () => owner);
+    const results = await Promise.all([
+      repository.createTopic("数学", { id: "first", ownerScope: owner, sessionGeneration: 0 }),
+      second.createTopic("算法", { id: "second", ownerScope: owner, sessionGeneration: 0 }),
+    ]);
+    expect(results[0].libraryId).toBe(results[1].libraryId);
+    expect(await database.knowledgeLibraries.count()).toBe(1);
+    expect(await database.knowledgeWorkspaces.count()).toBe(2);
+  });
+  it("rejects invalid titles and old identity without creating an empty library", async () => {
+    const intent = { id: "cancelled", ownerScope: owner, sessionGeneration: 0 };
+    await expect(repository.createTopic(" ", intent)).rejects.toMatchObject({ code: "invalid" });
+    await expect(repository.createTopic("字".repeat(513), intent)).rejects.toMatchObject({ code: "invalid" });
+    owner = "account:B";
+    await expect(repository.createTopic("旧账号输入", intent)).rejects.toMatchObject({ code: "scope" });
+    expect(await database.knowledgeLibraries.count()).toBe(0);
+  });
+  it("rolls back the default container if the topic write fails", async () => {
+    vi.spyOn(repository, "execute").mockRejectedValueOnce(new Error("disk full"));
+    await expect(repository.createTopic("算法", { id: "failure", ownerScope: owner, sessionGeneration: 0 })).rejects.toThrow("disk full");
+    expect(await database.knowledgeLibraries.count()).toBe(0);
+    expect(await database.knowledgeSyncState.count()).toBe(0);
+    expect(await database.knowledgeBackupScopes.count()).toBe(0);
+  });
+  it("renames without merging duplicate libraries and marks backup dirty, not cloud facts", async () => {
+    await repository.createLibrary("同名", "one");
+    await repository.createLibrary("同名", "two");
+    const opened = await repository.open("one");
+    const before = await database.knowledgeSyncState.get("one");
+    await repository.renameLibrary(opened.context, "考试复习");
+    expect((await database.knowledgeLibraries.get("two"))?.title).toBe("同名");
+    expect((await database.knowledgeSyncState.get("one"))?.dirtyGeneration).toBe(before!.dirtyGeneration + 1);
+    await repository.renameLibrary(opened.context, "考试复习");
+    expect((await database.knowledgeSyncState.get("one"))?.dirtyGeneration).toBe(before!.dirtyGeneration + 1);
+    await expect(repository.renameLibrary(opened.context, "同名")).rejects.toMatchObject({ code: "invalid" });
+    expect(await database.knowledgeLibraries.count()).toBe(2);
+    expect(await database.knowledgeCommands.count()).toBe(0);
+    expect(await database.cloudSyncMutation.count()).toBe(0);
+  });
+
+  it("deletes only a local library and preserves ordinary logs", async () => {
+    await database.blocks.put({ id: "ordinary", type: "record", title: "原日志", subject: "学习", date: "2026-09-22", createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z", order: 0, contentHtml: "<p>正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
+    await repository.createLibrary("待删除", "delete-me");
+    await repository.createLibrary("保留库", "keep-me");
+    const opened = await repository.open("delete-me");
+    await repository.execute(opened.context, createKnowledgeEntity("delete-me", "workspace", "专题"));
+    const membership = (await database.knowledgeBackupScopes.get(owner))!.membershipGeneration;
+    await repository.deleteLibrary(opened.context);
+    expect((await database.knowledgeBackupScopes.get(owner))!.membershipGeneration).toBe(membership + 1);
+    expect(await database.knowledgeLibraries.get("delete-me")).toBeUndefined();
+    expect(await database.knowledgeLibraries.get("keep-me")).toBeDefined();
+    expect(await database.knowledgeWorkspaces.where("libraryId").equals("delete-me").count()).toBe(0);
+    expect(await database.blocks.get("ordinary")).toMatchObject({ id: "ordinary", title: "原日志" });
+  });
+  it("purges local knowledge trash but blocks cloud-linked purge", async () => {
+    await repository.createLibrary("本机库", "trash-local");
+    const opened = await repository.open("trash-local");
+    const command = createKnowledgeEntity("trash-local", "workspace", "待清空专题");
+    await repository.execute(opened.context, command);
+    const current = await repository.open("trash-local");
+    await repository.execute(current.context, editKnowledgeEntity("trash-local", current.state, current.state.entities[command.entity.id], "deleted", true));
+    expect(await repository.purgeLocalTrash(current.context)).toBe(1);
+    expect((await repository.open("trash-local")).state.entities[command.entity.id]).toBeUndefined();
+    await database.knowledgeLibraries.update("trash-local", { cloudLibraryId: "cloud-1" });
+    const cloud = await repository.open("trash-local");
+    await expect(repository.purgeLocalTrash(cloud.context)).rejects.toMatchObject({ code: "invalid" });
+    await expect(repository.deleteLibrary(cloud.context)).rejects.toMatchObject({ code: "invalid" });
+  });
+  it("purges whole deleted branches, preserves archives and moved-out nodes, and invalidates captured drafts", async () => {
+    await repository.createLibrary("本机库", "tree-trash");
+    const baseline = await repository.open("tree-trash");
+    const root = createKnowledgeEntity("tree-trash", "workspace", "保留专题");
+    const archive = createKnowledgeEntity("tree-trash", "workspace", "归档专题");
+    await repository.execute(baseline.context, root);
+    await repository.execute(baseline.context, archive);
+    const branch = createKnowledgeEntity("tree-trash", "node", "待删除分支", root.entity.id);
+    const child = createKnowledgeEntity("tree-trash", "node", "子节点", root.entity.id, branch.entity.id);
+    const survivor = createKnowledgeEntity("tree-trash", "node", "保留节点", root.entity.id);
+    for (const command of [branch, child, survivor]) await repository.execute(baseline.context, command);
+    await repository.execute(baseline.context, createKnowledgeEntity("tree-trash", "reference", "", root.entity.id, "@root", "ordinary", child.entity.id));
+    let current = await repository.open("tree-trash");
+    await repository.saveDraft(current.context, { libraryId: "tree-trash", id: "child-draft", entityId: child.entity.id, unit: "note", text: "草稿", expectedRevision: current.state.entities[child.entity.id].units.note!, dataGeneration: current.context.dataGeneration });
+    await repository.execute(current.context, editKnowledgeEntity("tree-trash", current.state, current.state.entities[archive.entity.id], "archived", true));
+    await repository.execute(current.context, editKnowledgeEntity("tree-trash", current.state, current.state.entities[branch.entity.id], "deleted", true));
+    expect(await repository.purgeLocalTrash(current.context)).toBe(3);
+    await expect(repository.assertContext(current.context)).rejects.toMatchObject({ code: "stale" });
+    current = await repository.open("tree-trash");
+    expect(Object.keys(current.state.entities).sort()).toEqual([root.entity.id, archive.entity.id, survivor.entity.id].sort());
+    expect(await database.knowledgeDrafts.count()).toBe(0);
+    expect((await database.knowledgeCommands.toArray()).every(entry => !!current.state.entities[entry.command.entity.id])).toBe(true);
+    await expect(capturePortableKnowledge(database, owner)).resolves.toMatchObject({ version: 1 });
+    expect(await repository.purgeLocalTrash(current.context)).toBe(0);
+    await repository.execute(current.context, editKnowledgeEntity("tree-trash", current.state, current.state.entities[root.entity.id], "deleted", true));
+    expect(await repository.purgeLocalTrash(current.context)).toBe(2);
+    expect(Object.keys((await repository.open("tree-trash")).state.entities)).toEqual([archive.entity.id]);
+    await expect(capturePortableKnowledge(database, owner)).resolves.toMatchObject({ version: 1 });
+  });
+  it("rolls back a partially cleared library when a delete fails", async () => {
+    await repository.createLibrary("保留", "rollback-delete");
+    const opened = await repository.open("rollback-delete");
+    await repository.execute(opened.context, createKnowledgeEntity("rollback-delete", "workspace", "保留专题"));
+    vi.spyOn(database.knowledgeLibraries, "delete").mockRejectedValueOnce(new Error("disk failure"));
+    await expect(repository.deleteLibrary(opened.context)).rejects.toThrow("disk failure");
+    expect(await database.knowledgeWorkspaces.count()).toBe(1);
+    expect(await database.knowledgeLibraries.count()).toBe(1);
+    expect(await database.knowledgeCommands.count()).toBe(1);
   });
 });

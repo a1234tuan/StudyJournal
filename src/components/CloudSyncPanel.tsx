@@ -1,5 +1,5 @@
 import { Cloud, CloudDownload, HardDrive, History, LogIn, LogOut, RefreshCw, Wrench } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 
 import { formatUiError } from "../lib/uiError";
@@ -22,6 +22,7 @@ import { FirebaseStorageUsageRequestGate } from "../services/firebaseStorageUsag
 import { cloudGoogleSignInErrorMessage } from "../services/cloudGoogleSignIn";
 import { CloudSyncButton } from "./CloudSyncButton";
 import { SurfaceCard } from "./ui";
+const KnowledgeSyncSettings = lazy(() => import("../features/knowledgeLibrary/KnowledgeSyncSettings"));
 
 interface CloudSyncPanelProps {
   onRestored: () => Promise<void> | void;
@@ -51,6 +52,7 @@ const formatBytes = (bytes: number): string => {
 // it's reachable from anywhere. This panel keeps account management, status display, and
 // snapshot recovery — it still embeds CloudSyncButton so this page can also kick off a sync.
 export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
+  const [knowledgeSettingsOpen, setKnowledgeSettingsOpen] = useState(false);
   const [user, setUser] = useState<User | null>(() => getCurrentCloudUser());
   const [status, setStatus] = useState<CloudSyncStatus>();
   const [storageUsage, setStorageUsage] = useState<FirebaseStorageUsage | null | undefined>();
@@ -265,6 +267,7 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
   return (
     <section className="more-section backup-actions-section">
       <h2>云同步</h2>
+      {user && <details onToggle={event => setKnowledgeSettingsOpen(event.currentTarget.open)}><summary>知识库同步范围</summary>{knowledgeSettingsOpen && <Suspense fallback={<p role="status">正在读取知识库设置…</p>}><KnowledgeSyncSettings key={user.uid} uid={user.uid} disabled={busy !== null} /></Suspense>}</details>}
       <div className="more-grid backup-action-grid">
         <SurfaceCard className="more-action-card backup-action-card" variant="raised">
           <div>

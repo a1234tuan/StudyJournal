@@ -2028,7 +2028,7 @@ export const App = () => {
         </div>
       </aside>
       <div className="content-area">
-        {showWebNavigationBack && (
+        {showWebNavigationBack && !(activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !tabMemory.more.recordId) && (
           <div className="web-navigation-back-row">
             <button type="button" className="secondary-button web-navigation-back" onClick={popCurrentTabDepth}>
               <ArrowLeft size={18} />

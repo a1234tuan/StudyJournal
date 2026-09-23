@@ -31,6 +31,10 @@ export const captureKnowledgeBackupScope = (scope: KnowledgeBackupScope, librari
 export const acknowledgeKnowledgeBackup = (scope: KnowledgeBackupScope, token: KnowledgeBackupToken, verifiedDestinationId: string): KnowledgeBackupScope => {
   if (scope.ownerScope !== token.ownerScope || token.destinationId !== verifiedDestinationId || scope.destinationId !== token.destinationId || !scope.consented) throw new KnowledgeError("scope", "备份任务身份或授权目的地已变化");
   const capturedGenerations = { ...scope.capturedGenerations };
+  if (scope.membershipGeneration === token.membershipGeneration && scope.scopeEpoch === token.scopeEpoch) {
+    const capturedIds = new Set(token.selectedLibraryIds);
+    for (const id of Object.keys(capturedGenerations)) if (!capturedIds.has(id)) delete capturedGenerations[id];
+  }
   for (const id of token.selectedLibraryIds) capturedGenerations[id] = Math.max(capturedGenerations[id] ?? 0, token.capturedDirtyGenerations[id]);
   return { ...scope, capturedGenerations };
 };

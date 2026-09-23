@@ -941,7 +941,6 @@ export const RecordEditorPage = ({
     <main className={`${interactionLocked ? "page record-editor-page restore-locked" : "page record-editor-page"}${wideContent ? " wide-content" : ""}`} aria-busy={interactionLocked}>
       {draftLoading && <p className="status-message draft-status">正在读取草稿，编辑已暂时锁定。</p>}
       {!draftLoading && restoreLocked && <p className="status-message draft-status">正在恢复备份，编辑已暂时锁定。</p>}
-      {!editing && onOpenKnowledge && <KnowledgeRecordLinks recordId={record.id} onOpen={onOpenKnowledge} />}
       <section className="record-editor-topbar">
         <button type="button" className="secondary-button" onClick={() => void back()} disabled={draftLoading}>
           <ArrowLeft size={18} />
@@ -1147,6 +1146,7 @@ export const RecordEditorPage = ({
               </button>
               {moreActionsOpen && (
                 <div className="record-more-menu">
+                  {!draftLoading && onOpenKnowledge && <KnowledgeRecordLinks recordId={record.id} onOpen={location => { closeMoreActions(); onOpenKnowledge(location); }} menu />}
                   <button type="button" onClick={() => { setWideContent((value) => !value); closeMoreActions(); }}>
                     <PanelRight size={16} />
                     {wideContent ? "标准正文宽度" : "宽内容模式"}

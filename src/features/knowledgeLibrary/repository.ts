@@ -1,7 +1,8 @@
+import { createKnowledgeEntity } from "./commands";
 import type { StudyJournalDatabase } from "../../db/database";
 import { knowledgeHash, revisionIdentity } from "./canonical";
-import { emptyKnowledgeState, KnowledgeError, type KnowledgeBackupScope, type KnowledgeCommand, type KnowledgeContext, type KnowledgeDraft, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeOwner, type KnowledgeState, type KnowledgeSyncState, type KnowledgeUnit } from "./domain";
-import { applyKnowledgeCommand, knowledgeWrites, revisionValue, validateKnowledgeState } from "./protocol";
+import { emptyKnowledgeState, KnowledgeError, type KnowledgeBackupScope, type KnowledgeCommand, type KnowledgeContext, type KnowledgeDraft, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeOwner, type KnowledgePosition, type KnowledgeState, type KnowledgeSyncState, type KnowledgeUnit } from "./domain";
+import { applyKnowledgeCommand, knowledgeWrites, revisionValue, validateKnowledgeState, valueOf } from "./protocol";
 import { KNOWLEDGE_SCHEMA_25_STORES, type StoredKnowledgeConflict } from "./schema";
 
 export const knowledgeTables = (database: StudyJournalDatabase) => Object.keys(KNOWLEDGE_SCHEMA_25_STORES).map(name => database.table(name));
@@ -75,6 +76,99 @@ export class KnowledgeRepository {
       await this.database.knowledgeBackupScopes.put({ ...scope, membershipGeneration: scope.membershipGeneration + 1 });
     });
     return library;
+  }
+
+  async createTopic(title: string, intent: { id: string; ownerScope: KnowledgeOwner; sessionGeneration: number; context?: KnowledgeContext }): Promise<{ libraryId: string; workspaceId: string }> {
+    if (!title.trim() || new TextEncoder().encode(title.trim()).byteLength > 512) throw new KnowledgeError("invalid", "专题名称无效");
+    return this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      if (intent.ownerScope !== this.currentOwner() || intent.sessionGeneration !== this.contextGeneration()) throw new KnowledgeError("scope", "账号已变化");
+      const available = await this.listLibraries();
+      const library = intent.context
+        ? (await this.assertContext(intent.context)).library
+        : available[0] ?? await this.createLibrary("我的知识库", "library-" + intent.id);
+      const opened = await this.open(library.id);
+      const command = createKnowledgeEntity(library.cloudLibraryId ?? library.id, "workspace", title.trim());
+      command.id = intent.id;
+      command.entity.id = "topic-" + intent.id;
+      command.entity.workspaceId = command.entity.id;
+      await this.execute(opened.context, command);
+      return { libraryId: library.id, workspaceId: command.entity.id };
+    });
+  }
+
+  async renameLibrary(context: KnowledgeContext, title: string): Promise<void> {
+    const name = title.trim();
+    if (!name || new TextEncoder().encode(name).byteLength > 512) throw new KnowledgeError("invalid", "知识库名称无效");
+    await this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      const { library, sync } = await this.assertContext(context);
+      if (library.title === name) return;
+      const available = await this.listLibraries();
+      if (available.some(item => item.id !== library.id && item.title === name)) throw new KnowledgeError("invalid", "名称已存在");
+      await this.database.knowledgeLibraries.put({ ...library, title: name });
+      await this.database.knowledgeSyncState.put({ ...sync, dirtyGeneration: sync.dirtyGeneration + 1 });
+    });
+  }
+
+  async createNamedLibrary(title: string, id: string, ownerScope: KnowledgeOwner, sessionGeneration: number): Promise<KnowledgeLibrary> {
+    return this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      if (ownerScope !== this.currentOwner() || sessionGeneration !== this.contextGeneration()) throw new KnowledgeError("scope", "账号已变化");
+      const name = title.trim();
+      const available = await this.listLibraries();
+      if (available.some(item => item.id !== id && item.title === name)) throw new KnowledgeError("invalid", "名称已存在");
+      return this.createLibrary(name, id);
+    });
+  }
+
+  async deleteLibrary(context: KnowledgeContext): Promise<void> {
+    return this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      const { library } = await this.assertContext(context);
+      if (library.cloudLibraryId) throw new KnowledgeError("invalid", "账号同步库不支持永久删除。请在专题菜单中删除内容，删除状态会随云同步保留。");
+      const scope = await this.database.knowledgeBackupScopes.get(library.ownerScope) ?? initialKnowledgeScope(library.ownerScope);
+      for (const table of [
+        this.database.knowledgeWorkspaces, this.database.knowledgeNodes, this.database.knowledgeReferences,
+        this.database.knowledgeRevisions, this.database.knowledgeConflicts, this.database.knowledgeRemoteEntities,
+        this.database.knowledgeCommands, this.database.knowledgeDrafts,
+      ]) await table.where("libraryId").equals(library.id).delete();
+      await this.database.knowledgeSyncState.delete(library.id);
+      await this.database.knowledgeLibraries.delete(library.id);
+      await this.database.knowledgeBackupScopes.put({ ...scope, membershipGeneration: scope.membershipGeneration + 1 });
+    });
+  }
+
+  async purgeLocalTrash(context: KnowledgeContext): Promise<number> {
+    return this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      const { library, sync } = await this.assertContext(context);
+      if (library.cloudLibraryId) throw new KnowledgeError("invalid", "账号同步库的回收站会参与云同步，不能单方面清空。");
+      const before = await readKnowledgeState(this.database, library.id);
+      const deletedIds = new Set(Object.values(before.entities).filter(entity => valueOf(before, entity, "deleted") === true).map(entity => entity.id));
+      if (!deletedIds.size) return 0;
+      const children = new Map<string, string[]>();
+      for (const entity of Object.values(before.entities)) {
+        const parentIds = entity.kind === "node"
+          ? [entity.workspaceId, (valueOf(before, entity, "position") as KnowledgePosition).parentNodeId]
+          : entity.kind === "reference" ? [entity.nodeId] : [];
+        for (const parentId of parentIds) children.set(parentId, [...(children.get(parentId) ?? []), entity.id]);
+      }
+      const pending = [...deletedIds];
+      while (pending.length) {
+        for (const childId of children.get(pending.pop()!) ?? []) {
+          if (!deletedIds.has(childId)) { deletedIds.add(childId); pending.push(childId); }
+        }
+      }
+      const after = structuredClone(before);
+      const commandIds = new Set(Object.values(before.revisions).filter(revision => deletedIds.has(revision.entityId)).map(revision => revision.commandId));
+      for (const id of deletedIds) delete after.entities[id];
+      for (const [id, revision] of Object.entries(after.revisions)) if (!after.entities[revision.entityId]) delete after.revisions[id];
+      for (const [id, candidate] of Object.entries(after.candidates)) if (!after.revisions[candidate.revisionId]) delete after.candidates[id];
+      for (const [id, group] of Object.entries(after.groups)) if (!after.revisions[group.currentRevisionId]) delete after.groups[id];
+      for (const commandId of commandIds) delete after.receipts[commandId];
+      await writeKnowledgeStateDelta(this.database, library.id, before, after);
+      const commands = await this.database.knowledgeCommands.where("libraryId").equals(library.id).toArray();
+      for (const command of commands) if (deletedIds.has(command.command.entity.id)) await this.database.knowledgeCommands.delete([library.id, command.id]);
+      await this.database.knowledgeDrafts.where("libraryId").equals(library.id).filter(draft => deletedIds.has(draft.entityId)).delete();
+      await this.database.knowledgeSyncState.put({ ...sync, epoch: sync.epoch + 1, dataGeneration: sync.dataGeneration + 1, dirtyGeneration: sync.dirtyGeneration + 1 });
+      return deletedIds.size;
+    });
   }
 
   async assertContext(context: KnowledgeContext): Promise<{ library: KnowledgeLibrary; sync: KnowledgeSyncState }> {

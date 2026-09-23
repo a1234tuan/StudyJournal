@@ -6,6 +6,14 @@ const library = (id: string, ownerScope: KnowledgeOwner, detached = false): Know
 const scope = (ownerScope: KnowledgeOwner): KnowledgeBackupScope => ({ ownerScope, scopeEpoch: 1, membershipGeneration: 1, destinationId: "opaque-" + (ownerScope === "account:A" ? "one" : "two"), consented: true, capturedGenerations: {} });
 
 describe("knowledge binding, restore and ownership contracts", () => {
+  it("acknowledges deleted library membership only for the current complete backup", () => {
+    const current = { ...scope("account:A"), membershipGeneration: 3, capturedGenerations: { removed: 4, kept: 2 } };
+    const token = captureKnowledgeBackupScope(current, [library("kept", "account:A")], { kept: 2 });
+    expect(acknowledgeKnowledgeBackup(current, token, token.destinationId).capturedGenerations).toEqual({ kept: 2 });
+    expect(acknowledgeKnowledgeBackup({ ...current, membershipGeneration: 4 }, token, token.destinationId).capturedGenerations).toEqual(current.capturedGenerations);
+    const emptyToken = captureKnowledgeBackupScope(current, [], {});
+    expect(acknowledgeKnowledgeBackup(current, emptyToken, emptyToken.destinationId).capturedGenerations).toEqual({});
+  });
   it("BIND-01: a serialized first-registration race selects one default without replacing the winner", () => {
     const winner = registerDefaultLibrary(null, "phone", "request-phone");
     expect(registerDefaultLibrary(winner, "desktop", "request-desktop")).toBe(winner);

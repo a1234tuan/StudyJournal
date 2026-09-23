@@ -120,8 +120,8 @@ export const MorePage = ({
 
     <section className="more-section more-hub-section">
       <h2>应用</h2>
-      {onOpenKnowledge && <ListRow icon={<BookOpen size={19} />} title="知识库" description="用大纲与导图整理日志" onClick={onOpenKnowledge} />}
       <div className="more-list">
+        {onOpenKnowledge && <ListRow icon={<BookOpen size={19} />} title="知识库" trailing={<ChevronRight size={17} />} onClick={onOpenKnowledge} />}
         <ListRow icon={<ListChecks size={19} />} title="今日计划" trailing={<ChevronRight size={17} />} onClick={onOpenDailyPlan} />
         <ListRow icon={<Layers3 size={19} />} title="分类管理" trailing={<ChevronRight size={17} />} onClick={onOpenCategories} />
         <ListRow icon={<Mic2 size={19} />} title="录音库" trailing={<ChevronRight size={17} />} onClick={onOpenRecordings} />

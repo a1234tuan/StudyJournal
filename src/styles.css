@@ -6133,3 +6133,10 @@ button:disabled {
   background: hsl(var(--record-tag-hue) 34% 22%);
   color: hsl(var(--record-tag-hue) 62% 82%);
 }
+
+.record-knowledge-menu-error { margin: 4px 10px; color: var(--muted); font-size: 12px; white-space: normal; }
+.record-knowledge-menu { display: grid; min-width: 0; }
+.record-knowledge-menu summary { padding: 10px; cursor: pointer; font-size: 13px; color: var(--muted); }
+.record-knowledge-menu details > div { display: grid; max-height: 160px; overflow: auto; }
+.record-more-menu .record-knowledge-menu button { white-space: normal; overflow-wrap: anywhere; text-align: left; min-height: 44px; padding-block: 8px; }
+.record-more-menu:has(.record-knowledge-menu) { max-height: min(70dvh, 560px); overflow-y: auto; }
