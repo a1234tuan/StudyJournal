@@ -33,12 +33,12 @@ test("adds a log once, preserves remarks through remove and restore, and returns
   await active(page).getByRole("button", { name: "添加日志", exact: true }).click();
   await page.getByRole("dialog").getByRole("checkbox").check();
   await page.getByRole("dialog").getByRole("button", { name: "添加所选 1 条日志" }).click();
-  await expect(active(page).getByRole("button", { name: "BFS 复习", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "BFS 复习", exact: true })).toBeVisible();
   await active(page).getByLabel("引用操作：BFS 复习").click();
   await active(page).getByRole("button", { name: "编辑备注" }).click();
   await page.getByRole("dialog").getByLabel("编辑引用备注", { exact: true }).fill("先看队列");
   await page.getByRole("dialog").getByRole("button", { name: "保存", exact: true }).click();
-  await active(page).getByRole("button", { name: "BFS 复习", exact: true }).click();
+  await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "BFS 复习", exact: true }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
   await expect(active(page).locator(".rich-editor")).toContainText("队列保存待访问节点");
   await expect(active(page).getByRole("button", { name: "加入专题", exact: true })).toHaveCount(0);
@@ -58,7 +58,7 @@ test("adds a log once, preserves remarks through remove and restore, and returns
   await page.getByRole("dialog").getByRole("checkbox").check();
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("dialog").getByRole("button", { name: "添加所选 1 条日志" }).click();
-  await expect(active(page).getByText("先看队列", { exact: true })).toBeVisible();
+  await expect(active(page).locator(".knowledge-reference-remark summary").filter({ hasText: "先看队列" })).toBeVisible();
   const persisted = await page.evaluate(async () => { const { db } = await import("/src/db/database.ts"); return { refs: await db.knowledgeReferences.count(), log: await db.blocks.get("bfs-log") }; });
   expect(persisted.refs).toBe(1);
   expect(persisted.log.contentHtml).toBe("<p>队列保存待访问节点</p>");
@@ -78,7 +78,7 @@ test("retains input when another writer updates the note and never silently appr
   expect(saved).toBe("另一窗口较新正文");
 });
 
-test("pans and drags only from handles; browse gestures never create writes", async ({ page }) => {
+test("pans without writes and drags node bodies to reparent branches", async ({ page }) => {
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   const count = await page.evaluate(async () => { const { db } = await import("/src/db/database.ts"); return db.knowledgeCommands.count(); });
@@ -87,10 +87,10 @@ test("pans and drags only from handles; browse gestures never create writes", as
   await page.mouse.move(rect.x + 30, rect.y + 280); await page.mouse.down(); await page.mouse.move(rect.x + 100, rect.y + 300, { steps: 10 }); await page.mouse.up();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
   expect(await page.evaluate(async () => { const { db } = await import("/src/db/database.ts"); return db.knowledgeCommands.count(); })).toBe(count);
-  const handle = active(page).getByRole("button", { name: "拖动分支：遍历方法" });
+  const handle = active(page).locator('[data-node-id="' + ids.node + '"] .knowledge-map-label');
   const target = active(page).locator('[data-node-id="' + ids.other + '"]');
   const sourceBox = (await handle.boundingBox())!; const targetBox = (await target.boundingBox())!;
-  await page.mouse.move(sourceBox.x + 15, sourceBox.y + 20); await page.mouse.down(); await page.mouse.move(targetBox.x + 75, targetBox.y + 25, { steps: 12 }); await page.mouse.up();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2); await page.mouse.down(); await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 12 }); await page.mouse.up();
   await expect.poll(async () => page.evaluate(async id => { const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts"); const { valueOf } = await import("/src/features/knowledgeLibrary/protocol.ts"); const opened = await repository.open("acceptance"); return valueOf(opened.state, opened.state.entities[id], "position"); }, ids.node)).toMatchObject({ parentNodeId: ids.other });
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });

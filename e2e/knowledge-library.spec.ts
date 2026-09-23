@@ -33,8 +33,10 @@ test("first use creates one library, edits inline, keeps browsing read-only and 
   await page.getByRole("dialog").getByRole("button", { name: "保存", exact: true }).click();
   const count = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await expect(active(page).locator("[data-map-root]")).toBeVisible();
+  const initialZoom = parseInt(await active(page).locator(".knowledge-map-controls output").innerText(), 10);
   await active(page).getByRole("button", { name: "缩小导图", exact: true }).click();
-  await expect(active(page).locator(".knowledge-map-controls output")).toHaveText("83%");
+  await expect.poll(async () => parseInt(await active(page).locator(".knowledge-map-controls output").innerText(), 10)).toBeLessThan(initialZoom);
   await page.keyboard.press("Control+f");
   await expect(page.getByRole("dialog").getByRole("textbox", { name: "检索知识库", exact: true })).toBeFocused();
   await page.getByRole("dialog").getByRole("textbox", { name: "检索知识库", exact: true }).fill("队列");
@@ -60,7 +62,7 @@ test("selected details cannot intercept filters, large results stay virtual and 
   await openKnowledge(page);
   await active(page).getByRole("button", { name: "筛选专题", exact: true }).click();
   await active(page).locator(".knowledge-row-title").click();
-  await active(page).getByRole("button", { name: "详情", exact: true }).click();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
   await active(page).getByRole("button", { name: "更多知识库操作" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "未加入专题的日志", exact: true }).click();
   await expect(active(page).locator(".knowledge-detail")).toHaveCount(0);
@@ -78,7 +80,7 @@ test("selected details cannot intercept filters, large results stay virtual and 
   await page.screenshot({ path: test.info().outputPath("filtered-logs.png"), animations: "disabled", scale: "css" });
   await page.getByRole("dialog").getByRole("button", { name: "添加所选 1 条日志", exact: true }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await expect(active(page).getByRole("button", { name: "验收日志 1", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "验收日志 1", exact: true })).toBeVisible();
 });
 
 test("keeps same-name libraries distinct and centralizes sync", async ({ page }) => {
@@ -144,7 +146,7 @@ test("new topic from an unorganized selection preserves the selection through fi
   await expect(page.getByRole("dialog").getByRole("checkbox", { name: "第一次整理" })).toBeChecked();
   await page.getByRole("dialog").getByRole("button", { name: "添加所选 1 条日志", exact: true }).click();
   await expect(active(page).getByRole("heading", { name: "就地创建", exact: true })).toBeVisible();
-  await expect(active(page).getByRole("button", { name: "第一次整理", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "第一次整理", exact: true })).toBeVisible();
   expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeLibraries.count())).toBe(1);
 });
 
