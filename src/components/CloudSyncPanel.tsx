@@ -2,7 +2,11 @@ import { Cloud, CloudDownload, HardDrive, History, LogIn, LogOut, RefreshCw, Wre
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 
-import { formatUiError } from "../lib/uiError";
+import { formatActionableError, formatUiError } from "../lib/uiError";
+import {
+  isCloudRecoverySnapshotRestorable,
+  describeCloudRecoverySnapshotStatus,
+} from "../services/cloudSnapshotIntegrity";
 import {
   completeGoogleRedirect,
   cleanupCloudRecoverySnapshotsIfDue,
@@ -32,6 +36,12 @@ const formatDateTime = (value: string) =>
   new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 
 const errorMessage = (error: unknown) => formatUiError(error, "cloud-sync");
+/**
+ * Integrity failures carry the reason and the next step, so they are shown verbatim instead of
+ * being replaced by the generic cloud-sync wording. Everything else keeps the standard message
+ * plus a diagnostic id.
+ */
+const restoreErrorMessage = (error: unknown) => formatActionableError(error, "cloud-sync");
 const signInErrorMessage = (error: unknown) => cloudGoogleSignInErrorMessage(error) ?? errorMessage(error);
 
 const formatBytes = (bytes: number): string => {
@@ -233,7 +243,14 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
 
   const restore = async (snapshot: CloudRecoverySnapshot) => {
     if (!user) return;
-    const accepted = window.confirm(`恢复"${snapshot.label}"会覆盖当前设备上的同步数据。继续恢复？`);
+    if (!isCloudRecoverySnapshotRestorable(snapshot.status)) {
+      setMessage(`“${snapshot.label}”${describeCloudRecoverySnapshotStatus(snapshot.status)}，不能用于恢复。请选择其他恢复点或改用完整备份恢复。`);
+      return;
+    }
+    const accepted = window.confirm(
+      `恢复"${snapshot.label}"会覆盖当前设备上的普通同步数据。`
+      + "该操作不包含知识库：知识库只按知识同步协议处理，完整备份也会把知识库恢复为独立的副本。继续恢复？",
+    );
     if (!accepted) return;
     setBusy("restore");
     const token = cloudSyncStore.currentToken();
@@ -255,7 +272,7 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
       cloudSyncStore.setOutcome("success", "已恢复云端快照。");
     } catch (error) {
       if (isCurrentOperation()) {
-        const message = errorMessage(error);
+        const message = restoreErrorMessage(error);
         setMessage(message);
         cloudSyncStore.setOutcome("error", message);
       }
@@ -263,6 +280,9 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
       cloudSyncStore.finishBusy(token);
     }
   };
+
+  const restorableSnapshots = snapshots.filter((snapshot) => isCloudRecoverySnapshotRestorable(snapshot.status));
+  const newestRestorableSnapshot = restorableSnapshots[0];
 
   return (
     <section className="more-section backup-actions-section">
@@ -309,11 +329,12 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
               <History size={20} />
               <div>
                 <h3>恢复快照</h3>
-                <p>{snapshots.length ? `保留 ${snapshots.length} 份恢复点` : status?.legacySnapshotAvailable ? "检测到旧版完整快照" : "尚无恢复快照"}</p>
+                <p>{snapshots.length ? `保留 ${snapshots.length} 份恢复点（可用 ${restorableSnapshots.length} 份）` : status?.legacySnapshotAvailable ? "检测到旧版完整快照" : "尚无恢复快照"}</p>
+                <small>这里的恢复只覆盖普通云同步数据，不包含知识库。</small>
               </div>
             </div>
-            {snapshots[0] ? (
-              <button type="button" className="secondary-button" onClick={() => void restore(snapshots[0])} disabled={busy !== null}>
+            {newestRestorableSnapshot ? (
+              <button type="button" className="secondary-button" onClick={() => void restore(newestRestorableSnapshot)} disabled={busy !== null}>
                 <CloudDownload size={18} />
                 {busy === "restore" ? "恢复中..." : "恢复最新快照"}
               </button>
@@ -386,15 +407,30 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
 
       {user && snapshots.length > 0 ? (
         <div className="more-list" aria-label="云端恢复快照">
-          {snapshots.map((snapshot) => (
-            <button key={snapshot.id} type="button" className="list-row more-summary-row" onClick={() => void restore(snapshot)} disabled={busy !== null}>
-              <span className="list-row-content">
-                <strong>{snapshot.label}</strong>
-                <small>{formatDateTime(snapshot.createdAt)} · {snapshot.entityCount} 项数据 · 修订 {snapshot.revision}</small>
-              </span>
-              <CloudDownload size={18} />
-            </button>
-          ))}
+          {snapshots.map((snapshot) => {
+            const restorable = isCloudRecoverySnapshotRestorable(snapshot.status);
+            const statusText = describeCloudRecoverySnapshotStatus(snapshot.status);
+            return (
+              <button
+                key={snapshot.id}
+                type="button"
+                className="list-row more-summary-row"
+                onClick={() => void restore(snapshot)}
+                disabled={busy !== null || !restorable}
+                aria-disabled={!restorable}
+                title={restorable ? undefined : `该恢复点${statusText}，不能用于恢复。`}
+              >
+                <span className="list-row-content">
+                  <strong>{snapshot.label}</strong>
+                  <small>{formatDateTime(snapshot.createdAt)} · {snapshot.entityCount} 项数据 · 修订 {snapshot.revision} · {statusText}</small>
+                  {!restorable && (
+                    <small className="import-warning">不可恢复：{statusText}。请选择其他恢复点，或改用完整备份恢复。</small>
+                  )}
+                </span>
+                <CloudDownload size={18} />
+              </button>
+            );
+          })}
         </div>
       ) : null}
 

@@ -75,6 +75,9 @@ const ImportStatusCard = ({ status }: { status: ImportStatus }) => {
       {summary?.missingAssets ? (
         <p className="import-warning">有 {summary.missingAssets} 个资源文件未在备份包中找到，相关记录会保留资源缺失占位。</p>
       ) : null}
+      {summary?.unverifiedAssets ? (
+        <p className="import-warning">该备份包写于逐资源校验功能之前，其中 {summary.unverifiedAssets} 个资源只能按文件存在性导入，无法核对字节内容。需要完整校验时请重新导出一份新备份。</p>
+      ) : null}
     </section>
   );
 };
@@ -328,6 +331,11 @@ export const BackupPage = ({ settings, autoBackupState, onRestored }: BackupPage
 
       <section className="more-section backup-actions-section">
         <h2>完整备份</h2>
+        <p className="helper-text">
+          普通日志与图片、录音、附件是一份<strong>设备本地</strong>集合，不按账号分区；完整备份会把它们整体打包。
+          其中的知识库属于账号维度：恢复时不会覆盖或连接到现有库，而是为当前身份创建<strong>独立副本</strong>（detached），
+          副本保持离线，需要时可在云同步设置里单独选择是否上传。
+        </p>
         <div className="more-grid backup-action-grid">
           <SurfaceCard className="more-action-card backup-action-card" variant="raised">
             <div>

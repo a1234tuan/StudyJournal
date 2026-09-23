@@ -60,6 +60,15 @@ import {
   type CloudSyncExport,
 } from "./cloudSyncModel";
 import { CloudSyncLocalMutationError, storage } from "./storageAdapter";
+import {
+  assertDownloadedAssetVerified,
+  assertStrictCloudSnapshot,
+  assertStrictRemoteDataset,
+  classifyCloudRecoverySnapshot,
+  CloudSnapshotIntegrityError,
+  REVIEW_EVENT_DOCUMENT_PREFIX,
+  type CloudRecoverySnapshotStatus,
+} from "./cloudSnapshotIntegrity";
 import { snapshotToZip, summarizeSnapshot, zipToSnapshot } from "./backup";
 import { sanitizeSettingsForExport } from "./exportPrivacy";
 import { stripAssetOperationalFields } from "./assetOcrState";
@@ -152,6 +161,12 @@ export interface CloudRecoverySnapshot {
   label: string;
   entityCount: number;
   revision: number;
+  /**
+   * Whether this recovery point may be used, and how much proof exists that it is whole.
+   * See `cloudSnapshotIntegrity.ts`: only `complete` and `legacy-unverified` are restorable, and
+   * both still pass the strict validator before any local data is replaced.
+   */
+  status: CloudRecoverySnapshotStatus;
 }
 
 export interface CloudSyncProgress {
@@ -513,6 +528,46 @@ const parseRemoteReviewEvent = (id: string, value: unknown): RemoteReviewEvent |
   return { id, contentHash: data.contentHash, payload: data.payload as Record<string, unknown>, revision: data.revision };
 };
 
+/**
+ * Strict counterparts of the tolerant parsers above.
+ *
+ * The tolerant parsers drop unparsable documents. That is correct for an incremental merge, where
+ * the ledger only records what actually arrived, but it silently shrinks a destructive full
+ * replacement. These variants throw instead, so a full replacement can never be applied over a
+ * filtered subset. They are used only by the branches that really replace the local database.
+ */
+const parseRemoteEntitiesStrict = async (docs: Array<{ id: string; data: () => unknown }>) => {
+  const seen = new Set<string>();
+  const parsed: RemoteEntity[] = [];
+  for (const item of docs) {
+    if (seen.has(item.id)) {
+      throw new CloudSnapshotIntegrityError(`云端数据不一致：实体 ${item.id} 重复，已拒绝覆盖本机数据。请稍后重试或联系支持清理云端数据。`);
+    }
+    seen.add(item.id);
+    const entity = parseRemoteEntity(item.id, item.data());
+    if (!entity) {
+      throw new CloudSnapshotIntegrityError(`云端数据损坏：实体 ${item.id} 无法解析，已拒绝覆盖本机数据。请选择其他云端版本或改用完整备份恢复。`);
+    }
+    parsed.push(entity);
+  }
+  return Promise.all(parsed.map(normalizeRemoteEntity));
+};
+
+const parseRemoteReviewEventsStrict = (docs: Array<{ id: string; data: () => unknown }>) => {
+  const seen = new Set<string>();
+  return docs.map((item) => {
+    if (seen.has(item.id)) {
+      throw new CloudSnapshotIntegrityError(`云端数据不一致：复习事件 ${item.id} 重复，已拒绝覆盖本机数据。请稍后重试或联系支持清理云端数据。`);
+    }
+    seen.add(item.id);
+    const event = parseRemoteReviewEvent(item.id, item.data());
+    if (!event) {
+      throw new CloudSnapshotIntegrityError(`云端数据损坏：复习事件 ${item.id} 无法解析，已拒绝覆盖本机数据。请选择其他云端版本或改用完整备份恢复。`);
+    }
+    return event;
+  });
+};
+
 const ledgerId = (type: CloudSyncEntityType | "review-event", id: string) => `${type}:${id}`;
 
 const newDeviceId = () => globalThis.crypto?.randomUUID?.() ?? newId();
@@ -689,7 +744,7 @@ const getRemoteState = async (uid: string) => {
   return { exists: snapshot.exists(), state: parseRemoteState(snapshot.data()) };
 };
 
-const getRemoteChanges = async (uid: string, afterRevision: number, state: RemoteSyncState) => {
+const getRemoteChanges = async (uid: string, afterRevision: number, state: RemoteSyncState, strict = false) => {
   if (state.headRevision <= afterRevision) return { entities: [] as RemoteEntity[], reviewEvents: [] as RemoteReviewEvent[] };
   const [entities, reviewEvents] = await withTimeout(
     Promise.all([
@@ -700,8 +755,12 @@ const getRemoteChanges = async (uid: string, afterRevision: number, state: Remot
     "拉取云端更改超时，请确认网络可连接后重试。",
   );
   return {
-    entities: await parseAndNormalizeRemoteEntities(entities.docs),
-    reviewEvents: reviewEvents.docs.map((item) => parseRemoteReviewEvent(item.id, item.data())).filter((item): item is RemoteReviewEvent => Boolean(item)),
+    entities: strict
+      ? await parseRemoteEntitiesStrict(entities.docs)
+      : await parseAndNormalizeRemoteEntities(entities.docs),
+    reviewEvents: strict
+      ? parseRemoteReviewEventsStrict(reviewEvents.docs)
+      : reviewEvents.docs.map((item) => parseRemoteReviewEvent(item.id, item.data())).filter((item): item is RemoteReviewEvent => Boolean(item)),
   };
 };
 
@@ -732,7 +791,7 @@ export const splitCloudSyncReadKeys = <T>(items: T[], size = TARGETED_READ_BATCH
   return result;
 };
 
-const getTargetedRemoteDocuments = async (uid: string, entityKeys: string[], eventIds: string[]) => {
+const getTargetedRemoteDocuments = async (uid: string, entityKeys: string[], eventIds: string[], strict = false) => {
   const entityChunks = splitCloudSyncReadKeys([...new Set(entityKeys)]);
   const eventChunks = splitCloudSyncReadKeys([...new Set(eventIds)]);
   const [entityDocs, eventDocs] = await Promise.all([
@@ -747,11 +806,17 @@ const getTargetedRemoteDocuments = async (uid: string, entityKeys: string[], eve
       "定点读取云端复习事件超时，请确认网络可连接后重试。",
     ))),
   ]);
+  const flatEntities = entityDocs.flatMap((snapshot) => snapshot.docs);
+  const flatEvents = eventDocs.flatMap((snapshot) => snapshot.docs);
   return {
-    entities: await parseAndNormalizeRemoteEntities(entityDocs.flatMap((snapshot) => snapshot.docs)),
-    reviewEvents: eventDocs.flatMap((snapshot) => snapshot.docs)
-      .map((item) => parseRemoteReviewEvent(item.id, item.data()))
-      .filter((item): item is RemoteReviewEvent => Boolean(item)),
+    entities: strict
+      ? await parseRemoteEntitiesStrict(flatEntities)
+      : await parseAndNormalizeRemoteEntities(flatEntities),
+    reviewEvents: strict
+      ? parseRemoteReviewEventsStrict(flatEvents)
+      : flatEvents
+        .map((item) => parseRemoteReviewEvent(item.id, item.data()))
+        .filter((item): item is RemoteReviewEvent => Boolean(item)),
   };
 };
 
@@ -951,8 +1016,9 @@ const buildIncrementalRemoteDataset = async (
   remote: RemoteSyncState,
   localExport: CloudSyncExport,
   ledger: CloudSyncLedgerRecord[],
+  strict = false,
 ): Promise<RemoteDataset> => {
-  const changes = await getRemoteChanges(uid, local.lastPulledRevision, remote);
+  const changes = await getRemoteChanges(uid, local.lastPulledRevision, remote, strict);
   const localEntities = new Map(localExport.entities.map((entity) => [entity.key, entity]));
   const localEvents = new Map(localExport.reviewEvents.map((event) => [event.id, event]));
   const ledgerByKey = new Map(ledger.map((entry) => [entry.id, entry]));
@@ -963,7 +1029,7 @@ const buildIncrementalRemoteDataset = async (
   const targetEventIds = ledger
     .filter((entry) => entry.entityType === "review-event" && !localEvents.has(entry.entityId))
     .map((entry) => entry.entityId);
-  const targeted = await getTargetedRemoteDocuments(uid, targetEntityKeys, targetEventIds);
+  const targeted = await getTargetedRemoteDocuments(uid, targetEntityKeys, targetEventIds, strict);
   const observedRevisions = [
     ...changes.entities.map((entity) => entity.revision),
     ...changes.reviewEvents.map((event) => event.revision),
@@ -1008,8 +1074,8 @@ const buildIncrementalRemoteDataset = async (
   };
 };
 
-const buildFullRemoteDataset = async (uid: string, local: CloudSyncStateRecord, remote: RemoteSyncState): Promise<RemoteDataset> => {
-  const all = await getAllRemote(uid, remote);
+const buildFullRemoteDataset = async (uid: string, local: CloudSyncStateRecord, remote: RemoteSyncState, strict = false): Promise<RemoteDataset> => {
+  const all = await getAllRemote(uid, remote, strict);
   return {
     ...all,
     changed: {
@@ -1021,22 +1087,26 @@ const buildFullRemoteDataset = async (uid: string, local: CloudSyncStateRecord, 
   };
 };
 
-const getAllRemoteDocuments = async (uid: string) => {
+const getAllRemoteDocuments = async (uid: string, strict = false) => {
   const [entities, reviewEvents] = await withTimeout(
     Promise.all([getDocs(entitiesRef(uid)), getDocs(reviewEventsRef(uid))]),
     FIRESTORE_READ_TIMEOUT_MS,
     "读取云端全部数据超时，请确认网络可连接后重试。",
   );
   return {
-    entities: await parseAndNormalizeRemoteEntities(entities.docs),
-    reviewEvents: reviewEvents.docs
-      .map((item) => parseRemoteReviewEvent(item.id, item.data()))
-      .filter((item): item is RemoteReviewEvent => Boolean(item)),
+    entities: strict
+      ? await parseRemoteEntitiesStrict(entities.docs)
+      : await parseAndNormalizeRemoteEntities(entities.docs),
+    reviewEvents: strict
+      ? parseRemoteReviewEventsStrict(reviewEvents.docs)
+      : reviewEvents.docs
+        .map((item) => parseRemoteReviewEvent(item.id, item.data()))
+        .filter((item): item is RemoteReviewEvent => Boolean(item)),
   };
 };
 
-const getAllRemote = async (uid: string, state: RemoteSyncState) => {
-  const all = await getAllRemoteDocuments(uid);
+const getAllRemote = async (uid: string, state: RemoteSyncState, strict = false) => {
+  const all = await getAllRemoteDocuments(uid, strict);
   return {
     entities: all.entities.filter((entity) => entity.revision <= state.headRevision),
     reviewEvents: all.reviewEvents.filter((event) => event.revision <= state.headRevision),
@@ -1200,14 +1270,24 @@ const ASSET_DOWNLOAD_TIMEOUT_MS = isNativePlatform() ? 300_000 : 120_000;
 const ASSET_DOWNLOAD_CONCURRENCY = 5;
 
 const downloadRemoteAssets = async (uid: string, entities: CloudSyncEntity[], existing: Map<string, Blob>, options: CloudSyncOptions) => {
-  const pending = [
-    ...new Set(
-      entities
-        .filter((e) => e.entityType === "asset" && !e.deleted)
-        .map((e) => e.payload.contentHash)
-        .filter((h): h is string => typeof h === "string" && !existing.has(h)),
-    ),
-  ];
+  /**
+   * A blob that is already in `existing` came from this device (its own export or a blob that was
+   * verified earlier in this operation), so only newly downloaded objects are re-hashed. The
+   * declaration travels with the entity, because the object path alone proves nothing.
+   */
+  type AssetDeclaration = { label?: string; size?: unknown; mimeType?: unknown };
+  const declarations = new Map<string, AssetDeclaration>();
+  for (const entity of entities) {
+    if (entity.entityType !== "asset" || entity.deleted) continue;
+    const hash = entity.payload.contentHash;
+    if (typeof hash !== "string" || existing.has(hash) || declarations.has(hash)) continue;
+    declarations.set(hash, {
+      label: typeof entity.payload.fileName === "string" ? entity.payload.fileName : undefined,
+      size: entity.payload.size,
+      mimeType: entity.payload.mimeType,
+    });
+  }
+  const pending = [...declarations.keys()];
   const total = pending.length;
   let completed = 0;
   for (let i = 0; i < total; i += ASSET_DOWNLOAD_CONCURRENCY) {
@@ -1219,14 +1299,25 @@ const downloadRemoteAssets = async (uid: string, entities: CloudSyncEntity[], ex
           const timeout = new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => reject(new Error("下载超时，请检查网络连接、代理设置后重试。")), ASSET_DOWNLOAD_TIMEOUT_MS);
           });
+          let blob: Blob;
           try {
-            existing.set(hash, await Promise.race([getCloudStorageBlob(uid, assetRef(uid, hash)), timeout]));
+            blob = await Promise.race([getCloudStorageBlob(uid, assetRef(uid, hash)), timeout]);
           } finally {
             if (timeoutId) clearTimeout(timeoutId);
           }
+          const declaration = declarations.get(hash);
+          await assertDownloadedAssetVerified({
+            hash,
+            blob,
+            label: declaration?.label,
+            declaredSize: declaration?.size,
+            declaredMimeType: declaration?.mimeType,
+          });
+          existing.set(hash, blob);
           completed++;
           progress(options, "downloading", `正在下载资源 ${completed}/${total}。`, completed, total);
         } catch (err) {
+          if (err instanceof CloudSnapshotIntegrityError) throw err;
           const detail = err instanceof Error ? err.message : String(err);
           throw new Error(`资源下载失败（${completed + 1}/${total}），请确认网络可连接 Firebase Storage 后重试。（${detail}）`);
         }
@@ -1289,6 +1380,13 @@ const applyRemote = async (
   updates: { entities: RemoteEntity[]; reviewEvents: RemoteReviewEvent[] },
   options: CloudSyncOptions,
   expectedEpoch?: number,
+  /**
+   * Only passed for full-dataset pulls (`firstEmptyDevice`). A destructive replacement must commit
+   * the ledger and cursor that describe the dataset it just wrote inside the same transaction;
+   * the incremental callers keep the separate tolerant write, because their ledger only records
+   * what actually arrived rather than describing a wholesale replacement.
+   */
+  commitCloudState?: () => Promise<void>,
 ) => {
   const mergedEntities = await hydratePayloadDocuments(
     uid,
@@ -1302,9 +1400,9 @@ const applyRemote = async (
   progress(options, "applying", "正在一次性应用云端更改。");
   const snapshot = materializeCloudSyncSnapshot(mergedEntities, mergedEvents, assetBlobs);
   if (expectedEpoch === undefined) {
-    await storage.restoreCloudSyncSnapshot(snapshot);
+    await storage.restoreCloudSyncSnapshot(snapshot, commitCloudState);
   } else {
-    await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, expectedEpoch);
+    await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, expectedEpoch, commitCloudState);
   }
 };
 
@@ -1613,7 +1711,12 @@ const uploadLargePayloadDocuments = async <T extends CloudSyncEntity>(
   return prepared.map((item) => item.entity);
 };
 
-const persistLedgers = async (
+/**
+ * Body of `persistLedgers`, usable inside an already open transaction so a destructive restore can
+ * commit its rows together with the data they describe. `persistLedgers` keeps opening its own
+ * transaction for the non-destructive callers (publish, reconciliation, partial commits).
+ */
+const persistLedgersInTransaction = async (
   state: CloudSyncStateRecord,
   entities: RemoteEntity[],
   events: RemoteReviewEvent[],
@@ -1642,33 +1745,47 @@ const persistLedgers = async (
       cloudRevision: event.revision,
     })),
   ];
+  if (rows.length) await db.cloudSyncLedger.bulkPut(rows);
+  const nextPulledRevision = pulledThroughRevision ?? completeThroughRevision;
+  await db.cloudSyncState.put({
+    ...state,
+    lastPulledRevision: nextPulledRevision === undefined ? state.lastPulledRevision : Math.max(state.lastPulledRevision, nextPulledRevision),
+    lastReviewEventRevision: nextPulledRevision === undefined ? state.lastReviewEventRevision : Math.max(state.lastReviewEventRevision, nextPulledRevision),
+    remoteDatasetCompleteThroughRevision: completeThroughRevision ?? state.remoteDatasetCompleteThroughRevision,
+    lastSyncedAt: new Date().toISOString(),
+  });
+};
+
+const persistLedgers = async (
+  state: CloudSyncStateRecord,
+  entities: RemoteEntity[],
+  events: RemoteReviewEvent[],
+  completeThroughRevision?: number,
+  pulledThroughRevision?: number,
+) => {
   await db.transaction("rw", db.cloudSyncState, db.cloudSyncLedger, async () => {
-    if (rows.length) await db.cloudSyncLedger.bulkPut(rows);
-    const nextPulledRevision = pulledThroughRevision ?? completeThroughRevision;
-    await db.cloudSyncState.put({
-      ...state,
-      lastPulledRevision: nextPulledRevision === undefined ? state.lastPulledRevision : Math.max(state.lastPulledRevision, nextPulledRevision),
-      lastReviewEventRevision: nextPulledRevision === undefined ? state.lastReviewEventRevision : Math.max(state.lastReviewEventRevision, nextPulledRevision),
-      remoteDatasetCompleteThroughRevision: completeThroughRevision ?? state.remoteDatasetCompleteThroughRevision,
-      lastSyncedAt: new Date().toISOString(),
-    });
+    await persistLedgersInTransaction(state, entities, events, completeThroughRevision, pulledThroughRevision);
+  });
+};
+
+const resetLedgersInTransaction = async (state: CloudSyncStateRecord) => {
+  await db.cloudSyncLedger.clear();
+  await db.cloudSyncState.put({
+    ...state,
+    lastPulledRevision: 0,
+    lastReviewEventRevision: 0,
+    remoteDatasetCompleteThroughRevision: undefined,
+    lastSyncedAt: undefined,
   });
 };
 
 const resetLedgers = async (state: CloudSyncStateRecord) => {
   await db.transaction("rw", db.cloudSyncState, db.cloudSyncLedger, async () => {
-    await db.cloudSyncLedger.clear();
-    await db.cloudSyncState.put({
-      ...state,
-      lastPulledRevision: 0,
-      lastReviewEventRevision: 0,
-      remoteDatasetCompleteThroughRevision: undefined,
-      lastSyncedAt: undefined,
-    });
+    await resetLedgersInTransaction(state);
   });
 };
 
-const resetAndPersistLedgers = async (state: CloudSyncStateRecord, entities: RemoteEntity[], events: RemoteReviewEvent[], revision: number) => {
+const resetAndPersistLedgersInTransaction = async (state: CloudSyncStateRecord, entities: RemoteEntity[], events: RemoteReviewEvent[], revision: number) => {
   const rows: CloudSyncLedgerRecord[] = [
     ...entities.map((entity) => ({
       id: entity.key,
@@ -1690,16 +1807,14 @@ const resetAndPersistLedgers = async (state: CloudSyncStateRecord, entities: Rem
       cloudRevision: event.revision,
     })),
   ];
-  await db.transaction("rw", db.cloudSyncState, db.cloudSyncLedger, async () => {
-    await db.cloudSyncLedger.clear();
-    if (rows.length) await db.cloudSyncLedger.bulkPut(rows);
-    await db.cloudSyncState.put({
-      ...state,
-      lastPulledRevision: revision,
-      lastReviewEventRevision: revision,
-      remoteDatasetCompleteThroughRevision: revision,
-      lastSyncedAt: new Date().toISOString(),
-    });
+  await db.cloudSyncLedger.clear();
+  if (rows.length) await db.cloudSyncLedger.bulkPut(rows);
+  await db.cloudSyncState.put({
+    ...state,
+    lastPulledRevision: revision,
+    lastReviewEventRevision: revision,
+    remoteDatasetCompleteThroughRevision: revision,
+    lastSyncedAt: new Date().toISOString(),
   });
 };
 
@@ -1806,6 +1921,19 @@ const publish = async (
   }
 };
 
+/**
+ * Create one recovery point.
+ *
+ * Order matters and is part of the recovery contract: the child documents are written first and the
+ * parent document — the only thing `listCloudRecoverySnapshots` can see — is created last, as a
+ * commit marker carrying `complete`, the exact item count and the revision. A client that dies
+ * half-way therefore leaves orphan child documents that no version of this app can list or
+ * restore, instead of a visible snapshot whose contents cannot be proven whole. Orphan documents
+ * are intentionally never garbage collected automatically.
+ *
+ * If the commit marker's write result is unknown, the marker is re-read before it is reported as
+ * created; a snapshot without a verified marker is never advertised as recoverable.
+ */
 const makeRemoteSnapshot = async (
   uid: string,
   label: string,
@@ -1818,18 +1946,34 @@ const makeRemoteSnapshot = async (
   const id = `${Date.now()}-${newId()}`;
   progress(options, "snapshot", "正在创建恢复快照。");
   const snapshotEntities = await uploadLargePayloadDocuments(uid, entities, options);
-  await beforeBatch?.();
-  await withTimeout(setDoc(snapshotRef(uid, id), {
-    createdAt: new Date().toISOString(),
-    label,
-    entityCount: snapshotEntities.length + events.length,
-    revision,
-  }), FIRESTORE_BATCH_TIMEOUT_MS, "写入云端恢复快照超时，请确认网络可连接后重试。");
-  progress(options, "snapshot", `正在写入快照数据（共 ${snapshotEntities.length + events.length} 项）。`);
+  const expectedCount = snapshotEntities.length + events.length;
+  progress(options, "snapshot", `正在写入快照数据（共 ${expectedCount} 项）。`);
   await writeInBatches([
     ...snapshotEntities.map((entity) => (batch: WriteBatch) => batch.set(doc(snapshotEntitiesRef(uid, id), entity.key), snapshotEntityDocument(entity))),
-    ...events.map((event) => (batch: WriteBatch) => batch.set(doc(snapshotEntitiesRef(uid, id), `review-event:${event.id}`), { ...event, kind: "review-event" })),
+    ...events.map((event) => (batch: WriteBatch) => batch.set(doc(snapshotEntitiesRef(uid, id), `${REVIEW_EVENT_DOCUMENT_PREFIX}${event.id}`), { ...event, kind: "review-event" })),
   ], beforeBatch);
+  await beforeBatch?.();
+  const commitDocument = {
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    label,
+    entityCount: expectedCount,
+    revision,
+    complete: true,
+  };
+  try {
+    await withTimeout(setDoc(snapshotRef(uid, id), commitDocument), FIRESTORE_BATCH_TIMEOUT_MS, "写入云端恢复快照完成标记超时，请确认网络可连接后重试。");
+  } catch (error) {
+    const verified = await withTimeout(
+      getDoc(snapshotRef(uid, id)),
+      FIRESTORE_READ_TIMEOUT_MS,
+      "核对云端恢复快照完成标记超时，请确认网络可连接后重试。",
+    ).catch(() => undefined);
+    const committed = verified?.exists() ? (verified.data() as Record<string, unknown>) : undefined;
+    if (committed?.complete !== true || committed?.entityCount !== expectedCount) {
+      throw error;
+    }
+  }
   return id;
 };
 
@@ -2136,18 +2280,33 @@ const replaceCloudWithLocal = async (user: User, state: CloudSyncStateRecord, op
   }
 };
 
+/**
+ * Full replacement of the local database from the incremental cloud dataset.
+ *
+ * The ledger rows and the pull cursor describe exactly this dataset, so they are committed by the
+ * same transaction that writes the data (`restoreCloudSyncSnapshotIfUnchanged`). A crash in between
+ * can no longer leave the device holding the cloud dataset while still advertising the previous
+ * cursor, which is what made the next sync re-publish or re-download everything.
+ */
 const restoreRemote = async (uid: string, options: CloudSyncOptions, expectedEpoch?: number) => {
   const remote = await getRemoteState(uid);
   if (!remote.exists || remote.state.headRevision === 0) throw new Error("云端没有可恢复的增量同步数据。");
   progress(options, "downloading", "正在从云端读取全量数据。");
-  const all = await getAllRemote(uid, remote.state);
+  // Same rule as the firstEmptyDevice and cloud-wins branches: this is a destructive full
+  // replacement, so malformed or duplicated cloud documents must reject the restore before any
+  // hydration, download, local write, ledger reset or cursor move instead of being dropped.
+  const all = await getAllRemote(uid, remote.state, true);
+  assertStrictRemoteDataset({ entities: all.entities, reviewEvents: all.reviewEvents });
   all.entities = await hydratePayloadDocuments(uid, all.entities, options);
   const assetBlobs = new Map<string, Blob>();
   await downloadRemoteAssets(uid, all.entities, assetBlobs, options);
   progress(options, "applying", "正在恢复云端数据。");
   const snapshot = materializeCloudSyncSnapshot(all.entities, all.reviewEvents, assetBlobs);
-  if (expectedEpoch === undefined) await storage.restoreCloudSyncSnapshot(snapshot);
-  else await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, expectedEpoch);
+  const state = await localState(uid);
+  const revision = remote.state.headRevision;
+  const commitCloudState = () => resetAndPersistLedgersInTransaction(state, all.entities, all.reviewEvents, revision);
+  if (expectedEpoch === undefined) await storage.restoreCloudSyncSnapshot(snapshot, commitCloudState);
+  else await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, expectedEpoch, commitCloudState);
   return { state: remote.state, ...all };
 };
 
@@ -2568,9 +2727,13 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
       // A new device's generated settings/tags are bootstrap material, not
       // user edits. Pull the complete cloud snapshot before any diffing so
       // random local IDs can never create a first-sync conflict or upload.
-      const allRemote = await getAllRemote(user.uid, remote.state);
-      await applyRemote(user.uid, initialExport, allRemote, options, initialEpoch);
-      await persistLedgers(state, allRemote.entities, allRemote.reviewEvents, remote.state.headRevision);
+      // This branch is a destructive replacement of the local database, so it must not reuse a
+      // filtered result: the tolerant reader is only valid where the ledger records what arrived.
+      // Every rejection here happens before a local write, a ledger row or a cursor move.
+      const allRemote = await getAllRemote(user.uid, remote.state, true);
+      assertStrictRemoteDataset({ entities: allRemote.entities, reviewEvents: allRemote.reviewEvents });
+      await applyRemote(user.uid, initialExport, allRemote, options, initialEpoch, () =>
+        persistLedgersInTransaction(state, allRemote.entities, allRemote.reviewEvents, remote.state.headRevision));
       const storageSummary = await cloudStorageSummaryFor(allRemote.entities, remote.state.headRevision, initialExport.assetBlobs).catch(() => undefined);
       await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, false, storageSummary);
       await updateOperation(operationId, { status: "succeeded", phase: "releasing" });
@@ -2763,8 +2926,12 @@ export const resolveCloudSyncConflict = async (
         && state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision
         && remote.state.headRevision >= state.lastPulledRevision;
       const dataset = complete
-        ? await buildIncrementalRemoteDataset(user.uid, state, remote.state, localExport, ledger)
-        : await buildFullRemoteDataset(user.uid, state, remote.state);
+        ? await buildIncrementalRemoteDataset(user.uid, state, remote.state, localExport, ledger, true)
+        : await buildFullRemoteDataset(user.uid, state, remote.state, true);
+      // This branch is a destructive replacement of the local database, so it must not reuse a
+      // filtered result: the tolerant reader is only valid where the ledger records what arrived.
+      // Every rejection here happens before a local write, a ledger row or a cursor move.
+      assertStrictRemoteDataset({ entities: dataset.entities, reviewEvents: dataset.reviewEvents });
       const remoteChanges = dataset.changed;
       const fieldMerged = await mergeRemoteFieldChanges(localExport, await deriveLocalCloudChanges(localExport, ledger), remoteChanges, ledger);
       const remoteChangedKeys = new Set(remoteChanges.entities.map((entity) => entity.key));
@@ -2805,8 +2972,10 @@ export const resolveCloudSyncConflict = async (
         conflictKeys,
         new Date().toISOString(),
       );
-      await storage.restoreCloudSyncSnapshotIfUnchanged(cloudSnapshot, initialEpoch);
-      await persistLedgers(state, dataset.entities, dataset.reviewEvents, dataset.completeThroughRevision);
+      // The replacement and the ledger/cursor that describe it commit together: a crash cannot
+      // leave the device holding the cloud dataset while still advertising the old cursor.
+      await storage.restoreCloudSyncSnapshotIfUnchanged(cloudSnapshot, initialEpoch, () =>
+        persistLedgersInTransaction(state, dataset.entities, dataset.reviewEvents, dataset.completeThroughRevision));
       await lease.assert();
       const storageSummary = await cloudStorageSummaryFor(dataset.entities, remote.state.headRevision, localExport.assetBlobs).catch(() => undefined);
       await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, false, storageSummary);
@@ -2849,11 +3018,10 @@ export const resolveCloudSyncConflict = async (
         "下载云端旧版备份超时，请确认网络可连接 Firebase Storage 后重试。",
       );
       const snapshot = await zipToSnapshot(new File([archive], "study-journal-cloud-sync.zip", { type: "application/zip" }));
-      await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, initialEpoch);
+      await storage.restoreCloudSyncSnapshotIfUnchanged(snapshot, initialEpoch, () => resetLedgersInTransaction(state));
       return undefined;
     });
     if (restored) {
-      await resetAndPersistLedgers(state, restored.entities, restored.reviewEvents, restored.state.headRevision);
       await lease.assert();
       await releaseLock(user.uid, state.deviceId, lock.operationId, lock.revision, false);
       lockReleased = true;
@@ -2926,27 +3094,68 @@ export const listCloudRecoverySnapshots = async (uid: string): Promise<CloudReco
       label: typeof value.label === "string" ? value.label : "恢复快照",
       entityCount: typeof value.entityCount === "number" ? value.entityCount : 0,
       revision: typeof value.revision === "number" ? value.revision : 0,
+      // Incomplete and unprovable recovery points stay visible so the user can see why they cannot
+      // be used, but the UI must never offer a restore action for them.
+      status: classifyCloudRecoverySnapshot(value),
     };
   });
 };
 
-export const restoreCloudRecoverySnapshot = async (user: User, id: string, options: CloudSyncOptions = {}) => {
+export interface CloudRecoverySnapshotRestoreResult {
+  status: CloudRecoverySnapshotStatus;
+  entityCount: number;
+  reviewEventCount: number;
+  revision: number;
+}
+
+/**
+ * Full replacement of the local sync data from one recovery point.
+ *
+ * The whole snapshot is read and strictly validated *before* any local table, ledger row or cursor
+ * is touched, so a partial or corrupted snapshot cannot clear the local database. Failures before
+ * `restoreCloudSyncSnapshotIfUnchanged` leave the device byte-for-byte unchanged. The replacement
+ * and the ledger/cursor that describe it are then committed by a single transaction.
+ */
+export const restoreCloudRecoverySnapshot = async (
+  user: User,
+  id: string,
+  options: CloudSyncOptions = {},
+): Promise<CloudRecoverySnapshotRestoreResult> => {
   const initialEpoch = await storage.getCloudSyncMutationEpoch();
+  const parent = await withTimeout(
+    getDoc(snapshotRef(user.uid, id)),
+    FIRESTORE_READ_TIMEOUT_MS,
+    "读取恢复快照状态超时，请确认网络可连接后重试。",
+  );
+  if (!parent.exists()) throw new Error("恢复快照不存在或已被清理。");
   const items = await withTimeout(
     getDocs(snapshotEntitiesRef(user.uid, id)),
     FIRESTORE_READ_TIMEOUT_MS,
     "读取恢复快照超时，请确认网络可连接后重试。",
   );
-  if (items.empty) throw new Error("恢复快照不存在或已被清理。");
-  let entities = await parseAndNormalizeRemoteEntities(items.docs);
-  const reviewEvents = items.docs
-    .map((item) => item.id.startsWith("review-event:") ? parseRemoteReviewEvent(item.id.slice("review-event:".length), item.data()) : undefined)
-    .filter((item): item is RemoteReviewEvent => Boolean(item));
-  entities = await hydratePayloadDocuments(user.uid, entities, options);
+  const validated = assertStrictCloudSnapshot({
+    snapshotId: id,
+    parent: parent.data() as Record<string, unknown>,
+    documents: items.docs.map((item) => ({ id: item.id, data: () => item.data() })),
+  });
+  const entities = await hydratePayloadDocuments(user.uid, validated.entities, options);
+  const reviewEvents = validated.reviewEvents;
   const assetBlobs = new Map<string, Blob>();
   await downloadRemoteAssets(user.uid, entities, assetBlobs, options);
-  await storage.restoreCloudSyncSnapshotIfUnchanged(materializeCloudSyncSnapshot(entities, reviewEvents, assetBlobs), initialEpoch);
   const local = await localState(user.uid);
   const revision = Math.max(0, ...entities.map((entity) => entity.revision), ...reviewEvents.map((event) => event.revision));
-  await resetAndPersistLedgers(local, entities, reviewEvents, revision);
+  // The ledger and cursor describe the snapshot being written, so they commit in the same
+  // transaction. A crash in between would otherwise leave the device holding the recovery point
+  // while still advertising the previous cursor.
+  await storage.restoreCloudSyncSnapshotIfUnchanged(
+    materializeCloudSyncSnapshot(entities, reviewEvents, assetBlobs),
+    initialEpoch,
+    () => resetAndPersistLedgersInTransaction(local, entities, reviewEvents, revision),
+  );
+  return {
+    status: validated.status,
+    entityCount: validated.entities.length,
+    reviewEventCount: validated.reviewEvents.length,
+    revision,
+  };
 };

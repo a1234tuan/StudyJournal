@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../features/knowledgeLibrary/autoBackup", () => ({ authorizeKnowledgeBackup: vi.fn().mockResolvedValue(undefined) }));
 
+const platform = vi.hoisted(() => ({ desktop: false }));
+vi.mock("../lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/platform")>()),
+  isDesktopPlatform: () => platform.desktop,
+}));
+
 import type { AutoBackupSettings } from "../types";
 import { bindAutoBackupFolder, flushAutoBackupNow } from "../services/autoBackupService";
 import { AutoBackupPanel } from "./AutoBackupPanel";
@@ -26,6 +32,7 @@ const state = (
 
 describe("AutoBackupPanel", () => {
   beforeEach(() => {
+    platform.desktop = false;
     vi.clearAllMocks();
   });
 
@@ -99,5 +106,75 @@ describe("AutoBackupPanel", () => {
     expect(screen.getByText("20260621T010000000Z")).toBeInTheDocument();
     expect(screen.getByText(/打开 App 时同步一次/)).toBeInTheDocument();
     expect(screen.getByText(/编辑过程中需要立刻备份/)).toBeInTheDocument();
+  });
+
+  describe("verification status is not overstated", () => {
+    it("does not present a bound-but-never-written destination as having a backup", () => {
+      render(<AutoBackupPanel autoBackupState={state(undefined, { enabled: false })} onChanged={vi.fn()} />);
+
+      expect(screen.getByText("尚无成功备份")).toBeInTheDocument();
+      expect(screen.queryByText("已回读校验归档结构")).not.toBeInTheDocument();
+      expect(screen.queryByText("已核对写入字节数")).not.toBeInTheDocument();
+    });
+
+    it("states the archive-level verification for a repository write", () => {
+      render(
+        <AutoBackupPanel
+          autoBackupState={state(undefined, {
+            backupFormat: "folder-repository-v1",
+            lastBackupAt: "2026-06-21T01:00:00.000Z",
+            lastBackupVerifiedAt: "2026-06-21T01:00:05.000Z",
+            lastBackupVerification: "archive-verified",
+          })}
+          onChanged={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText(/已回读校验归档结构/)).toBeInTheDocument();
+    });
+
+    it("says 未验证 rather than implying a check that never happened", () => {
+      render(
+        <AutoBackupPanel
+          autoBackupState={state(undefined, {
+            lastBackupAt: "2026-06-21T01:00:00.000Z",
+            lastBackupSize: 1234,
+          })}
+          onChanged={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("未验证")).toBeInTheDocument();
+    });
+  });
+
+  describe("desktop binding keeps its first-flush promise accurate", () => {
+    it("reports the first incremental backup after binding", async () => {
+      platform.desktop = true;
+      vi.mocked(bindAutoBackupFolder).mockResolvedValueOnce(state(undefined, { enabled: true }));
+      vi.mocked(flushAutoBackupNow).mockResolvedValueOnce(state());
+
+      render(<AutoBackupPanel autoBackupState={state(undefined, { enabled: false })} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: /绑定备份文件夹/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/已绑定备份文件夹并完成首次增量仓库备份/)).toBeInTheDocument();
+      });
+      expect(flushAutoBackupNow).toHaveBeenCalledWith("desktop-bind");
+    });
+
+    it("reports a failed first flush instead of claiming the backup completed", async () => {
+      platform.desktop = true;
+      vi.mocked(bindAutoBackupFolder).mockResolvedValueOnce(state(undefined, { enabled: true }));
+      vi.mocked(flushAutoBackupNow).mockResolvedValueOnce(state("自动备份写入结果为空。"));
+
+      render(<AutoBackupPanel autoBackupState={state(undefined, { enabled: false })} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: /绑定备份文件夹/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/操作没有完成，请稍后重试。.*诊断编号/)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/已绑定备份文件夹并完成首次增量仓库备份/)).not.toBeInTheDocument();
+    });
   });
 });

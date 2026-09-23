@@ -165,6 +165,7 @@ const assertSnapshotIntegrity = (
   blocks: Block[],
   templates: ContentTemplate[],
   assets: Array<Pick<Asset, "id">>,
+  drafts: RecordDraft[] = [],
 ) => {
   const assetIds = new Set<string>();
   for (const asset of assets) {
@@ -191,6 +192,23 @@ const assertSnapshotIntegrity = (
     for (const ref of extractRecordRefsFromContent(template.contentHtml).assets) {
       if (!assetIds.has(ref.id)) {
         throw new Error(`备份数据不完整：模板“${template.title}”引用的资源 ${ref.id} 缺失。`);
+      }
+    }
+  }
+  /**
+   * Drafts are packed in the archive and their references are reconciled at export exactly like a
+   * record's, so an unreconciled draft reference means the archive is inconsistent. Only the asset
+   * references are checked: a draft's `formulas` mirror index is rebuilt on normalisation and is not
+   * part of what "the archive is complete" means.
+   */
+  for (const draft of drafts) {
+    const block = draft.draft;
+    if (!block || block.type !== "record") {
+      continue;
+    }
+    for (const ref of syncRecordRefsFromContent(block).assets) {
+      if (!assetIds.has(ref.id)) {
+        throw new Error(`备份数据不完整：草稿“${block.title}”引用的资源 ${ref.id} 缺失。`);
       }
     }
   }
@@ -2495,7 +2513,24 @@ export class DexieStorageAdapter implements StorageAdapter {
   private async restoreSnapshotData(
     snapshot: StorageSnapshot,
     expectedEpoch?: number,
-    options: { preservePodcasts?: boolean; preserveLocalSettings?: boolean; clearLocalAnnotationDrafts?: boolean; clearLocalVoiceRecallTransient?: boolean; restoreSessionId?: string } = {},
+    options: {
+      preservePodcasts?: boolean;
+      preserveLocalSettings?: boolean;
+      clearLocalAnnotationDrafts?: boolean;
+      clearLocalVoiceRecallTransient?: boolean;
+      restoreSessionId?: string;
+      /**
+       * Runs inside the same transaction that replaces the local data, after the data writes.
+       *
+       * Cloud recovery keeps two pieces of bookkeeping — the sync ledger and the pull cursor — that
+       * describe exactly the dataset being written here. Committing them in a separate transaction
+       * leaves a window where the device holds the restored data but still advertises the old
+       * cursor, which makes the next sync re-publish or re-download the whole dataset. A callback
+       * (rather than a separate table write by the caller) keeps both halves in one Dexie
+       * transaction, so a failure in either rolls back both.
+       */
+      commitCloudState?: () => Promise<void>;
+    } = {},
   ): Promise<void> {
     validateBackupPayloadVersion(snapshot.payload);
     const knowledge = Object.hasOwn(snapshot.payload, "knowledge") ? validateKnowledgeEnvelope(snapshot.payload.knowledge) : undefined;
@@ -2515,7 +2550,7 @@ export class DexieStorageAdapter implements StorageAdapter {
      * Absent therefore means "leave what is here alone".
      */
     const hasDailyPlansField = Array.isArray(snapshot.payload.dailyPlans);
-    assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets);
+    assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets, restoredDrafts);
     const restoredRecords = restoredBlocks.filter((block): block is RecordBlock => block.type === "record");
     validateReviewCoachFormalSnapshot(restoredReviewCoach, new Set(restoredRecords.map((record) => record.id)));
     await db.transaction(
@@ -2536,6 +2571,8 @@ export class DexieStorageAdapter implements StorageAdapter {
         db.assets,
         db.knowledgePodcasts,
         db.cloudSyncMutation,
+        db.cloudSyncState,
+        db.cloudSyncLedger,
         db.reviewAnnotationDrafts,
         db.voiceRecallSessions,
         db.voiceRecallTurns,
@@ -2608,6 +2645,8 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.cloudSyncMutation.put({ id: "local", epoch: (currentEpoch?.epoch ?? 0) + 1 }),
           ...(hasDailyPlansField ? [db.dailyPlans.bulkPut(snapshot.payload.dailyPlans!)] : []),
         ]);
+        // Last, so any failure here rolls the data replacement back as well.
+        if (options.commitCloudState) await options.commitCloudState();
       },
     );
     await this.migrateRecordReviewsToMixedSystem();
@@ -2619,12 +2658,12 @@ export class DexieStorageAdapter implements StorageAdapter {
     await this.restoreSnapshotData(snapshot, undefined, { clearLocalAnnotationDrafts: true, clearLocalVoiceRecallTransient: true });
   }
 
-  async restoreCloudSyncSnapshot(snapshot: StorageSnapshot): Promise<void> {
-    await this.restoreSnapshotData(snapshot, undefined, { preservePodcasts: true, preserveLocalSettings: true });
+  async restoreCloudSyncSnapshot(snapshot: StorageSnapshot, commitCloudState?: () => Promise<void>): Promise<void> {
+    await this.restoreSnapshotData(snapshot, undefined, { preservePodcasts: true, preserveLocalSettings: true, ...(commitCloudState ? { commitCloudState } : {}) });
   }
 
-  async restoreCloudSyncSnapshotIfUnchanged(snapshot: StorageSnapshot, expectedEpoch: number): Promise<void> {
-    await this.restoreSnapshotData(snapshot, expectedEpoch, { preservePodcasts: true, preserveLocalSettings: true });
+  async restoreCloudSyncSnapshotIfUnchanged(snapshot: StorageSnapshot, expectedEpoch: number, commitCloudState?: () => Promise<void>): Promise<void> {
+    await this.restoreSnapshotData(snapshot, expectedEpoch, { preservePodcasts: true, preserveLocalSettings: true, ...(commitCloudState ? { commitCloudState } : {}) });
   }
 
   async restoreStreamableSnapshot(
@@ -2640,7 +2679,7 @@ export class DexieStorageAdapter implements StorageAdapter {
     const restoredBlocks = normalizeSnapshotRecords(migrateBlocksToRecords(snapshot.payload.blocks));
     const restoredDrafts = normalizeSnapshotRecordDrafts(snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []);
     const restoredTemplates = normalizeSnapshotTemplates(snapshot.payload.templates);
-    assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets);
+    assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets, restoredDrafts);
     const restoredRecords = restoredBlocks.filter((block): block is RecordBlock => block.type === "record");
     const restoredReviewCoach = snapshot.payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT);
     validateReviewCoachFormalSnapshot(restoredReviewCoach, new Set(restoredRecords.map((record) => record.id)));

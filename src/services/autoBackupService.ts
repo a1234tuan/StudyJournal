@@ -29,6 +29,7 @@ const withAutoBackupDefaults = (state: AutoBackupSettings): AutoBackupSettings =
   lastBackupFileName: state.lastBackupFileName,
   lastBackupUri: state.lastBackupUri,
   lastBackupVerifiedAt: state.lastBackupVerifiedAt,
+  lastBackupVerification: state.lastBackupVerification,
   lastBackupFileModifiedAt: state.lastBackupFileModifiedAt,
   lastBackupWarning: state.lastBackupWarning,
   lastError: state.lastError,
@@ -141,8 +142,10 @@ export const flushAutoBackupNow = async (
       assertKnowledgeOwner(taskOwner, taskGeneration);
       const result = await adapter.writeLatest(store, scope, captured?.snapshot);
       ensureValidWriteResult(result);
-      if (scope) await completeKnowledgeBackup(scope);
+      // The owner must still match before the receipt is committed: completeKnowledgeBackup
+      // acknowledges the token's own owner row, so a later assertion could not undo it.
       assertKnowledgeOwner(taskOwner, taskGeneration);
+      if (scope) await completeKnowledgeBackup(scope);
       const next: AutoBackupSettings = {
         ...currentAutoBackup(state),
         enabled: true,
@@ -156,7 +159,12 @@ export const flushAutoBackupNow = async (
         lastBackupSnapshotId: result.snapshotId,
         lastBackupFileName: result.displayName ?? "study-journal-latest.zip",
         lastBackupUri: result.uri,
-        lastBackupVerifiedAt: timestampToISO(result.verifiedAt) ?? nowISO(),
+        /**
+         * Only what the adapter actually proved. An adapter that reports no `verifiedAt` verified
+         * nothing, so fabricating "now" here would turn "unknown" into a false guarantee.
+         */
+        lastBackupVerifiedAt: timestampToISO(result.verifiedAt),
+        lastBackupVerification: result.verification,
         lastBackupFileModifiedAt: timestampToISO(result.lastModified),
         lastBackupWarning: result.warning,
         lastError: undefined,

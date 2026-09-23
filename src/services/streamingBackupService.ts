@@ -1,6 +1,9 @@
 import { containerForPayload, KNOWLEDGE_PAYLOAD_ENTRY, validateBackupContainer, validateBackupPayloadVersion } from "../features/knowledgeLibrary/backupContainer";
+import { sha256 } from "@noble/hashes/sha256";
+import { bytesToHex } from "@noble/hashes/utils";
 import type {
   Asset,
+  BackupAssetChecksum,
   BackupAssetMeta,
   ExportOptions,
   ImportOptions,
@@ -8,7 +11,14 @@ import type {
   StorageAdapter,
   StreamableBackupSnapshot,
 } from "../types";
-import { base64ToBlob, summarizeSnapshot } from "./backup";
+import {
+  archiveAssetDeclarations,
+  assertArchiveAssetBytes,
+  BackupArchiveIntegrityError,
+  base64ToBlob,
+  requireArchiveEntry,
+  summarizeSnapshot,
+} from "./backup";
 import { blobToBase64Chunks } from "./nativeFileWriter";
 import { canUseNativeZipArchive, NativeZipArchive, type NativeZipExportDestination } from "./nativeZipArchive";
 import { migrateBlocksToRecords } from "../lib/recordMigration";
@@ -22,6 +32,15 @@ const ENTRY_CHUNK_BYTES = 768 * 1024;
 const textToBase64 = (text: string): string => btoa(unescape(encodeURIComponent(text)));
 
 const base64ToText = (base64: string): string => decodeURIComponent(escape(atob(base64)));
+
+const base64ToBytes = (base64: string): Uint8Array => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
 
 const fileNameForSnapshot = (snapshot: StreamableBackupSnapshot): string =>
   `study-journal-${snapshot.payload.manifest.exportedAt.slice(0, 10)}.zip`;
@@ -59,34 +78,15 @@ export const writeNativeStreamableBackupSnapshot = async (
   });
 
   try {
-    const payload = {
-      ...portableSnapshot.payload,
-      blocks: portableSnapshot.payload.blocks.map((block) =>
-        block.type === "record" ? { ...block, mistakeRefs: [] } : block,
-      ),
-      mistakes: [],
-      reviews: [],
-      recordDrafts: portableSnapshot.payload.recordDrafts ?? portableSnapshot.recordDrafts ?? [],
-    };
-    validateBackupPayloadVersion(payload);
-    const archivePayload = { ...payload, assets: portableSnapshot.assets };
-    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
-    await writeTextEntry(
-      session.sessionId,
-      payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
-      JSON.stringify({ ...payload, assets: portableSnapshot.assets }, null, 2),
-    );
-
+    validateBackupPayloadVersion(portableSnapshot.payload);
     const markdownAssets = portableSnapshot.assets.map((meta) => metaToAsset(meta, new Blob()));
-    for (const entry of payload.entries) {
-      const blocks = payload.blocks.filter((block) => block.date === entry.date);
-      await writeTextEntry(
-        session.sessionId,
-        `entries/${entry.date}.md`,
-        entryToMarkdown(entry, blocks, markdownAssets),
-      );
-    }
 
+    /**
+     * Assets are written before the manifest for two reasons: the manifest must not promise a
+     * resource the archive does not contain, and hashing each chunk while it is written avoids a
+     * second full read of a large attachment just to declare its bytes.
+     */
+    const assetHashes = new Map<string, string>();
     for (const [index, meta] of portableSnapshot.assets.entries()) {
       options.onProgress?.({
         stage: "asset",
@@ -95,14 +95,51 @@ export const writeNativeStreamableBackupSnapshot = async (
         total: portableSnapshot.assets.length,
       });
       const asset = await getAsset(meta.id);
-      if (!asset) {
-        continue;
+      if (!asset || !(asset.data instanceof Blob)) {
+        throw new BackupArchiveIntegrityError(
+          `完整备份未能生成：资源“${meta.fileName}”（ID ${meta.id}）在本机缺失或无法读取。`
+          + "请先确认该资源可正常打开后重试；本次没有生成任何备份文件。",
+        );
       }
+      const hasher = sha256.create();
       await NativeZipArchive.beginEntry({ sessionId: session.sessionId, path: assetPath(meta) });
       for await (const chunk of blobToBase64Chunks(asset.data, ENTRY_CHUNK_BYTES)) {
+        hasher.update(base64ToBytes(chunk.data));
         await NativeZipArchive.appendEntry({ sessionId: session.sessionId, data: chunk.data });
       }
       await NativeZipArchive.finishEntry({ sessionId: session.sessionId });
+      assetHashes.set(meta.id, bytesToHex(hasher.digest()));
+    }
+
+    const payload = {
+      ...portableSnapshot.payload,
+      blocks: portableSnapshot.payload.blocks.map((block) =>
+        block.type === "record" ? { ...block, mistakeRefs: [] } : block,
+      ),
+      mistakes: [],
+      reviews: [],
+      recordDrafts: portableSnapshot.payload.recordDrafts ?? portableSnapshot.recordDrafts ?? [],
+      assetChecksums: portableSnapshot.assets.map((meta): BackupAssetChecksum => ({
+        id: meta.id,
+        hash: assetHashes.get(meta.id)!,
+        size: meta.size,
+      })),
+    };
+    const archivePayload = { ...payload, assets: portableSnapshot.assets };
+    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
+    await writeTextEntry(
+      session.sessionId,
+      payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
+      JSON.stringify({ ...payload, assets: portableSnapshot.assets }, null, 2),
+    );
+
+    for (const entry of payload.entries) {
+      const blocks = payload.blocks.filter((block) => block.date === entry.date);
+      await writeTextEntry(
+        session.sessionId,
+        `entries/${entry.date}.md`,
+        entryToMarkdown(entry, blocks, markdownAssets),
+      );
     }
 
     options.onProgress?.({ stage: "writing", message: "正在完成 zip 写入。" });
@@ -191,12 +228,16 @@ export const importNativeStreamableBackupAndRestore = async (
     validateBackupPayloadVersion(data);
     if (versioned) validateBackupContainer(await readJsonEntry(session.sessionId, "manifest.json"), data);
     else if (data.manifest.version === 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
+    const declarations = archiveAssetDeclarations(data.assetChecksums);
     const blocks = migrateBlocksToRecords(data.blocks ?? []);
     const recordBlocks = blocks.filter((block): block is RecordBlock => block.type === "record");
     const snapshot: StreamableBackupSnapshot = {
       payload: {
         manifest: data.manifest,
         ...(data.knowledge !== undefined ? { knowledge: data.knowledge } : {}),
+        // Carried through so the importer can state which assets were verified and which were
+        // taken on trust; never synthesised for a legacy archive.
+        ...(data.assetChecksums !== undefined ? { assetChecksums: data.assetChecksums } : {}),
         templates: data.templates ?? [],
         podcasts: data.podcasts,
         reviewCoach: data.reviewCoach,
@@ -220,6 +261,8 @@ export const importNativeStreamableBackupAndRestore = async (
       recordDrafts: data.recordDrafts ?? [],
     };
     const summary = summarizeSnapshot({ ...snapshot, assets: snapshot.assets.map((meta) => metaToAsset(meta, new Blob())) });
+    // `restoreStreamableSnapshot` only stages until every asset has been read and verified, so an
+    // integrity failure here still lands before the destructive transaction.
     await store.restoreStreamableSnapshot(snapshot, async (meta, index, total) => {
       options.onProgress?.({
         stage: "assets",
@@ -227,11 +270,10 @@ export const importNativeStreamableBackupAndRestore = async (
         current: index + 1,
         total,
       });
-      const path = session.entries.find((entry) => entry.startsWith(assetPath(meta)));
-      if (!path) {
-        return undefined;
-      }
-      return metaToAsset(meta, await readAssetEntry(session.sessionId, path, meta.mimeType));
+      const entry = requireArchiveEntry(meta, session.entries.find((item) => item.startsWith(assetPath(meta))));
+      const blob = await readAssetEntry(session.sessionId, entry, meta.mimeType);
+      await assertArchiveAssetBytes(meta, declarations.get(meta.id), blob);
+      return metaToAsset(meta, blob);
     }, options);
     await NativeZipArchive.finishImport({ sessionId: session.sessionId });
     options.onProgress?.({ stage: "done", message: "备份恢复完成。" });

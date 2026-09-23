@@ -1,9 +1,12 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import type { BackupPayload, ContentTemplate, DailyPlan, RecordBlock, StorageSnapshot } from "../types";
+import type { Asset, BackupPayload, ContentTemplate, DailyPlan, RecordBlock, StorageSnapshot } from "../types";
+import { createKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
+import { containerForPayload } from "../features/knowledgeLibrary/backupContainer";
 import { completeCoachTestSnapshot } from "../features/reviewCoach/reviewCoachTestFixtures";
-import { snapshotToZip, zipToSnapshot } from "./backup";
+import { snapshotToZip, summarizeSnapshot, zipToSnapshot } from "./backup";
+import { hashBlob } from "./cloudSyncModel";
 
 const stamp = "2026-06-21T00:00:00.000Z";
 
@@ -214,5 +217,117 @@ describe("backup import", () => {
     // every plan on import.
     expect(restored.payload.dailyPlans).toBeUndefined();
     expect("dailyPlans" in restored.payload).toBe(false);
+  });
+});
+
+const imageAsset = (id: string, bytes: string, overrides: Partial<Asset> = {}): Asset => ({
+  id,
+  createdAt: stamp,
+  updatedAt: stamp,
+  fileName: `${id}.png`,
+  title: id,
+  mimeType: "image/png",
+  size: bytes.length,
+  kind: "image",
+  data: new File([bytes], `${id}.png`, { type: "image/png" }),
+  ...overrides,
+});
+
+const v7Payload = (): BackupPayload => ({
+  ...payload([record("物理")]),
+  manifest: {
+    ...payload([]).manifest,
+    version: 7,
+    counts: { ...payload([]).manifest.counts, blocks: 1 },
+  },
+  knowledge: createKnowledgeEnvelope([]),
+});
+
+const assetMeta = (id: string, bytes: string): Omit<Asset, "data"> => {
+  const { data: _data, ...meta } = imageAsset(id, bytes);
+  return meta;
+};
+
+/** Build a v7 archive by hand so a specific defect can be introduced. */
+const handcraftV7Archive = async (
+  meta: Omit<Asset, "data">,
+  options: { bytes?: string; entryBytes?: string; omitEntry?: boolean; breakContainer?: boolean } = {},
+) => {
+  const bytes = options.bytes ?? "original-image-bytes";
+  const declared = JSON.parse(JSON.stringify({
+    ...v7Payload(),
+    assets: [meta],
+    assetChecksums: [{ id: meta.id, hash: await hashBlob(new Blob([bytes], { type: meta.mimeType })), size: meta.size }],
+  })) as Record<string, unknown>;
+  const zip = new JSZip();
+  // `containerForPayload` hashes `{...payload, assets}` exactly as the writer does.
+  zip.file("manifest.json", JSON.stringify(containerForPayload(declared as never), null, 2));
+  // The checksum is computed from the honest payload; the written payload can then be tampered with
+  // on its own, so the mismatch is the defect the reader has to catch.
+  const written = options.breakContainer
+    ? { ...(JSON.parse(JSON.stringify(declared)) as Record<string, unknown>), blocks: [] }
+    : declared;
+  zip.file("snapshot-v7.json", JSON.stringify(written, null, 2));
+  if (!options.omitEntry) {
+    zip.file(`assets/${meta.id}-${meta.fileName}`, new File([options.entryBytes ?? bytes], meta.fileName, { type: meta.mimeType }));
+  }
+  return new File([await zip.generateAsync({ type: "blob" })], "backup.zip", { type: "application/zip" });
+};
+
+describe("backup archive asset integrity", () => {
+  it("ZIP-01: a new archive declares every packed asset's bytes and imports with nothing unverified", async () => {
+    const asset = imageAsset("a1", "original-image-bytes");
+    const zip = await snapshotToZip({ payload: v7Payload(), assets: [asset] });
+
+    const declared = JSON.parse(await (await JSZip.loadAsync(zip)).file("snapshot-v7.json")!.async("string"));
+    expect(declared.assetChecksums).toHaveLength(1);
+    expect(declared.assetChecksums[0]).toMatchObject({ id: "a1", size: "original-image-bytes".length });
+
+    const restored = await zipToSnapshot(new File([zip], "backup.zip", { type: "application/zip" }));
+    expect(restored.assets).toHaveLength(1);
+    expect(summarizeSnapshot(restored).unverifiedAssets).toBe(0);
+  });
+
+  it("ZIP-02: a declared asset with no archive entry is rejected with its identity", async () => {
+    const meta = assetMeta("missing-1", "original-image-bytes");
+    const file = await handcraftV7Archive(meta, { omitEntry: true });
+
+    await expect(zipToSnapshot(file)).rejects.toThrow(/资源“missing-1\.png”（ID missing-1）.*缺少对应文件/);
+  });
+
+  it("ZIP-03: bytes that no longer match the declaration are rejected even at the same size", async () => {
+    const meta = assetMeta("a2", "original-image-bytes");
+    const file = await handcraftV7Archive(meta, { entryBytes: "tampered-image-bytes" });
+
+    await expect(zipToSnapshot(file)).rejects.toThrow(/字节内容与声明不一致/);
+  });
+
+  it("ZIP-04: a legacy archive without declarations still imports and reports what could not be verified", async () => {
+    const meta = assetMeta("legacy-1", "legacy-image-bytes");
+    const legacyZip = new JSZip();
+    const legacyPayload = { ...payload([record("物理")]), assets: [meta] };
+    legacyZip.file("data.json", JSON.stringify(legacyPayload, null, 2));
+    legacyZip.file(`assets/${meta.id}-${meta.fileName}`, new File(["legacy-image-bytes"], meta.fileName, { type: meta.mimeType }));
+
+    const restored = await zipToSnapshot(new File([await legacyZip.generateAsync({ type: "blob" })], "legacy.zip", { type: "application/zip" }));
+
+    expect(restored.payload.assetChecksums).toBeUndefined();
+    expect(restored.assets).toHaveLength(1);
+    expect(summarizeSnapshot(restored).unverifiedAssets).toBe(1);
+  });
+
+  it("ZIP-05: generation fails instead of writing an archive that promises a resource it cannot pack", async () => {
+    const asset = imageAsset("a3", "original-image-bytes");
+    await expect(snapshotToZip({
+      payload: v7Payload(),
+      assets: [{ ...asset, data: undefined as unknown as Blob }],
+    })).rejects.toThrow(/资源“a3\.png”（ID a3）在本机没有可写入的内容/);
+  });
+
+  it("ZIP-06: payload bytes that disagree with the container checksum are rejected", async () => {
+    const meta = assetMeta("a4", "original-image-bytes");
+    const file = await handcraftV7Archive(meta, { breakContainer: true });
+
+    await expect(zipToSnapshot(file)).rejects.toThrow(/校验和不一致/);
   });
 });

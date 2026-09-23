@@ -33,6 +33,26 @@ export const synchronizeBoundKnowledge = async (): Promise<string> => {
     return (pending ? "知识库：仍有 " + pending + " 项待同步或重新确认。" : "知识库：同步完成。") + offlineNotice;
   } catch (error) { return "知识库：同步未完成，本机内容保留。" + knowledgeUiError(error, "云同步").message; }
 };
+/**
+ * Whether the current owner still has knowledge libraries that the last verified backup did not cover.
+ *
+ * Exported (and kept free of `liveQuery`) so the decision can be asserted directly by the concurrency
+ * regressions instead of being re-implemented in the test, which is what let a "library created while
+ * the archive was being written" case go unnoticed.
+ */
+export const isKnowledgeBackupPending = async (owner: KnowledgeOwner = currentKnowledgeOwner()): Promise<boolean> => {
+  const scope = await db.knowledgeBackupScopes.get(owner);
+  if (!scope?.consented || !scope.autoBackupState?.enabled) return false;
+  const libraries = await db.knowledgeLibraries.where("ownerScope").equals(owner).toArray();
+  // A captured generation for a library that no longer exists means membership changed since the
+  // last complete backup, so the archive no longer describes the current set.
+  if (Object.keys(scope.capturedGenerations).some(id => !libraries.some(library => library.id === id))) return true;
+  for (const library of libraries) {
+    const state = await db.knowledgeSyncState.get(library.id);
+    if (state && state.dirtyGeneration > (scope.capturedGenerations[library.id] ?? 0)) return true;
+  }
+  return false;
+};
 export const startKnowledgeRuntime = (): (() => void) => {
   const unsubscribe = onAuthStateChanged(firebaseAuth, user => {
     const previous = currentKnowledgeOwner();
@@ -41,16 +61,6 @@ export const startKnowledgeRuntime = (): (() => void) => {
     changeKnowledgeOwner(next);
     void knowledgeRepository.invalidateOwner(previous).then(() => { window.dispatchEvent(new Event("knowledge-owner-changed")); }).catch(() => { window.dispatchEvent(new Event("knowledge-owner-changed")); });
   });
-  const dirty = liveQuery(async () => {
-    const scope = await db.knowledgeBackupScopes.get(currentKnowledgeOwner());
-    if (!scope?.consented || !scope.autoBackupState?.enabled) return false;
-    const libraries = await db.knowledgeLibraries.where("ownerScope").equals(currentKnowledgeOwner()).toArray();
-    if (Object.keys(scope.capturedGenerations).some(id => !libraries.some(library => library.id === id))) return true;
-    for (const library of libraries) {
-      const state = await db.knowledgeSyncState.get(library.id);
-      if (state && state.dirtyGeneration > (scope.capturedGenerations[library.id] ?? 0)) return true;
-    }
-    return false;
-  }).subscribe({ next: pending => { if (pending) void markAutoBackupDirty("knowledge"); }, error: () => undefined });
+  const dirty = liveQuery(async () => isKnowledgeBackupPending()).subscribe({ next: pending => { if (pending) void markAutoBackupDirty("knowledge"); }, error: () => undefined });
   return () => { unsubscribe(); dirty.unsubscribe(); };
 };

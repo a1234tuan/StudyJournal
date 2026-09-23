@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sha256 } from "@noble/hashes/sha256";
+import { bytesToHex } from "@noble/hashes/utils";
 
 import type { StreamableBackupSnapshot } from "../types";
+import { BackupArchiveIntegrityError } from "./backup";
 import {
   appendNativeAutoBackupZipEntry,
   beginNativeAutoBackupZipEntry,
@@ -92,6 +95,42 @@ const snapshot: StreamableBackupSnapshot = {
   recordDrafts: [],
 };
 
+const assetMeta = {
+  id: "asset-1",
+  createdAt: stamp,
+  updatedAt: stamp,
+  fileName: "asset-1.png",
+  mimeType: "image/png",
+  size: 3,
+  kind: "image" as const,
+};
+
+const snapshotWithAsset = (): StreamableBackupSnapshot => ({
+  ...snapshot,
+  payload: {
+    ...snapshot.payload,
+    manifest: {
+      ...snapshot.payload.manifest,
+      counts: { ...snapshot.payload.manifest.counts, assets: 1 },
+    },
+  },
+  assets: [assetMeta],
+});
+
+const assetBlob = () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+
+const captureWrittenEntries = () => {
+  const written = new Map<string, string>();
+  let currentPath = "";
+  vi.mocked(beginNativeAutoBackupZipEntry).mockImplementation(async (_sessionId, path) => {
+    currentPath = path;
+  });
+  vi.mocked(appendNativeAutoBackupZipEntry).mockImplementation(async (_sessionId, data) => {
+    written.set(currentPath, `${written.get(currentPath) ?? ""}${decodeTextEntry(data)}`);
+  });
+  return written;
+};
+
 describe("native auto backup stream", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -125,5 +164,36 @@ describe("native auto backup stream", () => {
     await expect(writeNativeAutoBackupStreamSnapshot(snapshot, vi.fn())).rejects.toThrow("自动备份写入结果为空");
 
     expect(cancelNativeAutoBackupZip).toHaveBeenCalledWith("auto-1");
+  });
+
+  it("AB-01 refuses to write the archive when a referenced asset is missing locally", async () => {
+    const written = captureWrittenEntries();
+
+    await expect(writeNativeAutoBackupStreamSnapshot(snapshotWithAsset(), async () => undefined))
+      .rejects.toBeInstanceOf(BackupArchiveIntegrityError);
+
+    // Assets are written before the manifest, so a failed pack can never leave a manifest that
+    // advertises a resource the archive does not contain.
+    expect(written.has("manifest.json")).toBe(false);
+    expect(written.has("data.json")).toBe(false);
+    expect(cancelNativeAutoBackupZip).toHaveBeenCalledWith("auto-1");
+    expect(finishNativeAutoBackupZip).not.toHaveBeenCalled();
+  });
+
+  it("AB-02 declares the real bytes of every packed asset instead of trusting the metadata", async () => {
+    const written = captureWrittenEntries();
+
+    await writeNativeAutoBackupStreamSnapshot(
+      snapshotWithAsset(),
+      async (id) => ({ ...assetMeta, id, data: assetBlob() }),
+    );
+
+    expect(written.has("assets/asset-1-asset-1.png")).toBe(true);
+    const declared = JSON.parse(written.get("data.json")!) as {
+      assetChecksums: Array<{ id: string; hash: string; size: number }>;
+    };
+    expect(declared.assetChecksums).toEqual([
+      { id: "asset-1", hash: bytesToHex(sha256(new Uint8Array([1, 2, 3]))), size: 3 },
+    ]);
   });
 });

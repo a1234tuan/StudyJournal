@@ -1,6 +1,7 @@
 import { containerForPayload, validateBackupContainer, validateBackupPayloadVersion, type KnowledgeContainer } from "../features/knowledgeLibrary/backupContainer";
 import type {
   Asset,
+  BackupAssetChecksum,
   BackupAssetMeta,
   ExportOptions,
   ImportOptions,
@@ -13,7 +14,14 @@ import { EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT } from "../features/reviewCoach/doma
 import { migrateBlocksToRecords } from "../lib/recordMigration";
 import { ensureSettingsSubjects } from "../lib/subjects";
 import { withRestoreLock } from "./restoreLockService";
-import { base64ToBlob, summarizeSnapshot } from "./backup";
+import {
+  archiveAssetDeclarations,
+  assertArchiveAssetBytes,
+  base64ToBlob,
+  BackupArchiveIntegrityError,
+  summarizeSnapshot,
+} from "./backup";
+import { hashBlob } from "./cloudSyncModel";
 import { blobToBase64Chunks } from "./nativeFileWriter";
 import { sanitizeStreamableSnapshotForExport } from "./exportPrivacy";
 import {
@@ -77,6 +85,8 @@ interface RepositoryWriteSummary {
   verifiedAt: number;
   lastModified?: number;
   warning?: string;
+  /** Always `archive-verified`: the snapshot is read back and re-validated before it is promoted. */
+  verification: "archive-verified";
 }
 
 type LoadedRepositorySnapshot = {
@@ -96,8 +106,24 @@ const sanitizeFileName = (value: string) => {
   return cleaned || "asset";
 };
 
+/** The historical path layout, still used to resolve snapshots written before generation paths. */
 const assetPath = (asset: BackupAssetMeta): string =>
   `assets/${asset.id}-${sanitizeFileName(asset.fileName)}`;
+
+/**
+ * The generation path of an asset: one file per distinct content.
+ *
+ * Naming the file after the content is what makes an interrupted write harmless. Rewriting a shared
+ * file in place would damage *every* snapshot that points at it — including older, already verified
+ * ones — so a byte-level interruption could leave the user with no restorable archive at all. With
+ * a generation path, changed content lands on a new file and older snapshots keep their own intact
+ * bytes, while unchanged content resolves to the same path and is still written only once.
+ *
+ * A prefix collision would make the writer skip a write and then declare a hash the file does not
+ * have, which the restore path rejects loudly; it can never silently serve the wrong bytes.
+ */
+const assetGenerationPath = (asset: BackupAssetMeta, contentHash: string): string =>
+  `assets/${asset.id}-${contentHash}-${sanitizeFileName(asset.fileName)}`;
 
 const metaToAsset = (meta: BackupAssetMeta, blob: Blob): Asset =>
   ({
@@ -181,6 +207,9 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
     payload: {
       manifest: payload.manifest,
       ...(payload.knowledge !== undefined ? { knowledge: payload.knowledge } : {}),
+      // Carried through so a restore can say which assets were verified and which were taken on
+      // trust; never synthesised for a snapshot written before declarations existed.
+      ...(payload.assetChecksums !== undefined ? { assetChecksums: payload.assetChecksums } : {}),
       templates: payload.templates ?? [],
       podcasts: payload.podcasts,
       entries: payload.entries ?? [],
@@ -282,6 +311,85 @@ const cleanupRepository = async (
   }
 };
 
+/**
+ * The last verified copy of each asset, from the snapshot the manifest currently points at.
+ *
+ * Only used as a fallback for an asset whose bytes are no longer readable locally: that
+ * declaration and that file were verified together when the snapshot was written, and the asset's
+ * local content is gone, so there is no newer content to serve. Nothing is invented for an asset
+ * that has no previous verified copy.
+ */
+const loadPreviousVerifiedAssets = async (
+  manifest: RepositoryManifest | undefined,
+): Promise<{ declarations: Map<string, BackupAssetChecksum>; paths: Record<string, string> }> => {
+  const latest = manifest?.snapshots.find((item) => item.id === manifest.latestSnapshotId);
+  if (!latest) return { declarations: new Map(), paths: {} };
+  try {
+    const parsed = JSON.parse(
+      (await readNativeBackupRepositoryTextFile(repositoryName, latest.path)).text,
+    ) as RepositorySnapshotFile;
+    return {
+      declarations: new Map((parsed.payload?.assetChecksums ?? []).map((entry) => [entry.id, entry])),
+      paths: parsed.assetPaths ?? {},
+    };
+  } catch {
+    return { declarations: new Map(), paths: {} };
+  }
+};
+
+/**
+ * Read the archive back before it is promoted.
+ *
+ * `manifest.json` is the pointer every restore follows, so it is only updated once the snapshot it
+ * would point at has been re-read from the destination and its own structure and checksums
+ * re-validated. A provider that reports a successful write but keeps different bytes — truncated,
+ * altered, or with a container that no longer covers its payload — therefore leaves the previous
+ * verified snapshot as `latest` instead of promoting a broken one.
+ */
+const readBackSnapshot = async (snapshotPath: string, expectedSize: number): Promise<void> => {
+  const fail = (detail: string) => new BackupArchiveIntegrityError(
+    `自动备份仓库回读校验失败：${detail}。上一份已验证的备份仍然可用，本次没有更新仓库的 manifest。`,
+  );
+
+  let text: string;
+  try {
+    text = (await readNativeBackupRepositoryTextFile(repositoryName, snapshotPath)).text;
+  } catch (error) {
+    throw fail(`无法重新读取刚写入的快照 ${snapshotPath}${error instanceof Error ? `（${error.message}）` : ""}`);
+  }
+  if (expectedSize > 0 && text.length === 0) {
+    throw fail(`刚写入的快照 ${snapshotPath} 回读为空`);
+  }
+
+  let parsed: RepositorySnapshotFile;
+  try {
+    parsed = JSON.parse(text) as RepositorySnapshotFile;
+  } catch {
+    throw fail(`刚写入的快照 ${snapshotPath} 无法解析`);
+  }
+  if (!parsed.payload?.manifest) {
+    throw fail(`刚写入的快照 ${snapshotPath} 缺少备份清单`);
+  }
+  if (parsed.payload.manifest.version === 7) {
+    try {
+      validateBackupContainer(parsed.container, { ...parsed.payload, assets: parsed.assets } as typeof parsed.payload);
+    } catch (error) {
+      throw fail(
+        `刚写入的快照 ${snapshotPath} 的外层校验与内容不一致`
+        + (error instanceof Error ? `（${error.message}）` : ""),
+      );
+    }
+  }
+  try {
+    archiveAssetDeclarations(parsed.payload.assetChecksums);
+  } catch (error) {
+    throw fail(
+      `刚写入的快照 ${snapshotPath} 的资源完整性清单无效`
+      + (error instanceof Error ? `（${error.message}）` : ""),
+    );
+  }
+};
+
 const writeNativeRepositoryBackupSnapshot = async (
   snapshot: StreamableBackupSnapshot,
   getAsset: (assetId: string) => Promise<Asset | undefined>,
@@ -295,43 +403,73 @@ const writeNativeRepositoryBackupSnapshot = async (
   options.onProgress?.({ stage: "preparing", message: "正在准备增量备份仓库。" });
   const repository = await ensureNativeBackupRepository(repositoryName);
   const existingAssets = fileMapByPath(await listNativeBackupRepositoryFiles(repositoryName, "assets"));
+  const previousManifest = await readManifest();
+  const previousVerified = await loadPreviousVerifiedAssets(previousManifest);
+  const declarations = new Map<string, BackupAssetChecksum>();
   const assetPaths: Record<string, string> = {};
   let bytesWritten = 0;
 
   for (const [index, meta] of portableSnapshot.assets.entries()) {
-    const path = assetPath(meta);
-    assetPaths[meta.id] = path;
-    const existing = existingAssets.get(path);
-    if (existing && existing.size === meta.size) {
+    const asset = await getAsset(meta.id);
+    if (asset) {
+      const hash = await hashBlob(asset.data);
+      const path = assetGenerationPath(meta, hash);
+      assetPaths[meta.id] = path;
+      declarations.set(meta.id, { id: meta.id, hash, size: asset.data.size });
+      // Identical content already has its own generation file, so the write is skipped rather than
+      // repeated — this is what keeps the second and later backups incremental.
+      if (existingAssets.has(path)) continue;
+      options.onProgress?.({
+        stage: "asset",
+        message: `正在写入新增资源 ${index + 1}/${portableSnapshot.assets.length}。`,
+        current: index + 1,
+        total: portableSnapshot.assets.length,
+      });
+      const result = await writeRepositoryBlob(path, asset.data, meta.mimeType);
+      if (result.size !== meta.size) {
+        throw new BackupArchiveIntegrityError(
+          `自动备份资源写入大小不匹配：${meta.fileName}。为避免留下无法恢复的仓库，本次没有更新备份仓库。`,
+        );
+      }
+      bytesWritten += result.size;
       continue;
     }
-    options.onProgress?.({
-      stage: "asset",
-      message: `正在写入新增资源 ${index + 1}/${portableSnapshot.assets.length}。`,
-      current: index + 1,
-      total: portableSnapshot.assets.length,
-    });
-    const asset = await getAsset(meta.id);
-    if (!asset) {
-      throw new Error(`自动备份缺少资源：${meta.fileName}`);
+
+    /**
+     * The bytes are not readable locally. Re-using the last verified copy keeps the backup working
+     * for an asset whose local content was purged, and is honest: that file and that declaration
+     * were verified together, and there is no newer content to serve.
+     */
+    const previous = previousVerified.declarations.get(meta.id);
+    const previousPath = previousVerified.paths[meta.id];
+    if (previous && previousPath && existingAssets.has(previousPath)) {
+      assetPaths[meta.id] = previousPath;
+      declarations.set(meta.id, previous);
+      continue;
     }
-    const result = await writeRepositoryBlob(path, asset.data, meta.mimeType);
-    if (result.size !== meta.size) {
-      throw new Error(`自动备份资源写入大小不匹配：${meta.fileName}`);
-    }
-    bytesWritten += result.size;
+    throw new BackupArchiveIntegrityError(
+      `自动备份未能生成：资源“${meta.fileName}”（ID ${meta.id}）在本机缺失，且仓库中没有可复用的已验证副本。`
+      + "请先确认该资源可正常打开后重试；本次没有更新备份仓库。",
+    );
   }
 
   const snapshotId = nowSnapshotId();
   const snapshotPath = `snapshots/${snapshotId}.json`;
+  const payload = {
+    ...portableSnapshot.payload,
+    // Declared inside the payload, so the v7 container checksum covers the bytes as well.
+    assetChecksums: portableSnapshot.assets
+      .map((meta) => declarations.get(meta.id))
+      .filter((entry): entry is BackupAssetChecksum => Boolean(entry)),
+  };
   const snapshotFile: RepositorySnapshotFile = {
-    ...(portableSnapshot.payload.manifest.version === 7 ? { container: containerForPayload({ ...portableSnapshot.payload, assets: portableSnapshot.assets }) } : {}),
+    ...(payload.manifest.version === 7 ? { container: containerForPayload({ ...payload, assets: portableSnapshot.assets }) } : {}),
     format: REPOSITORY_SNAPSHOT_FORMAT,
     version: 1,
-    exportedAt: portableSnapshot.payload.manifest.exportedAt,
-    payload: portableSnapshot.payload,
+    exportedAt: payload.manifest.exportedAt,
+    payload,
     assets: portableSnapshot.assets,
-    recordDrafts: portableSnapshot.recordDrafts ?? portableSnapshot.payload.recordDrafts ?? [],
+    recordDrafts: portableSnapshot.recordDrafts ?? payload.recordDrafts ?? [],
     assetPaths,
   };
   const snapshotWrite = await writeRepositoryBlob(
@@ -343,12 +481,12 @@ const writeNativeRepositoryBackupSnapshot = async (
     throw new Error("自动备份仓库快照写入结果为空。");
   }
   bytesWritten += snapshotWrite.size;
+  await readBackSnapshot(snapshotPath, snapshotWrite.size);
 
-  const previousManifest = await readManifest();
   const currentRef: RepositoryManifestSnapshot = {
     id: snapshotId,
     path: snapshotPath,
-    exportedAt: portableSnapshot.payload.manifest.exportedAt,
+    exportedAt: payload.manifest.exportedAt,
     assetCount: portableSnapshot.assets.length,
     totalAssetBytes: portableSnapshot.assets.reduce((total, asset) => total + Math.max(0, asset.size), 0),
   };
@@ -387,6 +525,7 @@ const writeNativeRepositoryBackupSnapshot = async (
     verifiedAt: Date.now(),
     lastModified: manifestWrite.lastModified,
     warning: cleanupWarning,
+    verification: "archive-verified",
   };
 };
 
@@ -465,6 +604,7 @@ const loadLatestSnapshot = async () => {
 const verifyRepositoryAssets = async (
   assets: BackupAssetMeta[],
   assetPaths: Record<string, string>,
+  declarations: Map<string, BackupAssetChecksum>,
 ) => {
   const files = fileMapByPath(await listNativeBackupRepositoryFiles(repositoryName, "assets"));
   for (const meta of assets) {
@@ -479,6 +619,10 @@ const verifyRepositoryAssets = async (
     if (file.size > 0 && meta.size > 0 && file.size !== meta.size) {
       throw new Error(`自动备份仓库资源文件大小不匹配：${meta.fileName}`);
     }
+    // Verified before the destructive transaction so a damaged repository cannot half-apply.
+    const declaration = declarations.get(meta.id);
+    if (!declaration) continue;
+    await assertArchiveAssetBytes(meta, declaration, await readRepositoryBlob(path, meta.mimeType));
   }
 };
 
@@ -493,7 +637,7 @@ const restoreNativeRepositoryBackup = async (
 
     options.onProgress?.({ stage: "indexing", message: "正在检查自动备份仓库。" });
     const { snapshot, assetPaths } = await loadLatestSnapshot();
-    await verifyRepositoryAssets(snapshot.assets, assetPaths);
+    await verifyRepositoryAssets(snapshot.assets, assetPaths, archiveAssetDeclarations(snapshot.payload.assetChecksums));
     const summary = snapshotSummary(snapshot);
     if (!hasRecoverableData(snapshot)) {
       throw new Error("自动备份仓库中没有可恢复的数据。");

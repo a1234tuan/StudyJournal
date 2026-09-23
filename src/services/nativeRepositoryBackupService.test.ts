@@ -6,12 +6,27 @@ import {
   restoreNativeRepositoryBackup,
   writeNativeRepositoryBackupSnapshot,
 } from "./nativeRepositoryBackupService";
+import { BackupArchiveIntegrityError } from "./backup";
+import { hashBlob } from "./cloudSyncModel";
 import {
   beginNativeBackupRepositoryFileWrite,
   deleteNativeBackupRepositoryFile,
   ensureNativeBackupRepository,
+  finishNativeBackupRepositoryFileWrite,
   readNativeBackupRepositoryTextFile,
 } from "./nativeAutoBackup";
+
+/**
+ * Injection point for the provider's write step.
+ *
+ * Tests need to be able to say "the provider reported success but stored different bytes" without
+ * swapping mock implementations: a swapped implementation leaks into the next test and makes the
+ * result order-dependent (which it did, and which hid a real failure).
+ */
+const repoWrite = vi.hoisted(() => ({
+  snapshotWrites: [] as string[],
+  rewriteSnapshot: undefined as undefined | ((path: string, text: string) => string | undefined),
+}));
 
 vi.mock("./nativeAutoBackup", () => {
   const files = new Map<string, { data: Uint8Array; lastModified: number }>();
@@ -69,12 +84,20 @@ vi.mock("./nativeAutoBackup", () => {
         data.set(chunk, offset);
         offset += chunk.byteLength;
       }
+      let stored = data;
+      if (session.path.startsWith("snapshots/")) {
+        repoWrite.snapshotWrites.push(session.path);
+        const rewritten = repoWrite.rewriteSnapshot?.(session.path, text(data));
+        if (rewritten !== undefined) stored = new TextEncoder().encode(rewritten);
+      }
       const lastModified = Date.now();
-      files.set(session.path, { data, lastModified });
+      files.set(session.path, { data: stored, lastModified });
       sessions.delete(sessionId);
       return {
         path: session.path,
         displayName: session.path.split("/").pop() ?? session.path,
+        // The provider's own report stays independent of what it actually kept, which is exactly
+        // the situation the writer has to defend against with a read-back.
         size,
         lastModified,
       };
@@ -219,7 +242,48 @@ const asset = (id: string): Asset => ({
   data: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
 });
 
+/** Same metadata and same byte length as `asset`, but different content. */
+const assetWithBytes = (id: string, bytes: number[]): Asset => ({
+  ...asset(id),
+  data: new Blob([new Uint8Array(bytes)], { type: "image/png" }),
+});
+
+const readRepositoryJson = (path: string) =>
+  JSON.parse(new TextDecoder().decode(nativeMock.__repositoryFiles.get(path)!.data));
+
+const latestSnapshot = () => {
+  const manifest = readRepositoryJson("manifest.json") as { latestSnapshotId: string };
+  return readRepositoryJson(`snapshots/${manifest.latestSnapshotId}.json`);
+};
+
+/** The path a snapshot actually points at for an asset (a content generation since phase 4b). */
+const assetPathIn = (snapshotId: string, assetId: string): string =>
+  (readRepositoryJson(`snapshots/${snapshotId}.json`) as { assetPaths: Record<string, string> })
+    .assetPaths[assetId];
+
+const latestSnapshotId = (): string =>
+  (readRepositoryJson("manifest.json") as { latestSnapshotId: string }).latestSnapshotId;
+
 const nextMillisecond = () => new Promise((resolve) => setTimeout(resolve, 2));
+
+const ASSET_PATH = "assets/asset-1-asset-1.png";
+
+const writeRepositoryFile = (path: string, bytes: Uint8Array) => {
+  nativeMock.__repositoryFiles.set(path, { data: bytes, lastModified: Date.now() });
+};
+
+const restoreStore = () =>
+  ({ restoreStreamableSnapshot: vi.fn(async () => undefined) } as unknown as StorageAdapter);
+
+const importableLegacySnapshot = (): string =>
+  JSON.stringify({
+    format: "study-journal-folder-snapshot",
+    version: 1,
+    exportedAt: stamp,
+    payload: snapshot().payload,
+    assets: snapshot().assets,
+    assetPaths: { "asset-1": ASSET_PATH },
+  });
 
 describe("native repository backup service", () => {
   it("round-trips a v7 empty knowledge library without falling back to an older nonempty snapshot", async () => {
@@ -241,6 +305,8 @@ describe("native repository backup service", () => {
   beforeEach(() => {
     nativeMock.__repositoryFiles.clear();
     nativeMock.__repositorySessions.clear();
+    repoWrite.snapshotWrites.length = 0;
+    repoWrite.rewriteSnapshot = undefined;
     vi.clearAllMocks();
   });
 
@@ -249,7 +315,7 @@ describe("native repository backup service", () => {
 
     expect(result.format).toBe("folder-repository-v1");
     expect(result.assetCount).toBe(1);
-    expect(nativeMock.__repositoryFiles.has("assets/asset-1-asset-1.png")).toBe(true);
+    expect(nativeMock.__repositoryFiles.has(assetPathIn(result.snapshotId, "asset-1"))).toBe(true);
     expect(Array.from(nativeMock.__repositoryFiles.keys()).some((path) => path.startsWith("snapshots/"))).toBe(true);
     expect(nativeMock.__repositoryFiles.has("manifest.json")).toBe(true);
   });
@@ -261,14 +327,14 @@ describe("native repository backup service", () => {
     await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
 
     const writtenPaths = vi.mocked(beginNativeBackupRepositoryFileWrite).mock.calls.map((call) => call[1]);
-    expect(writtenPaths).not.toContain("assets/asset-1-asset-1.png");
+    expect(writtenPaths.some((path) => path.startsWith("assets/"))).toBe(false);
     expect(writtenPaths.some((path) => path.startsWith("snapshots/"))).toBe(true);
     expect(writtenPaths).toContain("manifest.json");
   });
 
   it("rejects restore before overwriting local data when an asset is missing", async () => {
-    await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
-    nativeMock.__repositoryFiles.delete("assets/asset-1-asset-1.png");
+    const written = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
+    nativeMock.__repositoryFiles.delete(assetPathIn(written.snapshotId, "asset-1"));
     const store = {
       restoreStreamableSnapshot: vi.fn(async () => undefined),
     } as unknown as StorageAdapter;
@@ -354,12 +420,15 @@ describe("native repository backup service", () => {
   });
 
   it("does not delete assets referenced by retained snapshots during cleanup", async () => {
-    await writeNativeRepositoryBackupSnapshot(snapshot(["asset-1"]), async (id) => asset(id));
+    const first = await writeNativeRepositoryBackupSnapshot(snapshot(["asset-1"]), async (id) => asset(id));
+    await nextMillisecond();
     await writeNativeRepositoryBackupSnapshot(snapshot(["asset-1", "asset-2"]), async (id) => asset(id));
 
-    expect(nativeMock.__repositoryFiles.has("assets/asset-1-asset-1.png")).toBe(true);
-    expect(nativeMock.__repositoryFiles.has("assets/asset-2-asset-2.png")).toBe(true);
-    expect(deleteNativeBackupRepositoryFile).not.toHaveBeenCalledWith("study-journal-backup", "assets/asset-1-asset-1.png");
+    const firstAssetPath = assetPathIn(first.snapshotId, "asset-1");
+    const secondAssetPath = assetPathIn(latestSnapshotId(), "asset-2");
+    expect(nativeMock.__repositoryFiles.has(firstAssetPath)).toBe(true);
+    expect(nativeMock.__repositoryFiles.has(secondAssetPath)).toBe(true);
+    expect(deleteNativeBackupRepositoryFile).not.toHaveBeenCalledWith("study-journal-backup", firstAssetPath);
   });
 
   it("stores a readable manifest with the latest snapshot id", async () => {
@@ -369,5 +438,198 @@ describe("native repository backup service", () => {
 
     expect(manifest.latestSnapshotId).toBe(result.snapshotId);
     expect(manifest.snapshots[0].path).toBe(`snapshots/${result.snapshotId}.json`);
+  });
+
+  describe("phase 3 archive asset integrity", () => {
+    it("R3-01 refuses to update the repository when a referenced asset is missing locally", async () => {
+      await expect(writeNativeRepositoryBackupSnapshot(snapshot(), async () => undefined))
+        .rejects.toBeInstanceOf(BackupArchiveIntegrityError);
+
+      // The failure happens while packing assets, i.e. before the snapshot and manifest are
+      // written, so a failed backup can never leave a repository that looks complete.
+      expect(nativeMock.__repositoryFiles.has("manifest.json")).toBe(false);
+      expect(Array.from(nativeMock.__repositoryFiles.keys()).some((path) => path.startsWith("snapshots/"))).toBe(false);
+      expect(Array.from(nativeMock.__repositoryFiles.keys())).toHaveLength(0);
+    });
+
+    it("R3-02 declares asset bytes so a freshly written snapshot restores with zero unverified assets", async () => {
+      await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
+      const store = restoreStore();
+
+      const summary = await restoreNativeRepositoryBackup(store);
+
+      expect(summary.assets).toBe(1);
+      expect(summary.unverifiedAssets).toBe(0);
+      const restored = vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0];
+      expect(restored.payload.assetChecksums).toEqual([
+        { id: "asset-1", hash: await hashBlob(asset("asset-1").data), size: 3 },
+      ]);
+    });
+
+    it("R3-03 rejects tampered asset bytes of the same size before the destructive transaction", async () => {
+      const written = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
+      // Same length, different content: only the declared hash can catch this.
+      writeRepositoryFile(assetPathIn(written.snapshotId, "asset-1"), new Uint8Array([9, 9, 9]));
+      const store = restoreStore();
+
+      await expect(restoreNativeRepositoryBackup(store)).rejects.toBeInstanceOf(BackupArchiveIntegrityError);
+      await expect(restoreNativeRepositoryBackup(restoreStore())).rejects.toThrow(/字节内容与声明不一致/);
+
+      expect(store.restoreStreamableSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("R3-04 rejects a malformed declaration list instead of importing on trust", async () => {
+      const parsed = JSON.parse(importableLegacySnapshot()) as Record<string, unknown>;
+      parsed.payload = { ...(parsed.payload as Record<string, unknown>), assetChecksums: "not-an-array" };
+      writeRepositoryFile("snapshots/legacy.json", new TextEncoder().encode(JSON.stringify(parsed)));
+      writeRepositoryFile(ASSET_PATH, new Uint8Array([1, 2, 3]));
+      const store = restoreStore();
+
+      await expect(restoreNativeRepositoryBackup(store)).rejects.toBeInstanceOf(BackupArchiveIntegrityError);
+
+      expect(store.restoreStreamableSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("R3-05 imports a legacy repository snapshot but reports its assets as unverified", async () => {
+      writeRepositoryFile("snapshots/legacy.json", new TextEncoder().encode(importableLegacySnapshot()));
+      writeRepositoryFile(ASSET_PATH, new Uint8Array([1, 2, 3]));
+      const store = restoreStore();
+
+      const summary = await restoreNativeRepositoryBackup(store);
+
+      expect(summary.records).toBe(1);
+      expect(summary.assets).toBe(1);
+      expect(summary.unverifiedAssets).toBe(1);
+      expect(store.restoreStreamableSnapshot).toHaveBeenCalledTimes(1);
+      const restored = vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0];
+      expect(restored.payload.assetChecksums).toBeUndefined();
+    });
+  });
+
+  describe("phase 4 write verification and last-known-good", () => {
+    const manifestText = () => {
+      const file = nativeMock.__repositoryFiles.get("manifest.json");
+      return file ? new TextDecoder().decode(file.data) : "";
+    };
+
+    it("R4-01 reads the snapshot back and reports archive-level verification", async () => {
+      const result = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
+
+      expect(result.verification).toBe("archive-verified");
+      expect(result.snapshotId).toBeTruthy();
+    });
+
+    it("R4-02 refuses to promote a snapshot whose bytes cannot be read back, keeping the previous one latest", async () => {
+      const first = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id));
+      await nextMillisecond();
+      const manifestBefore = manifestText();
+      const firstSnapshotPath = `snapshots/${first.snapshotId}.json`;
+
+      // Damage only the *new* snapshot, so the previous one stays a valid last-known-good.
+      repoWrite.rewriteSnapshot = () => (repoWrite.snapshotWrites.length >= 2 ? '{"format":"study-journal-folder-snapshot","payload":{' : undefined);
+
+      await expect(writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => asset(id)))
+        .rejects.toThrow(/回读/);
+
+      // The manifest is the promotion step: it must still point at the last verified snapshot.
+      expect(manifestText()).toBe(manifestBefore);
+      expect(JSON.parse(manifestText()).latestSnapshotId).toBe(first.snapshotId);
+      expect(nativeMock.__repositoryFiles.has(firstSnapshotPath)).toBe(true);
+      const store = restoreStore();
+      expect((await restoreNativeRepositoryBackup(store)).records).toBe(1);
+      expect(store.restoreStreamableSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("R4-03 rejects a snapshot whose container checksum does not match its own payload", async () => {
+      repoWrite.rewriteSnapshot = (_path, fileText) => {
+        const parsed = JSON.parse(fileText) as { payload: { manifest: Record<string, unknown> } };
+        // Keep the container, change the payload it is supposed to cover.
+        parsed.payload.manifest = { ...parsed.payload.manifest, exportedAt: "2099-01-01T00:00:00.000Z" };
+        return JSON.stringify(parsed);
+      };
+
+      const versioned = snapshot();
+      versioned.payload.manifest.version = 7;
+      versioned.payload.knowledge = createKnowledgeEnvelope([]);
+
+      await expect(writeNativeRepositoryBackupSnapshot(versioned, async (id) => asset(id)))
+        .rejects.toThrow(/回读/);
+
+      expect(nativeMock.__repositoryFiles.has("manifest.json")).toBe(false);
+    });
+  });
+
+  describe("phase 4b content-addressed asset generations", () => {
+    it("R5-01 stores a same-size content change at a new path and keeps the old snapshot's bytes intact", async () => {
+      const first = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [1, 2, 3]));
+      const firstSnapshot = readRepositoryJson(`snapshots/${first.snapshotId}.json`) as {
+        assetPaths: Record<string, string>;
+        payload: { assetChecksums: Array<{ id: string; hash: string; size: number }> };
+      };
+      const firstAssetPath = firstSnapshot.assetPaths["asset-1"];
+      const firstBytes = nativeMock.__repositoryFiles.get(firstAssetPath)!.data;
+      await nextMillisecond();
+
+      await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [9, 8, 7]));
+      const secondSnapshot = latestSnapshot() as {
+        assetPaths: Record<string, string>;
+        payload: { assetChecksums: Array<{ id: string; hash: string; size: number }> };
+      };
+
+      // A same-length edit must not reuse the old file, or the old snapshot would silently start
+      // serving the new bytes.
+      expect(secondSnapshot.assetPaths["asset-1"]).not.toBe(firstAssetPath);
+      expect(Array.from(nativeMock.__repositoryFiles.get(firstAssetPath)!.data)).toEqual(Array.from(firstBytes));
+      // The old snapshot's declaration still describes the file it points at, so it stays restorable.
+      expect(firstSnapshot.payload.assetChecksums).toEqual([
+        { id: "asset-1", hash: await hashBlob(new Blob([new Uint8Array(firstBytes)])), size: 3 },
+      ]);
+      expect(secondSnapshot.payload.assetChecksums).toEqual([
+        { id: "asset-1", hash: await hashBlob(assetWithBytes("asset-1", [9, 8, 7]).data), size: 3 },
+      ]);
+    });
+
+    it("R5-02 does not rewrite an asset whose content is unchanged", async () => {
+      await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [1, 2, 3]));
+      vi.mocked(beginNativeBackupRepositoryFileWrite).mockClear();
+
+      await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [1, 2, 3]));
+
+      const writtenPaths = vi.mocked(beginNativeBackupRepositoryFileWrite).mock.calls.map((call) => call[1]);
+      expect(writtenPaths.some((path) => path.startsWith("assets/"))).toBe(false);
+      expect(writtenPaths.some((path) => path.startsWith("snapshots/"))).toBe(true);
+    });
+
+    it("R5-03 keeps the previously verified copy when the local bytes are gone", async () => {
+      await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [1, 2, 3]));
+      await nextMillisecond();
+
+      const second = await writeNativeRepositoryBackupSnapshot(snapshot(), async () => undefined);
+      const secondSnapshot = readRepositoryJson(`snapshots/${second.snapshotId}.json`) as {
+        assetPaths: Record<string, string>;
+        payload: { assetChecksums: Array<{ id: string; hash: string; size: number }> };
+      };
+
+      expect(secondSnapshot.payload.assetChecksums).toEqual([
+        { id: "asset-1", hash: await hashBlob(new Blob([new Uint8Array([1, 2, 3])])), size: 3 },
+      ]);
+      const store = restoreStore();
+      const summary = await restoreNativeRepositoryBackup(store);
+      expect(summary.assets).toBe(1);
+      expect(summary.unverifiedAssets).toBe(0);
+      expect(store.restoreStreamableSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("R5-04 refuses when the local bytes are gone and the previously verified copy was deleted too", async () => {
+      const first = await writeNativeRepositoryBackupSnapshot(snapshot(), async (id) => assetWithBytes(id, [1, 2, 3]));
+      const firstSnapshot = readRepositoryJson(`snapshots/${first.snapshotId}.json`) as {
+        assetPaths: Record<string, string>;
+      };
+      nativeMock.__repositoryFiles.delete(firstSnapshot.assetPaths["asset-1"]);
+      await nextMillisecond();
+
+      await expect(writeNativeRepositoryBackupSnapshot(snapshot(), async () => undefined))
+        .rejects.toBeInstanceOf(BackupArchiveIntegrityError);
+    });
   });
 });

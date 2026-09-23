@@ -355,11 +355,25 @@ export interface AutoBackupSettings {
   lastBackupFileName?: string;
   lastBackupUri?: string;
   lastBackupVerifiedAt?: ISODateTime;
+  /**
+   * What the most recent write actually proved, so the UI never presents a weaker check as a
+   * stronger one. Absent means the adapter verified nothing (e.g. it only observed the file).
+   */
+  lastBackupVerification?: AutoBackupVerification;
   lastBackupFileModifiedAt?: ISODateTime;
   lastBackupWarning?: string;
   lastError?: string;
   debounceMs: number;
 }
+
+/**
+ * The verification levels an auto-backup destination can report, weakest to strongest.
+ *
+ * - `destination-visible`: the destination only confirmed the file exists (no byte proof).
+ * - `destination-readback`: the destination reported the file with the byte count we wrote.
+ * - `archive-verified`: the archive was read back and its structure/checksums re-validated.
+ */
+export type AutoBackupVerification = "archive-verified" | "destination-readback" | "destination-visible";
 
 /** Stored in a local-only Dexie table, never synced to the cloud. */
 export type AutoBackupStateRecord = AutoBackupSettings & { id: "autoBackup" };
@@ -843,6 +857,26 @@ export interface BackupPayload {
    */
   dailyPlans?: DailyPlan[];
   reviewCoach?: ReviewCoachFormalSnapshot;
+  /**
+   * Per-asset byte declarations for a newly written complete backup.
+   *
+   * The container checksum covers this whole payload, so listing the SHA-256 of each packed asset
+   * here puts the *asset bytes* inside the verified range: an archive whose checksum still matches
+   * cannot have been given different bytes for a declared asset.
+   *
+   * Optional on purpose. Archives written before this field existed have no per-asset proof, and
+   * they must keep importing with exactly the historical capability — presence of the file is still
+   * enforced, but byte identity is reported as unverified rather than assumed. Never synthesise
+   * declarations for an old archive; a fake hash would turn "unknown" into a false guarantee.
+   */
+  assetChecksums?: BackupAssetChecksum[];
+}
+
+/** SHA-256 (`hashBlob`) of one packed asset, as declared by a complete backup. */
+export interface BackupAssetChecksum {
+  id: EntityId;
+  hash: string;
+  size: number;
 }
 
 export interface SearchResult {
@@ -994,6 +1028,12 @@ export interface ImportSummary {
   attachments: number;
   version: BackupManifest["version"];
   missingAssets: number;
+  /**
+   * Assets that had to be taken on trust because the archive carries no byte declaration for them
+   * (any archive written before per-asset checksums existed). Reported so the UI can say which part
+   * of the restore could not be verified instead of implying the whole archive was.
+   */
+  unverifiedAssets: number;
 }
 
 export interface ImportProgress {
@@ -1150,8 +1190,12 @@ export interface StorageAdapter {
   getCloudSyncMutationEpoch(): Promise<number>;
   createStreamableSnapshot(): Promise<StreamableBackupSnapshot>;
   restoreSnapshot(snapshot: StorageSnapshot): Promise<void>;
-  restoreCloudSyncSnapshot(snapshot: StorageSnapshot): Promise<void>;
-  restoreCloudSyncSnapshotIfUnchanged(snapshot: StorageSnapshot, expectedEpoch: number): Promise<void>;
+  /**
+   * `commitCloudState` writes the sync ledger/cursor inside the same transaction as the data
+   * replacement, so a destructive cloud restore cannot commit one without the other.
+   */
+  restoreCloudSyncSnapshot(snapshot: StorageSnapshot, commitCloudState?: () => Promise<void>): Promise<void>;
+  restoreCloudSyncSnapshotIfUnchanged(snapshot: StorageSnapshot, expectedEpoch: number, commitCloudState?: () => Promise<void>): Promise<void>;
   restoreStreamableSnapshot(
     snapshot: StreamableBackupSnapshot,
     readAsset: StreamedAssetReader,

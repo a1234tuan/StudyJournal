@@ -286,4 +286,85 @@ describe("autoBackupService", () => {
 
     await expect(setAutoBackupEnabled(true, adapter, store)).rejects.toThrow("不支持自动备份");
   });
+
+  describe("verification status contract", () => {
+    it("does not claim a verification time when the adapter verified nothing", async () => {
+      const store = makeStore();
+      const adapter = makeAdapter(true, { folderName: "backup", size: 1234 });
+
+      const next = await flushAutoBackupNow("manual", adapter, store);
+
+      expect(next.lastBackupAt).toBeTruthy();
+      expect(next.lastBackupVerifiedAt).toBeUndefined();
+      expect(next.lastBackupVerification).toBeUndefined();
+    });
+
+    it("records exactly the verification level the adapter proved", async () => {
+      const store = makeStore();
+      const adapter = makeAdapter(true, {
+        folderName: "backup",
+        size: 1234,
+        verifiedAt: new Date("2026-06-21T01:00:00.000Z").getTime(),
+        verification: "archive-verified",
+      });
+
+      const next = await flushAutoBackupNow("manual", adapter, store);
+
+      expect(next.lastBackupVerification).toBe("archive-verified");
+      expect(next.lastBackupVerifiedAt).toBe("2026-06-21T01:00:00.000Z");
+    });
+
+    it("does not report a backup at all when the folder was only bound", async () => {
+      const store = makeStore(autoBackupState(false));
+      const adapter = makeAdapter();
+
+      const next = await bindAutoBackupFolder(adapter, store);
+
+      expect(next.folderName).toBe("backup");
+      expect(next.enabled).toBe(false);
+      expect(next.lastBackupAt).toBeUndefined();
+      expect(next.lastBackupVerifiedAt).toBeUndefined();
+      expect(next.lastBackupVerification).toBeUndefined();
+      expect(next.lastBackupSize).toBeUndefined();
+    });
+
+    it("keeps the previous verified status when a later write is interrupted", async () => {
+      const store = makeStore(autoBackupState(true, {
+        lastBackupAt: "2026-06-20T00:00:00.000Z",
+        lastBackupSize: 999,
+        lastBackupVerifiedAt: "2026-06-20T00:00:00.000Z",
+        lastBackupVerification: "archive-verified",
+      }));
+      const adapter = makeAdapter(true, { folderName: "backup", size: 1234, verification: "archive-verified" });
+      vi.mocked(adapter.writeLatest).mockRejectedValueOnce(new Error("写入过程中断。"));
+
+      const next = await flushAutoBackupNow("manual", adapter, store);
+
+      expect(next.lastBackupAt).toBe("2026-06-20T00:00:00.000Z");
+      expect(next.lastBackupSize).toBe(999);
+      expect(next.lastBackupVerifiedAt).toBe("2026-06-20T00:00:00.000Z");
+      expect(next.lastBackupVerification).toBe("archive-verified");
+      expect(next.lastError).toBe("写入过程中断。");
+    });
+
+    it("does not regress a verified status when a subsequent write fails", async () => {
+      const store = makeStore();
+      const adapter = makeAdapter(true, {
+        folderName: "backup",
+        size: 1234,
+        verifiedAt: new Date("2026-06-21T01:00:00.000Z").getTime(),
+        verification: "archive-verified",
+      });
+      const first = await flushAutoBackupNow("manual", adapter, store);
+      expect(first.lastBackupVerifiedAt).toBe("2026-06-21T01:00:00.000Z");
+
+      vi.mocked(adapter.writeLatest).mockRejectedValueOnce(new Error("写入过程中断。"));
+      const next = await flushAutoBackupNow("manual", adapter, store);
+
+      expect(next.lastBackupAt).toBe(first.lastBackupAt);
+      expect(next.lastBackupVerifiedAt).toBe("2026-06-21T01:00:00.000Z");
+      expect(next.lastBackupVerification).toBe("archive-verified");
+      expect(next.lastError).toBe("写入过程中断。");
+    });
+  });
 });

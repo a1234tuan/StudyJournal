@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { Asset, KnowledgePodcast, RecordBlock, StorageSnapshot, StreamableBackupSnapshot } from "../types";
+import type { Asset, KnowledgePodcast, RecordBlock, RecordDraft, StorageSnapshot, StreamableBackupSnapshot } from "../types";
 
 type StoredRow = object;
 
@@ -228,6 +228,11 @@ const createRestoreDb = (podcasts: KnowledgePodcast[] = [], assets: Asset[] = [p
   voiceRecallSessions: new MemoryTable(),
   voiceRecallTurns: new MemoryTable(),
   voiceRecallLocalHistory: new MemoryTable(),
+  // Present so a destructive restore can be proven not to touch them: ordinary cloud restore covers
+  // device-local journal data, and knowledge libraries have their own protocol and backup boundary.
+  knowledgeLibraries: new MemoryTable<StoredRow>([], "id"),
+  knowledgeSyncState: new MemoryTable<StoredRow>([], "libraryId"),
+  knowledgeBackupScopes: new MemoryTable<StoredRow>([], "ownerScope"),
   transaction: async (_mode: string, ...args: unknown[]) => {
     const callback = args.at(-1) as () => Promise<unknown>;
     return callback();
@@ -271,6 +276,55 @@ const snapshot: StreamableBackupSnapshot = {
   ].map(({ data: _data, ...asset }) => asset),
 };
 
+/**
+ * A snapshot whose only reference to an asset lives in a record draft: the archive packs no assets,
+ * so nothing in `blocks` or `templates` can catch the dangling reference.
+ */
+const draftOnlySnapshot = (placement: "payload" | "legacy"): StreamableBackupSnapshot => {
+  const draft: RecordDraft = {
+    id: "draft-1",
+    recordId: "rec-1",
+    baseUpdatedAt: stamp,
+    updatedAt: stamp,
+    draft: {
+      ...oldRecord,
+      id: "rec-1",
+      title: "未保存草稿",
+      contentHtml: '<record-asset data-asset-id="missing-asset" data-kind="image" data-title="ghost.png"></record-asset>',
+    },
+  };
+  return {
+    payload: {
+      ...snapshot.payload,
+      blocks: [],
+      ...(placement === "payload" ? { recordDrafts: [draft] } : {}),
+    },
+    assets: [],
+    ...(placement === "legacy" ? { recordDrafts: [draft] } : {}),
+  };
+};
+
+const seededRestoreDb = () => ({
+  entries: new MemoryTable(),
+  blocks: new MemoryTable<StoredRow>([oldRecord]),
+  templates: new MemoryTable(),
+  recordDrafts: new MemoryTable(),
+  recordReviews: new MemoryTable(),
+  recordReviewLogs: new MemoryTable(),
+  recordReviewDayStats: new MemoryTable(),
+  mistakes: new MemoryTable(),
+  tags: new MemoryTable(),
+  reviews: new MemoryTable(),
+  studySessions: new MemoryTable(),
+  settings: new MemoryTable(),
+  assets: new MemoryTable<StoredRow>([oldAsset]),
+  restoreStagingAssets: new MemoryTable<StoredRow>([], "stagingId"),
+  transaction: async (_mode: string, ...args: unknown[]) => {
+    const callback = args.at(-1) as () => Promise<unknown>;
+    return callback();
+  },
+});
+
 describe("DexieStorageAdapter stream restore", () => {
   it("keeps current data when resource staging fails and removes staged assets", async () => {
     vi.resetModules();
@@ -309,6 +363,26 @@ describe("DexieStorageAdapter stream restore", () => {
     expect(await fakeDb.assets.get("old-asset")).toEqual(oldAsset);
     expect(await fakeDb.restoreStagingAssets.toArray()).toEqual([]);
   });
+
+  it.each(["payload", "legacy"] as const)(
+    "rejects an archive whose only asset reference is a draft (%s field) before touching any table",
+    async (placement) => {
+      vi.resetModules();
+      const fakeDb = seededRestoreDb();
+      vi.doMock("../db/database", () => ({ db: fakeDb }));
+      const { DexieStorageAdapter } = await import("./storageAdapter");
+      const adapter = new DexieStorageAdapter();
+
+      await expect(
+        adapter.restoreStreamableSnapshot(draftOnlySnapshot(placement), async () => undefined),
+      ).rejects.toThrow(/备份数据不完整：草稿“未保存草稿”引用的资源 missing-asset 缺失/);
+
+      // Nothing was staged and no formal table was replaced.
+      expect(await fakeDb.blocks.get("old-record")).toEqual(oldRecord);
+      expect(await fakeDb.assets.get("old-asset")).toEqual(oldAsset);
+      expect(await fakeDb.restoreStagingAssets.toArray()).toEqual([]);
+    },
+  );
 
   it("appends imported records with a conflict-safe title and no review state", async () => {
     vi.resetModules();
@@ -360,6 +434,32 @@ describe("DexieStorageAdapter stream restore", () => {
 });
 
 describe("DexieStorageAdapter cloud restore", () => {
+  it("does not clear knowledge tables during an ordinary cloud restore", async () => {
+    vi.resetModules();
+    const fakeDb = createRestoreDb();
+    const library = { id: "lib-1", ownerScope: "account:A", title: "库一", detached: false };
+    await fakeDb.knowledgeLibraries.put(library);
+    await fakeDb.knowledgeSyncState.put({ libraryId: "lib-1", dirtyGeneration: 7 });
+    await fakeDb.knowledgeBackupScopes.put({
+      ownerScope: "account:A",
+      consented: true,
+      capturedGenerations: { "lib-1": 7 },
+    });
+    vi.doMock("../db/database", () => ({ db: fakeDb }));
+    const { DexieStorageAdapter } = await import("./storageAdapter");
+    const adapter = new DexieStorageAdapter();
+
+    await adapter.restoreCloudSyncSnapshot({ payload: restorePayload, assets: [] } as StorageSnapshot);
+
+    // "以云端为准" is an ordinary-journal operation; knowledge libraries must survive it untouched.
+    expect(await fakeDb.knowledgeLibraries.get("lib-1")).toEqual(library);
+    expect(await fakeDb.knowledgeSyncState.get("lib-1")).toMatchObject({ dirtyGeneration: 7 });
+    expect(await fakeDb.knowledgeBackupScopes.get("account:A")).toMatchObject({
+      capturedGenerations: { "lib-1": 7 },
+      consented: true,
+    });
+  });
+
   it("repairs podcast references that were cleared by an earlier restore", async () => {
     vi.resetModules();
     const damagedPodcast: KnowledgePodcast = {

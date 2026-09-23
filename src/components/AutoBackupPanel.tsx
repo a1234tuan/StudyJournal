@@ -1,7 +1,7 @@
 import { CheckCircle2, FolderOpen, RefreshCw, ShieldCheck, ToggleLeft, ToggleRight } from "lucide-react";
 import { useState } from "react";
 
-import type { AutoBackupSettings } from "../types";
+import type { AutoBackupSettings, AutoBackupVerification } from "../types";
 import { formatBytes } from "../lib/format";
 import {
   bindAutoBackupFolder,
@@ -54,6 +54,30 @@ const backupActionMessage = (state: AutoBackupSettings): string => {
     : "已立即同步到 study-journal-latest.zip。";
 };
 
+/**
+ * The verification fact, stated at exactly the strength the platform proved.
+ *
+ * Binding a folder, enabling the switch, finishing a write and validating the archive are four
+ * different facts; collapsing them into one "已备份" label is what lets a user believe a backup
+ * exists when only a permission was granted.
+ */
+const VERIFICATION_LABELS: Record<AutoBackupVerification, string> = {
+  "archive-verified": "已回读校验归档结构",
+  "destination-readback": "已核对写入字节数",
+  "destination-visible": "仅确认文件存在",
+};
+
+const formatVerification = (state: AutoBackupSettings): string => {
+  if (!state.lastBackupAt) {
+    return "尚无成功备份";
+  }
+  if (!state.lastBackupVerification) {
+    return "未验证";
+  }
+  const at = state.lastBackupVerifiedAt ? `（${new Date(state.lastBackupVerifiedAt).toLocaleString()}）` : "";
+  return `${VERIFICATION_LABELS[state.lastBackupVerification]}${at}`;
+};
+
 export const AutoBackupPanel = ({ autoBackupState, onChanged }: AutoBackupPanelProps) => {
   const desktop = isDesktopPlatform();
   const [busy, setBusy] = useState(false);
@@ -104,6 +128,10 @@ export const AutoBackupPanel = ({ autoBackupState, onChanged }: AutoBackupPanelP
         <div>
           <span>备份格式</span>
           <strong>{formatBackupKind(autoBackupState)}</strong>
+        </div>
+        <div>
+          <span>备份校验</span>
+          <strong>{formatVerification(autoBackupState)}</strong>
         </div>
         <div>
           <span>{autoBackupState.backupFormat === "folder-repository-v1" ? "仓库总大小" : "备份大小"}</span>

@@ -2,7 +2,8 @@ import { createKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
 import { validateBackupContainer } from "../features/knowledgeLibrary/backupContainer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { StorageAdapter, StreamableBackupSnapshot } from "../types";
+import type { Asset, BackupAssetMeta, StorageAdapter, StreamableBackupSnapshot } from "../types";
+import { hashBlob } from "./cloudSyncModel";
 import { NativeZipArchive } from "./nativeZipArchive";
 import { importNativeStreamableBackupAndRestore, writeNativeStreamableBackupSnapshot } from "./streamingBackupService";
 
@@ -177,5 +178,91 @@ describe("streaming backup", () => {
 
     const restoredSnapshot = vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0];
     expect(restoredSnapshot.payload.settings.subjects?.map((subject) => subject.name)).toContain("物理");
+  });
+});
+
+const streamAsset = (id: string, bytes: string): BackupAssetMeta => ({
+  id,
+  createdAt: stamp,
+  updatedAt: stamp,
+  fileName: `${id}.png`,
+  title: id,
+  mimeType: "image/png",
+  size: bytes.length,
+  kind: "image",
+});
+
+const assetBlob = (meta: BackupAssetMeta, bytes: string): Asset =>
+  ({ ...meta, data: new File([bytes], meta.fileName, { type: meta.mimeType }) });
+
+/** Capture the entries a stream export writes so they can be replayed as an import. */
+const captureExport = () => {
+  const entries = new Map<string, string>();
+  let path = "";
+  vi.mocked(NativeZipArchive.beginEntry).mockImplementation(async entry => { path = entry.path; });
+  vi.mocked(NativeZipArchive.appendEntry).mockImplementation(async entry => {
+    entries.set(path, (entries.get(path) ?? "") + decodeTextEntry(entry.data));
+  });
+  return entries;
+};
+
+const replayImport = (entries: Map<string, string>, assetBytes: Map<string, string>) => {
+  vi.mocked(NativeZipArchive.beginImport).mockResolvedValueOnce({ sessionId: "replay", entries: [...entries.keys()] });
+  vi.mocked(NativeZipArchive.readEntry).mockImplementation(async entry => ({ data: encodeTextEntry(entries.get(entry.path)!) }));
+  vi.mocked(NativeZipArchive.readEntryChunk).mockImplementation(async ({ path: entryPath }) => {
+    const bytes = assetBytes.get(entryPath);
+    if (bytes === undefined) throw new Error(`unexpected chunk read: ${entryPath}`);
+    return { data: encodeTextEntry(bytes), bytesRead: bytes.length, done: true };
+  });
+};
+
+describe("streaming backup asset integrity", () => {
+  it("S3-01: the writer refuses to produce an archive when a declared asset is missing", async () => {
+    const versioned = structuredClone(snapshot);
+    versioned.payload.manifest.version = 7;
+    versioned.payload.knowledge = createKnowledgeEnvelope([]);
+    versioned.assets = [streamAsset("a1", "asset-bytes")];
+
+    await expect(writeNativeStreamableBackupSnapshot(versioned, "cache-share", async () => undefined))
+      .rejects.toThrow(/资源“a1\.png”（ID a1）在本机缺失或无法读取/);
+    expect(vi.mocked(NativeZipArchive.cancelExport)).toHaveBeenCalled();
+    // Nothing was written after the defect, so no archive can be mistaken for a good one.
+    expect(vi.mocked(NativeZipArchive.finishExport)).not.toHaveBeenCalled();
+  });
+
+  it("S3-02: a declared asset is verified on import, and a missing entry is rejected with its identity", async () => {
+    const versioned = structuredClone(snapshot);
+    versioned.payload.manifest.version = 7;
+    versioned.payload.knowledge = createKnowledgeEnvelope([]);
+    versioned.assets = [streamAsset("a1", "asset-bytes")];
+    const entries = captureExport();
+    await writeNativeStreamableBackupSnapshot(versioned, "cache-share", async (id) =>
+      id === "a1" ? assetBlob(streamAsset("a1", "asset-bytes"), "asset-bytes") : undefined);
+
+    const payload = JSON.parse(entries.get("snapshot-v7.json")!);
+    expect(payload.assetChecksums).toEqual([
+      { id: "a1", hash: await hashBlob(new Blob(["asset-bytes"], { type: "image/png" })), size: 11 },
+    ]);
+
+    // Stands in for the real adapter, which stages every asset through this reader.
+    const readAllAssets = vi.fn(async (_s: unknown, readAsset: (meta: BackupAssetMeta, index: number, total: number) => Promise<unknown>) => {
+      for (const [index, meta] of versioned.assets.entries()) await readAsset(meta, index, versioned.assets.length);
+    });
+    const store = { restoreStreamableSnapshot: readAllAssets } as unknown as StorageAdapter;
+    const assetEntry = `assets/a1-a1.png`;
+
+    // Positive control: identical bytes import with the asset verified.
+    replayImport(entries, new Map([[assetEntry, "asset-bytes"]]));
+    await importNativeStreamableBackupAndRestore("content://ok.zip", store);
+    expect(readAllAssets).toHaveBeenCalledTimes(1);
+
+    // Tampered bytes of the same length are caught by the declaration.
+    replayImport(entries, new Map([[assetEntry, "tampered-xy"]]));
+    await expect(importNativeStreamableBackupAndRestore("content://bad.zip", store)).rejects.toThrow(/字节内容与声明不一致/);
+
+    // An archive whose manifest declares an asset it does not contain is rejected with its identity.
+    const withoutEntry = new Map([...entries.keys()].filter((key) => key !== assetEntry).map((key) => [key, entries.get(key)!]));
+    replayImport(withoutEntry, new Map());
+    await expect(importNativeStreamableBackupAndRestore("content://missing.zip", store)).rejects.toThrow(/资源“a1\.png”（ID a1）.*缺少对应文件/);
   });
 });

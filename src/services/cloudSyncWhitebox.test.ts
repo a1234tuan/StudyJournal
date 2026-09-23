@@ -11,13 +11,23 @@ const remote = vi.hoisted(() => ({
     failPublishHead: false,
     failMetadataBatch: 0,
     metadataBatches: 0,
+    failWriteBatch: 0,
+    writeBatches: 0,
+    failSnapshotCommitMarker: false,
 }));
-const storageProbe = vi.hoisted(() => ({ metadataCalls: 0 }));
+const storageProbe = vi.hoisted(() => ({ metadataCalls: 0, blobs: new Map<string, Blob>(), downloads: 0 }));
 vi.mock('firebase/storage', () => ({
     ref: (_storage: unknown, path: string) => ({ fullPath: path }),
     getMetadata: async () => { storageProbe.metadataCalls++; throw new Error('synthetic 检查云端资源超时'); },
     uploadBytesResumable: () => { throw new Error('unexpected upload'); },
-    getBlob: () => { throw new Error('unexpected download'); },
+    // Only objects the test itself put in Storage can be downloaded, so a path collision or a
+    // missing object still fails loudly instead of silently returning an empty blob.
+    getBlob: async (target: any) => {
+        storageProbe.downloads++;
+        const blob = storageProbe.blobs.get(target.fullPath);
+        if (!blob) throw new Error('unexpected download');
+        return blob;
+    },
     list: () => { throw new Error('unexpected list'); },
     deleteObject: () => { throw new Error('unexpected delete'); },
 }));
@@ -47,7 +57,14 @@ vi.mock('firebase/firestore', async (importOriginal) => {
     };
     return {
         ...actual,
-        doc: (_db: any, ...parts: string[]) => ({ path: parts.join('/') }),
+        // `doc(firestore, ...parts)` builds a path from its arguments, while `doc(collectionRef, id)`
+        // must extend the collection path. The mocked collection reference is the only object with a
+        // `path`, so the two forms are distinguishable.
+        doc: (parent: any, ...parts: string[]) => ({
+            path: parent && typeof parent === 'object' && typeof parent.path === 'string'
+                ? [parent.path, ...parts].join('/')
+                : parts.join('/'),
+        }),
         collection: (_db: any, ...parts: string[]) => ({ path: parts.join('/') }),
         documentId: () => '__name__',
         where: (field: string, op: string, value: any) => ({ kind: 'where', field, op, value }),
@@ -56,6 +73,28 @@ vi.mock('firebase/firestore', async (importOriginal) => {
         query: (target: any, ...constraints: any[]) => ({ ...target, constraints }),
         getDoc: async (target: any) => { remote.reads++; return snap(target.path); },
         getDocs,
+        setDoc: async (target: any, value: any) => {
+            if (remote.failSnapshotCommitMarker) {
+                remote.failSnapshotCommitMarker = false;
+                throw new Error('synthetic snapshot commit marker failure');
+            }
+            remote.documents.set(target.path, structuredClone(value));
+            remote.writes++;
+        },
+        writeBatch: () => {
+            const pending: Array<[string, any]> = [];
+            const deletes: string[] = [];
+            return {
+                set: (target: any, value: any) => { pending.push([target.path, value]); },
+                delete: (target: any) => { deletes.push(target.path); },
+                commit: async () => {
+                    remote.writeBatches++;
+                    if (remote.failWriteBatch === remote.writeBatches) throw new Error('synthetic snapshot batch failure');
+                    for (const [path, value] of pending) { remote.documents.set(path, structuredClone(value)); remote.writes++; }
+                    for (const path of deletes) remote.documents.delete(path);
+                },
+            };
+        },
         getCountFromServer: async (target: any) => ({ data: () => ({ count: [...remote.documents.keys()].filter(path => path.startsWith(target.path + '/')).length }) }),
         runTransaction: async (_db: any, callback: any) => {
             const pending: any[] = [];
@@ -79,7 +118,7 @@ vi.mock('firebase/firestore', async (importOriginal) => {
 });
 import { StudyJournalDatabase as WhiteboxDatabase } from '../db/database';
 import { storage as whiteboxStorage } from './storageAdapter';
-import { exportCloudSync as whiteboxExport } from './cloudSyncModel';
+import { exportCloudSync as whiteboxExport, hashBlob as whiteboxHashBlob } from './cloudSyncModel';
 import { DEFAULT_SETTINGS as whiteboxDefaults } from '../db/defaults';
 
 const UID = 'wb-user';
@@ -111,6 +150,11 @@ async function boot(options: { completeThrough?: number | null | undefined } = {
     remote.failPublishHead = false;
     remote.failMetadataBatch = 0;
     remote.metadataBatches = 0;
+    remote.failWriteBatch = 0;
+    remote.writeBatches = 0;
+    remote.failSnapshotCommitMarker = false;
+    storageProbe.blobs.clear();
+    storageProbe.downloads = 0;
     const devices = [new WhiteboxDatabase('wb-phone-' + crypto.randomUUID()), new WhiteboxDatabase('wb-desktop-' + crypto.randomUUID())];
     for (const database of devices) {
         await database.open();
@@ -596,5 +640,370 @@ describe('W-28 voice session lifecycle after a full restore', () => {
             await runtime.end();
             runtime = undefined;
         } finally { await runtime?.end(); await close(devices); }
+    });
+});
+
+const snapshotParentPath = (id: string) => `users/${UID}/syncSnapshots/${id}`;
+const snapshotChild = (id: string, docId: string, value: any) =>
+    remote.documents.set(`${snapshotParentPath(id)}/entities/${docId}`, value);
+const allSnapshotParents = () =>
+    [...remote.documents.keys()].filter((path) => /\/syncSnapshots\/[^/]+$/.test(path));
+const allSnapshotChildren = (id?: string) =>
+    [...remote.documents.keys()].filter((path) =>
+        id === undefined ? /\/syncSnapshots\/[^/]+\/entities\//.test(path) : path.startsWith(`${snapshotParentPath(id)}/entities/`));
+
+async function localBookkeeping(device: any) {
+    return {
+        state: structuredClone(await device.cloudSyncState.get('state')),
+        ledger: structuredClone(await device.cloudSyncLedger.toArray()),
+    };
+}
+
+const blockIds = async (device: any) => (await device.blocks.toArray()).map((item: any) => item.id).sort();
+
+const aggressive = { allowExpensiveRead: true, allowExpensiveWrite: true };
+
+describe('SNAP cloud recovery snapshot completeness', () => {
+    it('SNAP-01: a failed batch leaves no listable recovery point, and the orphan children stay unreachable', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            expect(await service.resolveCloudSyncConflict(user, 'local', aggressive)).toMatchObject({ kind: 'synced' });
+            const listed = await service.listCloudRecoverySnapshots(UID);
+            expect(listed).toHaveLength(1);
+            expect(listed[0].status).toBe('complete');
+            expect(listed[0].entityCount).toBeGreaterThan(0);
+
+        const beforeParentCount = allSnapshotParents().length;
+        remote.failWriteBatch = remote.writeBatches + 1;
+        await expect(service.resolveCloudSyncConflict(user, 'local', aggressive)).rejects.toThrow('synthetic snapshot batch failure');
+        remote.failWriteBatch = 0;
+
+        // A failed batch commits nothing at all, so no recovery point — complete or not — is added.
+        expect(allSnapshotParents()).toHaveLength(beforeParentCount);
+        const after = await service.listCloudRecoverySnapshots(UID);
+        expect(after.map((item) => item.id)).toEqual([listed[0].id]);
+        expect(after[0].status).toBe('complete');
+        expect(allSnapshotChildren(listed[0].id).length).toBe(listed[0].entityCount);
+        // The earlier complete recovery point is still restorable.
+        await expect(service.restoreCloudRecoverySnapshot(user, listed[0].id)).resolves.toMatchObject({ status: 'complete' });
+    } finally { await close(devices); }
+});
+
+it('SNAP-01b: a partial multi-batch snapshot is unreachable and does not disturb the previous recovery point', async () => {
+    const devices = await boot();
+    try {
+        remote.db = devices[0];
+        const service = await import('./cloudSyncService');
+        const user = { uid: UID } as any;
+
+        expect(await service.resolveCloudSyncConflict(user, 'local', aggressive)).toMatchObject({ kind: 'synced' });
+        const good = (await service.listCloudRecoverySnapshots(UID))[0];
+        const goodChildren = allSnapshotChildren(good.id).length;
+
+        // Push the recovery snapshot over one Firestore write batch (400 documents) so that the first
+        // batch lands and the second one fails, which is how a partially written snapshot appears.
+        for (let index = 0; index < 405; index += 1) {
+            const key = `block:bulk-${index}`;
+            remote.documents.set(`users/${UID}/syncEntities/${key}`, {
+                key, entityType: 'block', entityId: `bulk-${index}`,
+                payload: { ...block(`bulk-${index}`), id: `bulk-${index}` },
+                deleted: false, revision: 2, contentHash: `hash-${key}`,
+                contentHashAlgorithm: 'sha256', contentHashVersion: 2, updatedAt: stamp,
+            });
+        }
+        remote.documents.set(`users/${UID}/syncState/current`, stateDoc(2, 2));
+
+        remote.failWriteBatch = remote.writeBatches + 2;
+        await expect(service.resolveCloudSyncConflict(user, 'local', aggressive)).rejects.toThrow('synthetic snapshot batch failure');
+        remote.failWriteBatch = 0;
+
+        // Orphan children landed, but no parent document can advertise them.
+        expect(allSnapshotParents()).toHaveLength(1);
+        expect(allSnapshotChildren().length).toBeGreaterThan(goodChildren);
+        const listed = await service.listCloudRecoverySnapshots(UID);
+        expect(listed.map((item) => item.id)).toEqual([good.id]);
+        expect(listed[0].status).toBe('complete');
+        await expect(service.restoreCloudRecoverySnapshot(user, good.id)).resolves.toMatchObject({ status: 'complete', entityCount: good.entityCount });
+    } finally { await close(devices); }
+});
+
+    it('SNAP-02: legacy snapshots keep their historical ability only when the recorded count is provable', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            remote.documents.set(snapshotParentPath('writing-1'), { createdAt: stamp, label: '半成品', entityCount: 2, revision: 2, complete: false });
+            snapshotChild('writing-1', 'block:w1', entityDoc('block:w1', 'w1', { ...block('w1') }, 2, false));
+            remote.documents.set(snapshotParentPath('no-count'), { createdAt: stamp, label: '无数量', revision: 2 });
+            snapshotChild('no-count', 'block:nc', entityDoc('block:nc', 'nc', { ...block('nc') }, 2, false));
+            remote.documents.set(snapshotParentPath('legacy-ok'), { createdAt: stamp, label: '旧版一致', entityCount: 1, revision: 2 });
+            snapshotChild('legacy-ok', 'block:legacy-ok', entityDoc('block:legacy-ok', 'legacy-ok', { ...block('legacy-ok') }, 2, false));
+            remote.documents.set(snapshotParentPath('legacy-short'), { createdAt: stamp, label: '旧版缺项', entityCount: 2, revision: 2 });
+            snapshotChild('legacy-short', 'block:legacy-short', entityDoc('block:legacy-short', 'legacy-short', { ...block('legacy-short') }, 2, false));
+
+            const byId = new Map((await service.listCloudRecoverySnapshots(UID)).map((item) => [item.id, item]));
+            expect(byId.get('writing-1')!.status).toBe('writing');
+            expect(byId.get('no-count')!.status).toBe('unverifiable');
+            expect(byId.get('legacy-ok')!.status).toBe('legacy-unverified');
+            expect(byId.get('legacy-short')!.status).toBe('legacy-unverified');
+
+            const before = await localBookkeeping(devices[0]);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'writing-1')).rejects.toThrow(/尚未完成写入/);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'no-count')).rejects.toThrow(/缺少可靠的完整性记录/);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'legacy-short')).rejects.toThrow(/不完整/);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+            expect(await blockIds(devices[0])).toEqual(['one', 'two']);
+
+            await expect(service.restoreCloudRecoverySnapshot(user, 'legacy-ok')).resolves.toMatchObject({ status: 'legacy-unverified', entityCount: 1 });
+            expect(await blockIds(devices[0])).toEqual(['legacy-ok']);
+            expect((await devices[0].cloudSyncState.get('state'))!.lastPulledRevision).toBe(2);
+        } finally { await close(devices); }
+    });
+
+    it('SNAP-03: a document the tolerant merge would silently drop is fatal for a full replacement', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            remote.documents.set(snapshotParentPath('damaged'), { createdAt: stamp, label: '损坏', entityCount: 2, revision: 2, complete: true });
+            snapshotChild('damaged', 'block:ok', entityDoc('block:ok', 'ok', { ...block('ok') }, 2, false));
+            snapshotChild('damaged', 'block:broken', { entityType: 'block', entityId: 'broken', revision: 2, payload: {} });
+
+            const before = await localBookkeeping(devices[0]);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'damaged')).rejects.toThrow(/内容哈希/);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+            expect(await blockIds(devices[0])).toEqual(['one', 'two']);
+        } finally { await close(devices); }
+    });
+
+    it('SNAP-04: the cloud-wins replacement still works, and refuses a damaged set before any local write', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            // Positive control: the strict validator must not reject a healthy cloud set.
+            await expect(service.resolveCloudSyncConflict(user, 'cloud', aggressive)).resolves.toMatchObject({ kind: 'synced', restored: true });
+
+            remote.documents.set(`users/${UID}/syncEntities/block:broken`, {
+                entityType: 'block', entityId: 'broken', revision: 3, payload: {},
+                contentHash: 'h', contentHashAlgorithm: 'sha256', contentHashVersion: 2, deleted: false,
+            });
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(3, 3));
+
+            const before = await localBookkeeping(devices[0]);
+            const localBefore = await blockIds(devices[0]);
+            await expect(service.resolveCloudSyncConflict(user, 'cloud', aggressive)).rejects.toThrow(/载荷为空|无法解析|实体/);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+            expect(await blockIds(devices[0])).toEqual(localBefore);
+        } finally { await close(devices); }
+    });
+
+    it('SNAP-05: an unverified commit marker is never advertised, and the retry produces a complete snapshot', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            remote.failSnapshotCommitMarker = true;
+            await expect(service.resolveCloudSyncConflict(user, 'local', aggressive)).rejects.toThrow('synthetic snapshot commit marker failure');
+            expect(allSnapshotParents()).toHaveLength(0);
+            expect(allSnapshotChildren().length).toBeGreaterThan(0);
+            expect(await service.listCloudRecoverySnapshots(UID)).toEqual([]);
+
+            expect(await service.resolveCloudSyncConflict(user, 'local', aggressive)).toMatchObject({ kind: 'synced' });
+            const listed = await service.listCloudRecoverySnapshots(UID);
+            expect(listed).toHaveLength(1);
+            expect(listed[0].status).toBe('complete');
+            expect(listed[0].entityCount).toBe(allSnapshotChildren(listed[0].id).length);
+        } finally { await close(devices); }
+    });
+});
+
+const assetPath = (hash: string) => `users/${UID}/assets/${hash}`;
+
+const assetDocument = (entityId: string, payload: Record<string, unknown>) => ({
+    entityType: 'asset', entityId,
+    payload: {
+        id: entityId, fileName: `${entityId}.png`, title: entityId, kind: 'image',
+        createdAt: stamp, updatedAt: stamp,
+        ...payload,
+    },
+    deleted: false, revision: 2, contentHash: `hash-${entityId}`,
+    contentHashAlgorithm: 'sha256', contentHashVersion: 2, updatedAt: stamp,
+});
+
+describe('P2 downloaded-asset byte verification', () => {
+    /**
+     * A complete recovery point holding one record and the one asset that address points at.
+     * The asset is addressed by `payload.contentHash`, which is the Storage object path suffix.
+     */
+    async function assetSnapshot(id: string, options: {
+        bytes?: string;
+        type?: string;
+        storedBytes?: string;
+        storedType?: string;
+        payloadPatch?: Record<string, unknown>;
+        entityPatch?: Record<string, unknown>;
+    } = {}) {
+        const bytes = options.bytes ?? 'asset-bytes';
+        const type = options.type ?? 'image/png';
+        const blob = new Blob([bytes], { type });
+        const hash = await whiteboxHashBlob(blob);
+        storageProbe.blobs.set(assetPath(hash), new Blob([options.storedBytes ?? bytes], { type: options.storedType ?? type }));
+        remote.documents.set(snapshotParentPath(id), { createdAt: stamp, label: id, entityCount: 2, revision: 2, complete: true });
+        snapshotChild(id, `block:${id}`, entityDoc(`block:${id}`, id, { ...block(id), id }, 2, false));
+        const photo = `${id}-photo`;
+        snapshotChild(id, `asset:${photo}`, {
+            ...assetDocument(photo, { mimeType: type, size: blob.size, contentHash: hash, ...(options.payloadPatch ?? {}) }),
+            ...(options.entityPatch ?? {}),
+        });
+        return { hash, blob, photo };
+    }
+
+    it('P2-01: verified bytes reach the local database and the cursor only when the whole set is sound', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+            const { photo } = await assetSnapshot('p2-ok');
+
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-ok')).resolves.toMatchObject({
+                status: 'complete', entityCount: 2, revision: 2,
+            });
+            // Exactly one Storage object was fetched, and it had to pass the byte check to get here.
+            expect(storageProbe.downloads).toBe(1);
+            // fake-indexeddb does not round-trip a Blob, so the persisted row is checked by identity
+            // fields; the byte-level proof for this object is the assertion above plus P2-02.
+            expect(await devices[0].assets.get(photo)).toMatchObject({
+                id: photo, fileName: `${photo}.png`, mimeType: 'image/png', kind: 'image',
+            });
+            expect(await blockIds(devices[0])).toEqual(['p2-ok']);
+            expect((await devices[0].cloudSyncState.get('state'))!.lastPulledRevision).toBe(2);
+
+            // An old asset document declares `fnv1a` for its *entity payload* hash, which says nothing
+            // about the blob address. It has to stay restorable.
+            await assetSnapshot('p2-legacy', {
+                bytes: 'legacy-bytes-ok',
+                entityPatch: { contentHashAlgorithm: 'fnv1a', contentHashVersion: 1, contentHash: 'legacy-entity-hash' },
+            });
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-legacy')).resolves.toMatchObject({ entityCount: 2 });
+            expect(storageProbe.downloads).toBe(2);
+            expect(await blockIds(devices[0])).toEqual(['p2-legacy']);
+        } finally { await close(devices); }
+    });
+
+    it('P2-02: wrong, truncated or mis-declared bytes are rejected before anything local changes', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            // Each snapshot must use its own bytes: the address is derived from the bytes, so two
+            // snapshots sharing a content string would share one Storage path and mask each other.
+            await assetSnapshot('p2-wrong', { bytes: 'wrong-bytes-01', storedBytes: 'wrong-bytes-99' });
+            await assetSnapshot('p2-short', { bytes: 'short-bytes-ok', storedBytes: 'short' });
+            await assetSnapshot('p2-size', { bytes: 'size-bytes-ok', payloadPatch: { size: 3 } });
+            await assetSnapshot('p2-mime', { bytes: 'mime-bytes-ok', payloadPatch: { mimeType: 'audio/mpeg' } });
+
+            const before = await localBookkeeping(devices[0]);
+            const beforeBlocks = await blockIds(devices[0]);
+
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-wrong')).rejects.toThrow(/字节内容与声明不一致/);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-short')).rejects.toThrow(/字节内容与声明不一致/);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-size')).rejects.toThrow(/实际大小 13 字节与声明的 3 字节不一致/);
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-mime')).rejects.toThrow(/实际类型 image\/png 与声明的 audio\/mpeg 不一致/);
+
+            expect(storageProbe.downloads).toBe(4);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+            expect(await blockIds(devices[0])).toEqual(beforeBlocks);
+            expect(await devices[0].assets.count()).toBe(0);
+        } finally { await close(devices); }
+    });
+
+    it('P2-03: an incremental pull that receives damaged bytes lands no update and does not move the cursor', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const blob = new Blob(['asset-bytes'], { type: 'image/png' });
+            const hash = await whiteboxHashBlob(blob);
+            storageProbe.blobs.set(assetPath(hash), new Blob(['tampered'], { type: 'image/png' }));
+            remote.documents.set(`users/${UID}/syncEntities/asset:a1`, {
+                ...assetDocument('a1', { mimeType: 'image/png', size: blob.size, contentHash: hash }), revision: 2,
+            });
+            remote.documents.set(`users/${UID}/syncEntities/block:extra`, entityDoc('block:extra', 'extra', { ...block('extra') }, 2, false));
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(2, 2));
+
+            const before = await localBookkeeping(devices[0]);
+            const beforeBlocks = await blockIds(devices[0]);
+            await expect(sync(devices, 0)).rejects.toThrow(/字节内容与声明不一致/);
+
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+            expect(await blockIds(devices[0])).toEqual(beforeBlocks);
+            expect(await devices[0].assets.count()).toBe(0);
+        } finally { await close(devices); }
+    });
+});
+
+describe('P2 atomic restore commit', () => {
+    it('P2-04: a failure while writing the ledger/cursor rolls the recovery-point replacement back too', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+            remote.documents.set(snapshotParentPath('p2-atomic'), { createdAt: stamp, label: '原子提交', entityCount: 1, revision: 2, complete: true });
+            snapshotChild('p2-atomic', 'block:p2-atomic', entityDoc('block:p2-atomic', 'p2-atomic', { ...block('p2-atomic') }, 2, false));
+
+            const before = await localBookkeeping(devices[0]);
+            const beforeBlocks = await blockIds(devices[0]);
+            // The data replacement and the ledger/cursor write share one Dexie transaction, so a
+            // failure on the bookkeeping half must leave the device on the previous dataset.
+            const hook = vi.spyOn(devices[0].cloudSyncLedger, 'bulkPut').mockRejectedValueOnce(new Error('synthetic ledger commit failure'));
+            try {
+                await expect(service.restoreCloudRecoverySnapshot(user, 'p2-atomic')).rejects.toThrow('synthetic ledger commit failure');
+            } finally { hook.mockRestore(); }
+
+            expect(await blockIds(devices[0])).toEqual(beforeBlocks);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+
+            // Retrying with a healthy write completes normally, so the aborted attempt left nothing behind.
+            await expect(service.restoreCloudRecoverySnapshot(user, 'p2-atomic')).resolves.toMatchObject({ entityCount: 1 });
+            expect(await blockIds(devices[0])).toEqual(['p2-atomic']);
+        } finally { await close(devices); }
+    });
+
+    it('P2-05: cloud-wins commits its dataset and ledger together, so a rollback restores the old cursor', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const user = { uid: UID } as any;
+
+            const before = await localBookkeeping(devices[0]);
+            const beforeBlocks = await blockIds(devices[0]);
+            const hook = vi.spyOn(devices[0].cloudSyncLedger, 'bulkPut').mockRejectedValueOnce(new Error('synthetic ledger commit failure'));
+            try {
+                await expect(service.resolveCloudSyncConflict(user, 'cloud', aggressive)).rejects.toThrow('synthetic ledger commit failure');
+            } finally { hook.mockRestore(); }
+
+            expect(await blockIds(devices[0])).toEqual(beforeBlocks);
+            expect(await localBookkeeping(devices[0])).toEqual(before);
+
+            await expect(service.resolveCloudSyncConflict(user, 'cloud', aggressive)).resolves.toMatchObject({ kind: 'synced', restored: true });
+            expect(await localBookkeeping(devices[0])).not.toEqual(before);
+        } finally { await close(devices); }
     });
 });

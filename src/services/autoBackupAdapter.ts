@@ -1,7 +1,7 @@
 import { createNativeRepository } from "./nativeRepositoryBackupService";
 import type { KnowledgeBackupToken } from "../features/knowledgeLibrary/scope";
 import { currentKnowledgeOwner, knowledgeContextGeneration, assertKnowledgeOwner } from "../features/knowledgeLibrary/context";
-import type { StorageAdapter, StorageSnapshot } from "../types";
+import type { AutoBackupVerification, StorageAdapter, StorageSnapshot } from "../types";
 import { snapshotToZip } from "./backup";
 import {
   bindNativeAutoBackupFolder,
@@ -30,7 +30,14 @@ export interface AutoBackupWriteResult {
   verifiedAt?: number;
   lastModified?: number;
   warning?: string;
+  /**
+   * What was actually proven about the file that was just written, so `verifiedAt` can never be
+   * read as a stronger guarantee than the platform gave us.
+   */
+  verification?: AutoBackupVerification;
 }
+
+export type { AutoBackupVerification };
 
 export interface AutoBackupAdapter {
   isAvailable(): boolean;
@@ -97,16 +104,28 @@ export const autoBackupAdapter: AutoBackupAdapter = {
     const directory = scope ? await webDirectoryHandle.getDirectoryHandle("study-journal-backup-" + scope.destinationId, { create: true }) : webDirectoryHandle;
     const zip = await snapshotToZip(await scopedStore.createSnapshot());
     const fileHandle = await directory.getFileHandle(LATEST_FILE_NAME, { create: true });
+    /**
+     * `createWritable()` writes to a swap file, so the previous `latest.zip` survives an interrupted
+     * write. The read-back below is the other half: the provider's view of the file must match the
+     * bytes we handed it, otherwise a silent truncation would be reported as a verified backup.
+     */
     const writable = await fileHandle.createWritable();
     await writable.write(zip);
     await writable.close();
     const file = await fileHandle.getFile();
+    if (zip.size <= 0 || file.size !== zip.size) {
+      throw new Error(
+        `自动备份写入后核对失败：写入 ${zip.size} 字节，但备份文件夹中的 ${LATEST_FILE_NAME} 为 ${file.size} 字节。`
+        + "为避免把不完整的备份当成成功结果，本次没有更新备份状态；上一份备份没有被改动。",
+      );
+    }
     return {
       folderName: webDirectoryHandle.name,
       size: file.size,
       displayName: file.name,
       lastModified: file.lastModified,
       verifiedAt: Date.now(),
+      verification: "destination-readback",
     };
     } finally { destinationBusy = false; }
   },
