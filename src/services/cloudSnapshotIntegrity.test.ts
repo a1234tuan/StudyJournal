@@ -221,6 +221,20 @@ describe("downloaded asset byte verification", () => {
       .resolves.toBeUndefined();
   });
 
+  it("MIME-A: a concrete declaration is not contradicted by a generic-fallback blob type", async () => {
+    // The bytes already matched the hash. A transport that reports the generic upload fallback
+    // carries no type information, so it cannot contradict a concrete declaration. The exemption
+    // must be symmetric: it used to fire only when the *declared* side was the fallback, so a
+    // byte-identical object whose blob type is `application/octet-stream` was wrongly rejected.
+    const png = bytes("hello", "image/png");
+    await expect(assertDownloadedAssetVerified({
+      hash: await hashBlob(png),
+      blob: bytes("hello", "application/octet-stream"),
+      label: "a.png",
+      declaredMimeType: "image/png",
+    })).resolves.toBeUndefined();
+  });
+
   it("rejects a hash declaration this client cannot reproduce instead of treating it as verified", async () => {
     const blob = bytes("hello");
     await expect(assertDownloadedAssetVerified({ hash: "legacy-fnv1a-hash", blob }))

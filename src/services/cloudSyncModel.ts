@@ -548,7 +548,10 @@ export interface CloudSyncSmallEntityMerge {
 /**
  * Three-way merge for the two small entities whose fields are independently editable.
  * A missing base is deliberately conservative: old ledgers have no common ancestor and
- * therefore still use entity-level conflict handling.
+ * therefore still use entity-level conflict handling. An *empty* base is treated the same
+ * way — a >threshold externalized payload records `basePayload: {}` in the ledger, and `{}`
+ * is truthy, so without this it would run a field merge against an empty ancestor and
+ * silently resurrect fields the cloud deleted.
  */
 export const mergeCloudSyncSmallEntity = (
   local: Pick<CloudSyncEntity, "entityType" | "payload" | "deleted">,
@@ -564,7 +567,7 @@ export const mergeCloudSyncSmallEntity = (
     : payload;
   const localPayload = normalizePayload(local.payload);
   const remotePayload = normalizePayload(remote.payload);
-  if (!basePayload) {
+  if (!basePayload || Object.keys(basePayload).length === 0) {
     return !local.deleted && !remote.deleted && stableJson(localPayload) === stableJson(remotePayload)
       ? { payload: remotePayload, deleted: false, conflicts: [] }
       : { payload: remotePayload, deleted: Boolean(remote.deleted), conflicts: ["entity"] };

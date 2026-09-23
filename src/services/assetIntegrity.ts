@@ -61,9 +61,9 @@ export type AssetByteFailure =
  *
  * Returns `undefined` when every declared fact agrees with the bytes. Size and MIME are checked as
  * separately declared facts: a hash-matching object whose declaration contradicts it is still a
- * metadata contract violation. The one deliberate exception is a byte-identical object whose
- * declared MIME is the generic upload fallback — that value means "no type known", so a transport
- * reporting the real type is not a contradiction.
+ * metadata contract violation. The one deliberate exception is a byte-identical object where either
+ * side's MIME is the generic upload fallback — that value means "no type known", so it cannot
+ * contradict a concrete type on the other side. Only two concrete, differing types are a violation.
  */
 export const assetByteFailure = async (params: {
   hash: string;
@@ -83,7 +83,9 @@ export const assetByteFailure = async (params: {
   }
   const declaredMimeType = normalizeMimeType(params.declaredMimeType);
   const actualMimeType = normalizeMimeType(params.blob.type);
-  if (declaredMimeType && declaredMimeType !== UNKNOWN_MIME_TYPE && actualMimeType && declaredMimeType !== actualMimeType) {
+  if (declaredMimeType && actualMimeType
+    && declaredMimeType !== UNKNOWN_MIME_TYPE && actualMimeType !== UNKNOWN_MIME_TYPE
+    && declaredMimeType !== actualMimeType) {
     return { reason: "mime", declaredMimeType, actualMimeType };
   }
   return undefined;

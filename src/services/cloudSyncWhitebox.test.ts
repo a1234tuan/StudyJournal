@@ -15,7 +15,7 @@ const remote = vi.hoisted(() => ({
     writeBatches: 0,
     failSnapshotCommitMarker: false,
 }));
-const storageProbe = vi.hoisted(() => ({ metadataCalls: 0, blobs: new Map<string, Blob>(), downloads: 0 }));
+const storageProbe = vi.hoisted(() => ({ metadataCalls: 0, blobs: new Map<string, Blob>(), downloads: 0, objects: new Map<string, Set<string>>(), deleted: [] as string[] }));
 vi.mock('firebase/storage', () => ({
     ref: (_storage: unknown, path: string) => ({ fullPath: path }),
     getMetadata: async () => { storageProbe.metadataCalls++; throw new Error('synthetic 检查云端资源超时'); },
@@ -28,8 +28,18 @@ vi.mock('firebase/storage', () => ({
         if (!blob) throw new Error('unexpected download');
         return blob;
     },
-    list: () => { throw new Error('unexpected list'); },
-    deleteObject: () => { throw new Error('unexpected delete'); },
+    // The GC path lists a root and deletes by reference. Objects are staged per root fullPath so a
+    // test controls exactly what Storage holds, and every deletion is recorded for assertion. Before
+    // this the two threw, so the irreversible delete branch had zero coverage.
+    list: async (root: any) => {
+        const names = storageProbe.objects.get(root.fullPath) ?? new Set<string>();
+        return { items: [...names].map((name) => ({ name, fullPath: `${root.fullPath}/${name}` })), nextPageToken: undefined };
+    },
+    deleteObject: async (target: any) => {
+        storageProbe.deleted.push(target.fullPath);
+        const root = target.fullPath.slice(0, target.fullPath.lastIndexOf('/'));
+        storageProbe.objects.get(root)?.delete(target.name);
+    },
 }));
 vi.mock('../db/database', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -41,7 +51,7 @@ vi.mock('../db/database', async (importOriginal) => {
 });
 vi.mock('firebase/firestore', async (importOriginal) => {
     const actual = await importOriginal<any>();
-    const snap = (path: string) => ({ id: path.split('/').at(-1), exists: () => remote.documents.has(path), data: () => structuredClone(remote.documents.get(path)) });
+    const snap = (path: string) => ({ id: path.split('/').at(-1), ref: { path }, exists: () => remote.documents.has(path), data: () => structuredClone(remote.documents.get(path)) });
     const getDocs = async (target: any) => {
         remote.queries++;
         remote.queryLog.push({ path: target.path, constraints: structuredClone(target.constraints ?? []) });
@@ -95,7 +105,20 @@ vi.mock('firebase/firestore', async (importOriginal) => {
                 },
             };
         },
-        getCountFromServer: async (target: any) => ({ data: () => ({ count: [...remote.documents.keys()].filter(path => path.startsWith(target.path + '/')).length }) }),
+        getCountFromServer: async (target: any) => {
+            // Mirror getDocs: a count query must honor its where/limit constraints, otherwise a
+            // same-predicate count proof compares a filtered read against a whole-collection count and
+            // can never detect a dropped document. Bare collection refs (no constraints) still count
+            // every document under the prefix, so the GC count paths are unchanged.
+            let rows = [...remote.documents].filter(([path]) => path.startsWith(target.path + '/'));
+            for (const constraint of target.constraints ?? []) {
+                if (constraint.kind !== 'where') continue;
+                rows = rows.filter(([path, value]) => { const field = constraint.field === '__name__' ? path.split('/').at(-1) : value[constraint.field]; return constraint.op === 'in' ? constraint.value.includes(field) : constraint.op === '>' ? field > constraint.value : constraint.op === '<' ? field < constraint.value : constraint.op === '<=' ? field <= constraint.value : field === constraint.value; });
+            }
+            const cap = target.constraints?.find((constraint: any) => constraint.kind === 'limit');
+            if (cap) rows = rows.slice(0, cap.count);
+            return { data: () => ({ count: rows.length }) };
+        },
         runTransaction: async (_db: any, callback: any) => {
             const pending: any[] = [];
             const result = await callback({ get: async (target: any) => { remote.reads++; return snap(target.path); }, set: (target: any, value: any) => pending.push([target.path, structuredClone(value)]) });
@@ -155,6 +178,8 @@ async function boot(options: { completeThrough?: number | null | undefined } = {
     remote.failSnapshotCommitMarker = false;
     storageProbe.blobs.clear();
     storageProbe.downloads = 0;
+    storageProbe.objects.clear();
+    storageProbe.deleted.length = 0;
     const devices = [new WhiteboxDatabase('wb-phone-' + crypto.randomUUID()), new WhiteboxDatabase('wb-desktop-' + crypto.randomUUID())];
     for (const database of devices) {
         await database.open();
@@ -1004,6 +1029,306 @@ describe('P2 atomic restore commit', () => {
 
             await expect(service.resolveCloudSyncConflict(user, 'cloud', aggressive)).resolves.toMatchObject({ kind: 'synced', restored: true });
             expect(await localBookkeeping(devices[0])).not.toEqual(before);
+        } finally { await close(devices); }
+    });
+});
+
+/**
+ * F-A — the local-wins rollback archive must never be a truncated archive that claims completeness.
+ *
+ * `replaceCloudWithLocal` (the user-facing "以本机为准" conflict choice) builds the "冲突前的云端版本"
+ * recovery point from a *tolerant* read filtered to `revision <= head`, so the array it archives can
+ * silently omit (a) confirmed documents the tolerant parser could not read and (b) unconfirmed
+ * documents left above head by an interrupted publish. `makeRemoteSnapshot` stamps that archive
+ * `complete: true` with an `entityCount` taken from the same filtered array, and `assertStrictCloudSnapshot`
+ * only compares the declaration against the documents just written — a number compared with itself,
+ * which structurally cannot fail. The archive is restorable, so a truncated set could replace the
+ * local database while advertised as complete.
+ *
+ * The fix counts the confirmed and pending documents against the server before offering the recovery
+ * point. When the count disagrees with what the tolerant read kept (a drop) or any document sits above
+ * head (a pending write), it skips the archive and warns instead of fabricating false completeness —
+ * while still honoring the local-wins publish, which is the user's explicit choice and the sanctioned
+ * way past another device's unconfirmed writes. CONTROL proves a well-formed extra document is still
+ * archived, so the skip below is caused by the unprovable set rather than by the fixture.
+ */
+describe('F-A: the local-wins rollback archive is skipped rather than truncated while claiming completeness', () => {
+    const faParentPath = (id: string) => `users/${UID}/syncSnapshots/${id}`;
+    const faChildren = (id: string) => [...remote.documents.keys()].filter((path) => path.startsWith(`${faParentPath(id)}/entities/`));
+    const faActivePaths = () => [...remote.documents.keys()].filter((path) => path.startsWith(`users/${UID}/syncEntities/`));
+    const faRollback = async (service: any) =>
+        (await service.listCloudRecoverySnapshots(UID)).find((item: any) => item.label.includes('冲突前的云端版本'));
+    const faChildKeys = (id: string) => faChildren(id).map((path) => path.split('/').at(-1));
+    /** Resolve a local-wins conflict while capturing every progress message the service surfaces. */
+    const faResolveLocal = async (service: any) => {
+        const messages: string[] = [];
+        const result = await service.resolveCloudSyncConflict({ uid: UID } as any, 'local', { ...aggressive, onProgress: (p: any) => messages.push(p.message) });
+        return { result, messages };
+    };
+
+    it('CONTROL: a well-formed extra cloud document IS included, so the skip below is caused by an unprovable set', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            const baselineCount = faActivePaths().length;
+            remote.documents.set(`users/${UID}/syncEntities/block:ghost`,
+                entityDoc('block:ghost', 'ghost', { id: 'ghost', type: 'record', title: 'ghost' }, 1));
+
+            const { result } = await faResolveLocal(service);
+            expect(result).toMatchObject({ kind: 'synced' });
+            const rollback = await faRollback(service);
+            expect(rollback).toBeDefined();
+            const childKeys = faChildKeys(rollback.id);
+            expect(faActivePaths().length).toBe(baselineCount + 1);
+            expect(childKeys).toContain('block:ghost');
+            expect(remote.documents.get(faParentPath(rollback.id)).entityCount).toBe(childKeys.length);
+        } finally { await close(devices); }
+    });
+
+    it('F-A-1: a malformed confirmed document makes the set unprovable, so no complete-claiming archive is created', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            // Missing `contentHash` => tolerant parseRemoteEntity returns undefined => .filter(Boolean)
+            // drops it, so the archived array is one document short of the confirmed cloud set.
+            remote.documents.set(`users/${UID}/syncEntities/block:ghost`, {
+                key: 'block:ghost', entityType: 'block', entityId: 'ghost',
+                payload: { id: 'ghost', type: 'record', title: 'ghost' }, revision: 1, deleted: false,
+            });
+
+            const { result, messages } = await faResolveLocal(service);
+            // The user's local-wins choice is still honored ...
+            expect(result).toMatchObject({ kind: 'synced' });
+            // ... but no recovery point is fabricated over the set we could not prove complete.
+            expect(await faRollback(service)).toBeUndefined();
+            expect(messages.some((message) => message.includes('无法读取的同步数据'))).toBe(true);
+        } finally { await close(devices); }
+    });
+
+    it('F-A-2: an unconfirmed document above head makes the set unprovable, so no complete-claiming archive is created', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            // A publish that committed entity documents but never advanced headRevision leaves them in
+            // (headRevision, nextRevision]. synchronizeCloudChanges guards this with
+            // hasRemoteRevisionsBetween; replaceCloudWithLocal is the sanctioned override, so it must
+            // proceed but cannot capture the pending document in a complete-claiming recovery point.
+            remote.documents.set(`users/${UID}/syncEntities/block:pending`,
+                entityDoc('block:pending', 'pending', { id: 'pending', type: 'record', title: 'pending' }, 2));
+
+            const { result, messages } = await faResolveLocal(service);
+            expect(result).toMatchObject({ kind: 'synced' });
+            expect(await faRollback(service)).toBeUndefined();
+            expect(messages.some((message) => message.includes('尚未确认的同步写入'))).toBe(true);
+        } finally { await close(devices); }
+    });
+});
+
+/**
+ * N1 — incremental cursor poisoning (#4).
+ *
+ * A normal (non-destructive) pull reads cloud changes with the *tolerant* parser, which silently
+ * drops any document it cannot understand. Before the fix, the no-download branch advanced
+ * `remoteDatasetCompleteThroughRevision` to head even when every in-range document had been dropped,
+ * so the device declared "I hold the complete cloud set through head" over a dataset it had just
+ * shrunk — and a later destructive entry trusts that declaration instead of re-validating. The fix
+ * freezes the completeness declaration whenever `droppedCount > 0` while still advancing the pull
+ * cursor past the unusable document (a malformed doc can never be merged, so staying stuck on it
+ * forever would be worse). Only a later full restore, which re-validates strictly, re-establishes it.
+ */
+describe('N1: a dropped incremental document freezes completeness but still advances the pull cursor (#4)', () => {
+    const localSyncState = (device: any) => device.cloudSyncState.get('state');
+
+    it('N1-A: a malformed in-range document advances lastPulledRevision but leaves remoteDatasetCompleteThroughRevision behind', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            // A confirmed cloud document at revision 2 that the tolerant parser cannot read
+            // (missing contentHash => parseRemoteEntity returns undefined => dropped).
+            remote.documents.set(`users/${UID}/syncEntities/block:bad`, {
+                key: 'block:bad', entityType: 'block', entityId: 'bad',
+                payload: { id: 'bad', type: 'record', title: 'bad' }, revision: 2, deleted: false,
+            });
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(2));
+
+            const result = await sync(devices, 0);
+            expect(result).toMatchObject({ kind: 'synced', downloaded: 0 });
+
+            const state = await localSyncState(devices[0]);
+            // The pull cursor moves past the unusable document ...
+            expect(state.lastPulledRevision).toBe(2);
+            // ... but completeness is frozen at the last revision this device held in full, so it no
+            // longer equals the cursor and `complete` cannot be claimed over the shrunk dataset.
+            expect(state.remoteDatasetCompleteThroughRevision).toBe(1);
+            expect(state.remoteDatasetCompleteThroughRevision).not.toBe(state.lastPulledRevision);
+            // The malformed document was never applied locally.
+            expect(await devices[0].blocks.get('bad')).toBeUndefined();
+        } finally { await close(devices); }
+    });
+
+    it('N1-B: when every in-range document parses, both cursors advance together and completeness holds', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            remote.documents.set(`users/${UID}/syncEntities/block:good`, entityDoc('block:good', 'good', block('good'), 2));
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(2));
+
+            const result = await sync(devices, 0);
+            expect(result).toMatchObject({ kind: 'synced', downloaded: 1 });
+
+            const state = await localSyncState(devices[0]);
+            expect(state.lastPulledRevision).toBe(2);
+            expect(state.remoteDatasetCompleteThroughRevision).toBe(2);
+            expect(await devices[0].blocks.get('good')).toBeDefined();
+        } finally { await close(devices); }
+    });
+
+    it('N1-C: a partial drop applies the parsable document but still freezes completeness (applied branch)', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            // One parsable and one malformed document in (lastPulled, head]: the tolerant reader keeps
+            // the first and drops the second, so the applied branch runs with droppedCount === 1.
+            remote.documents.set(`users/${UID}/syncEntities/block:good`, entityDoc('block:good', 'good', block('good'), 2));
+            remote.documents.set(`users/${UID}/syncEntities/block:bad`, {
+                key: 'block:bad', entityType: 'block', entityId: 'bad',
+                payload: { id: 'bad', type: 'record', title: 'bad' }, revision: 3, deleted: false,
+            });
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(3));
+
+            const result = await sync(devices, 0);
+            expect(result).toMatchObject({ kind: 'synced', downloaded: 1 });
+
+            const state = await localSyncState(devices[0]);
+            // The parsable document is applied and the cursor advances to head ...
+            expect(await devices[0].blocks.get('good')).toBeDefined();
+            expect(state.lastPulledRevision).toBe(3);
+            // ... but the drop freezes completeness below the cursor.
+            expect(state.remoteDatasetCompleteThroughRevision).toBe(1);
+            expect(state.remoteDatasetCompleteThroughRevision).not.toBe(state.lastPulledRevision);
+            expect(await devices[0].blocks.get('bad')).toBeUndefined();
+        } finally { await close(devices); }
+    });
+});
+
+/**
+ * N2 — Storage GC must never irreversibly delete a blob it cannot prove is unreferenced (#1).
+ *
+ * `cleanUpUnreferencedStorage` decides what to delete by diffing the Storage listing against the set
+ * of asset hashes referenced by cloud entities. Before the fix that referenced set came from
+ * `getAllRemote` — a *tolerant* read filtered to `revision <= head` — so it silently omitted (a)
+ * documents the tolerant parser dropped as malformed and (b) pending documents an interrupted publish
+ * left above head, and it was built against a head that `parseRemoteState` silently defaults to 0 when
+ * the field is missing or non-number. Any of those shrinks the referenced set, and every blob it no
+ * longer mentions is deleted for good. The delete branch had zero coverage because the storage mock
+ * threw on list/deleteObject.
+ *
+ * The fix adds three unconditional judgments (they must also fire on the manual force-GC entry, which
+ * passes allowExpensive): ① skip when the head is untrusted or contradictory; ② skip when the tolerant
+ * read comes up short of the raw same-predicate server count; ③ read the whole collection so pending
+ * documents protect their blobs too. Each case below asserts both the recorded maintenance outcome and
+ * exactly which objects were deleted.
+ */
+describe('N2: Storage GC refuses to delete blobs it cannot prove are unreferenced (#1)', () => {
+    const assetRoot = `users/${UID}/assets`;
+    const assetDoc = (hash: string, revision: number) => ({
+        key: `asset:${hash}`, entityType: 'asset', entityId: hash,
+        payload: { id: hash, contentHash: hash, size: 16, mimeType: 'image/png', fileName: `${hash}.png`, kind: 'image' },
+        revision, deleted: false,
+        contentHash: `entity-${hash}`, contentHashVersion: 2, contentHashAlgorithm: 'sha256', updatedAt: stamp,
+    });
+    // Four snapshots so cleanupCloudRecoverySnapshotsIfDue has an expired page (slice(SNAPSHOT_LIMIT))
+    // and therefore actually calls cleanUpUnreferencedStorage; the snapshots are childless, so the
+    // referenced set is decided entirely by the active entity documents each case stages.
+    const seedSnapshots = (count: number) => {
+        for (let index = 1; index <= count; index++) {
+            remote.documents.set(`users/${UID}/syncSnapshots/snap${index}`, { createdAt: stamp, complete: true, entityCount: 0, status: 'complete' });
+        }
+    };
+    const runGc = async (service: any, device: any) => {
+        await service.cleanupCloudRecoverySnapshotsIfDue(UID, { force: true, allowExpensiveStorageGc: true });
+        return device.cloudSyncState.get('state');
+    };
+
+    it('N2-1: an asset referenced only by a pending document (revision > head) survives; a true orphan is still deleted', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashA`, assetDoc('hashA', 1)); // confirmed (<= head 1)
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashB`, assetDoc('hashB', 2)); // pending (> head 1)
+            storageProbe.objects.set(assetRoot, new Set(['hashA', 'hashB', 'hashOrphan']));
+            seedSnapshots(4);
+
+            const state = await runGc(service, devices[0]);
+            expect(state.lastSnapshotMaintenanceStatus).toBe('completed');
+            // The orphan is reclaimed ...
+            expect(storageProbe.deleted).toContain(`${assetRoot}/hashOrphan`);
+            // ... but the pending document's blob is protected, and so is the confirmed one.
+            expect(storageProbe.deleted).not.toContain(`${assetRoot}/hashB`);
+            expect(storageProbe.deleted).not.toContain(`${assetRoot}/hashA`);
+        } finally { await close(devices); }
+    });
+
+    it('N2-2: a malformed entity document makes the referenced set unprovable, so GC defers and deletes nothing', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            // Missing top-level contentHash => parseRemoteEntity returns undefined => the tolerant read
+            // drops it, so referenced.length falls one short of the raw server count.
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashM`, {
+                key: 'asset:hashM', entityType: 'asset', entityId: 'hashM',
+                payload: { id: 'hashM', contentHash: 'hashM', size: 16, mimeType: 'image/png', fileName: 'm.png', kind: 'image' },
+                revision: 1, deleted: false,
+            });
+            storageProbe.objects.set(assetRoot, new Set(['hashM', 'hashOrphan']));
+            seedSnapshots(4);
+
+            const state = await runGc(service, devices[0]);
+            expect(state.lastSnapshotMaintenanceStatus).toBe('deferred-cost');
+            expect(state.lastSnapshotMaintenanceError).toContain('无法证明资源引用完整');
+            expect(storageProbe.deleted).toEqual([]);
+            expect(storageProbe.objects.get(assetRoot)!.has('hashM')).toBe(true);
+        } finally { await close(devices); }
+    });
+
+    it('N2-3: an untrusted head (non-number headRevision defaulted to 0) defers instead of mass-deleting', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashA`, assetDoc('hashA', 1));
+            // A corrupt state document: parseRemoteState defaults headRevision to 0 and flags it untrusted.
+            remote.documents.set(`users/${UID}/syncState/current`, { protocolVersion: 2, headRevision: 'corrupt', nextRevision: 1, lock: null });
+            storageProbe.objects.set(assetRoot, new Set(['hashA', 'hashOrphan']));
+            seedSnapshots(4);
+
+            const state = await runGc(service, devices[0]);
+            expect(state.lastSnapshotMaintenanceStatus).toBe('deferred-cost');
+            expect(state.lastSnapshotMaintenanceError).toContain('云端同步状态不可信');
+            // Pre-fix this view (head 0) referenced nothing and deleted every blob.
+            expect(storageProbe.deleted).toEqual([]);
+        } finally { await close(devices); }
+    });
+
+    it('N2-4: a zero head with entities still present is contradictory, so GC defers instead of mass-deleting', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashA`, assetDoc('hashA', 1));
+            remote.documents.set(`users/${UID}/syncState/current`, stateDoc(0)); // head 0, but entities exist at revision 1
+            storageProbe.objects.set(assetRoot, new Set(['hashA', 'hashOrphan']));
+            seedSnapshots(4);
+
+            const state = await runGc(service, devices[0]);
+            expect(state.lastSnapshotMaintenanceStatus).toBe('deferred-cost');
+            expect(state.lastSnapshotMaintenanceError).toContain('云端同步状态不可信');
+            expect(storageProbe.deleted).toEqual([]);
         } finally { await close(devices); }
     });
 });

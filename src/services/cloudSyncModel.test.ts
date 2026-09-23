@@ -636,6 +636,23 @@ describe("cloud sync model", () => {
     ).conflicts).toEqual(["entity"]);
   });
 
+  it("N7-A: an empty merge base is treated as no common ancestor, not as an empty object", () => {
+    // A >threshold settings/template externalizes its payload, and the ledger used to record the
+    // emptied payload as `basePayload: {}`. `{}` is truthy, so the merge skipped the conservative
+    // "no common ancestor => entity-level conflict" branch and ran a three-way merge against an
+    // empty base: the cloud-deleted `theme` looks "unchanged" against `{}` while local looks
+    // "changed", so local wins and the deleted field silently resurrects. An empty base must
+    // behave exactly like `undefined`. Legacy ledger rows already hold `{}`, so this is fixed in
+    // the merge itself, not only at the recording site.
+    const local = { entityType: "settings" as const, payload: { id: "settings", examDate: "2026-12-27", theme: "dark" }, deleted: false };
+    const remote = { entityType: "settings" as const, payload: { id: "settings", examDate: "2026-12-27" }, deleted: false };
+    const withEmptyBase = mergeCloudSyncSmallEntity(local, remote, {});
+    const withNoBase = mergeCloudSyncSmallEntity(local, remote, undefined);
+    expect(withEmptyBase.conflicts).toEqual(["entity"]);
+    expect(withEmptyBase).toEqual(withNoBase);
+    expect(withEmptyBase.payload.theme).toBeUndefined();
+  });
+
   it("keeps local additions when choosing the cloud version", () => {
     const localAddition = {
       key: "block:local-only",

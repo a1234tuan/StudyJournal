@@ -106,6 +106,11 @@ export type RemoteSyncLock = {
 type RemoteSyncState = {
   protocolVersion: number;
   headRevision: number;
+  /**
+   * Read-time diagnostic: parseRemoteState had to default a missing/non-number `headRevision` to 0.
+   * Never persisted. An irreversible decision (Storage GC) must not trust a silently-zeroed head.
+   */
+  headRevisionUntrusted?: boolean;
   nextRevision: number;
   lock?: RemoteSyncLock | null;
   storageSummary?: RemoteStorageSummary | null;
@@ -422,6 +427,7 @@ const parseRemoteState = (value: unknown): RemoteSyncState => {
   return {
     protocolVersion: typeof data.protocolVersion === "number" ? data.protocolVersion : PROTOCOL_VERSION,
     headRevision: typeof data.headRevision === "number" ? data.headRevision : 0,
+    ...(typeof data.headRevision === "number" ? {} : { headRevisionUntrusted: true }),
     nextRevision: typeof data.nextRevision === "number" ? data.nextRevision : 0,
     storageSummary: parseStorageSummary(data.storageSummary),
     ...(lastLockRecovery ? { lastLockRecovery } : {}),
@@ -745,7 +751,7 @@ const getRemoteState = async (uid: string) => {
 };
 
 const getRemoteChanges = async (uid: string, afterRevision: number, state: RemoteSyncState, strict = false) => {
-  if (state.headRevision <= afterRevision) return { entities: [] as RemoteEntity[], reviewEvents: [] as RemoteReviewEvent[] };
+  if (state.headRevision <= afterRevision) return { entities: [] as RemoteEntity[], reviewEvents: [] as RemoteReviewEvent[], droppedCount: 0 };
   const [entities, reviewEvents] = await withTimeout(
     Promise.all([
       getDocs(query(entitiesRef(uid), where("revision", ">", afterRevision), where("revision", "<=", state.headRevision), orderBy("revision"))),
@@ -754,14 +760,23 @@ const getRemoteChanges = async (uid: string, afterRevision: number, state: Remot
     FIRESTORE_READ_TIMEOUT_MS,
     "拉取云端更改超时，请确认网络可连接后重试。",
   );
-  return {
-    entities: strict
-      ? await parseRemoteEntitiesStrict(entities.docs)
-      : await parseAndNormalizeRemoteEntities(entities.docs),
-    reviewEvents: strict
-      ? parseRemoteReviewEventsStrict(reviewEvents.docs)
-      : reviewEvents.docs.map((item) => parseRemoteReviewEvent(item.id, item.data())).filter((item): item is RemoteReviewEvent => Boolean(item)),
-  };
+  if (strict) {
+    return {
+      entities: await parseRemoteEntitiesStrict(entities.docs),
+      reviewEvents: parseRemoteReviewEventsStrict(reviewEvents.docs),
+      droppedCount: 0,
+    };
+  }
+  // The tolerant parsers drop unparsable documents. Report how many were dropped so the caller can
+  // refuse to advance the completeness declaration over a silently shrunk dataset (#4). The pull
+  // cursor still advances — only the "this device holds the complete cloud set through R" claim is
+  // frozen, so a later destructive entry re-validates strictly instead of trusting a poisoned cursor.
+  const parsedEntities = await parseAndNormalizeRemoteEntities(entities.docs);
+  const parsedEvents = reviewEvents.docs
+    .map((item) => parseRemoteReviewEvent(item.id, item.data()))
+    .filter((item): item is RemoteReviewEvent => Boolean(item));
+  const droppedCount = (entities.docs.length - parsedEntities.length) + (reviewEvents.docs.length - parsedEvents.length);
+  return { entities: parsedEntities, reviewEvents: parsedEvents, droppedCount };
 };
 
 const hasRemoteRevisionsBetween = async (uid: string, afterRevision: number, beforeRevision: number) => {
@@ -1734,7 +1749,7 @@ const persistLedgersInTransaction = async (
       cloudRevision: entity.revision,
       assetHash: entity.entityType === "asset" && typeof entity.payload.contentHash === "string" ? entity.payload.contentHash : undefined,
       basePayload: entity.entityType === "settings" || entity.entityType === "template"
-        ? entity.deleted ? undefined : entity.payload
+        ? (entity.deleted || Object.keys(entity.payload).length === 0 ? undefined : entity.payload)
         : undefined,
     })),
     ...events.map((event) => ({
@@ -1796,7 +1811,7 @@ const resetAndPersistLedgersInTransaction = async (state: CloudSyncStateRecord, 
       cloudRevision: entity.revision,
       assetHash: entity.entityType === "asset" && typeof entity.payload.contentHash === "string" ? entity.payload.contentHash : undefined,
       basePayload: entity.entityType === "settings" || entity.entityType === "template"
-        ? entity.deleted ? undefined : entity.payload
+        ? (entity.deleted || Object.keys(entity.payload).length === 0 ? undefined : entity.payload)
         : undefined,
     })),
     ...events.map((event) => ({
@@ -2064,9 +2079,30 @@ const cleanUpUnreferencedStorage = async (
     if (!options.allowExpensive && protectedReferenceCount > AUTO_MAINTENANCE_MAX_REFERENCED_DOCS) {
       return { kind: "deferred-cost", message: `同步实体规模超过 ${AUTO_MAINTENANCE_MAX_REFERENCED_DOCS} 项，已跳过自动资源扫描。` };
     }
-    const active = protectedRemote.exists ? (await getAllRemote(uid, protectedRemote.state)).entities : [];
+    // #1 judgment ①: never run an irreversible delete against an untrustworthy view of the cloud.
+    // parseRemoteState silently defaults a missing/non-number headRevision to 0, and a zero head with
+    // entities still present is a contradictory state (an interrupted or corrupt write). Either way we
+    // cannot reason about what is confirmed, so skip instead of guessing. Unconditional on purpose: the
+    // manual "force GC" entry passes allowExpensive, and a corrupt head is just as dangerous there.
+    if (protectedRemote.state.headRevisionUntrusted
+      || (protectedRemote.state.headRevision === 0 && protectedActiveCount > 0)) {
+      return { kind: "deferred-cost", message: "云端同步状态不可信（修订号缺失，或为零但仍有同步实体），已跳过资源清理以避免误删。" };
+    }
+    // #1 judgment ③: protect assets referenced by *pending* documents too. An interrupted publish
+    // uploads the blob before it commits the entity metadata and advances head, so a document can sit
+    // at revision > head with its asset already in Storage. getAllRemote filters those out, which used
+    // to let GC delete a blob the originating device still needs. Read the whole collection instead.
+    const active = protectedRemote.exists ? (await getAllRemoteDocuments(uid)).entities : [];
     const snapshots = await collectSnapshotEntities(uid, protectedSnapshotIds);
     const referenced = [...active, ...snapshots];
+    // #1 judgment ②: prove the tolerant read captured every referenced document before deleting
+    // anything it did not mention. protectedReferenceCount is the raw server count over the same two
+    // collections; if the tolerant parser dropped a malformed document, `referenced` comes up short and
+    // the "unreferenced" set is not trustworthy. Both sides use the same whole-collection predicate, so
+    // pending documents sit on both sides and cannot cause a permanent mismatch — only a real drop can.
+    if (referenced.length !== protectedReferenceCount) {
+      return { kind: "deferred-cost", message: "云端存在无法读取的同步数据，无法证明资源引用完整，已跳过资源清理以避免误删。" };
+    }
     const assetHashes = new Set(referenced.map(referencedAssetHash).filter((hash): hash is string => Boolean(hash)));
     const documentHashes = new Set(referenced
       .filter((entity) => !entity.deleted && entity.payloadDocumentHash)
@@ -2116,6 +2152,15 @@ export const cleanupCloudRecoverySnapshotsIfDue = async (
   snapshotMaintenanceRunning = true;
   try {
     const snapshotCount = (await getCountFromServer(snapshotsRef(uid))).data().count;
+    // #6c (known limitation, deliberately not "fixed" here): snapshots are ordered and recycled by
+    // wall-clock `createdAt`, so a device whose clock is skewed behind can have a freshly created
+    // recovery point sorted as oldest and recycled immediately. The naive fixes are worse than the
+    // bug: (a) ordering by `revision` or a serverTimestamp `orderKey` makes Firestore EXCLUDE any
+    // legacy snapshot lacking that field from the protected set in cleanUpUnreferencedStorage, which
+    // could delete still-referenced Storage objects (irreversible); (b) dropping the limit to sort in
+    // memory removes the read cap. The impact here is bounded — recycling only loses a recovery
+    // point, because assets still referenced by the active set stay protected. A real fix needs a
+    // deployed index plus a legacy backfill, so it is handled separately.
     const snapshots = await withTimeout(
       getDocs(query(
         snapshotsRef(uid),
@@ -2223,6 +2268,30 @@ const replaceCloudWithLocal = async (user: User, state: CloudSyncStateRecord, op
     });
     const remote = await getRemoteState(user.uid);
     const allRemote = await getAllRemote(user.uid, remote.state);
+    // #3/#3b: prove the recovery point we are about to advertise as complete really is complete.
+    // makeRemoteSnapshot stamps `complete: true` with an entityCount taken from this same filtered
+    // array, and assertStrictCloudSnapshot only compares that declaration against the documents it
+    // just wrote — a number compared with itself, which structurally cannot catch a truncated set.
+    // getAllRemote reads tolerantly and then keeps revision <= head, so the array can silently omit
+    // (a) confirmed documents the tolerant parser could not read and (b) unconfirmed documents from
+    // an interrupted publish (revision > head). Count both against the server before offering a
+    // recovery point we would be claiming is the whole cloud set.
+    const head = remote.state.headRevision;
+    const countRevision = async (target: Query, op: "<=" | ">", revision: number) =>
+      (await withTimeout(
+        getCountFromServer(query(target, where("revision", op, revision))),
+        FIRESTORE_READ_TIMEOUT_MS,
+        "核对云端数据完整性超时，请确认网络可连接后重试。",
+      )).data().count;
+    const [confirmedEntities, confirmedEvents, pendingEntities, pendingEvents] = await Promise.all([
+      countRevision(entitiesRef(user.uid), "<=", head),
+      countRevision(reviewEventsRef(user.uid), "<=", head),
+      countRevision(entitiesRef(user.uid), ">", head),
+      countRevision(reviewEventsRef(user.uid), ">", head),
+    ]);
+    const droppedUnparsable = confirmedEntities !== allRemote.entities.length || confirmedEvents !== allRemote.reviewEvents.length;
+    const hasPendingWrites = pendingEntities > 0 || pendingEvents > 0;
+    const snapshotProvable = !droppedUnparsable && !hasPendingWrites;
     const localKeys = new Set(exported.entities.map((entity) => entity.key));
     /**
      * Reverse tombstones: anything the remote has that this device does not is
@@ -2258,7 +2327,18 @@ const replaceCloudWithLocal = async (user: User, state: CloudSyncStateRecord, op
       await updateOperation(operationId, { status: "failed", phase: "releasing" });
       return { writeBudget: combinedEstimate };
     }
-    await makeRemoteSnapshot(user.uid, "冲突前的云端版本", allRemote.entities, allRemote.reviewEvents, remote.state.headRevision, options, lease.assert);
+    if (snapshotProvable) {
+      await makeRemoteSnapshot(user.uid, "冲突前的云端版本", allRemote.entities, allRemote.reviewEvents, remote.state.headRevision, options, lease.assert);
+    } else {
+      // Never fabricate a complete-claiming recovery point over a set we could not prove complete; a
+      // truncated archive advertised as whole is worse than none, because it is restorable and would
+      // replace the local database with the missing data silently absent. The local-wins publish
+      // still proceeds below: it is the user's explicit choice and, for an interrupted publish on
+      // another device, the sanctioned way to move past writes that were never confirmed.
+      progress(options, "snapshot", droppedUnparsable
+        ? "云端存在无法读取的同步数据，已跳过创建「冲突前的云端版本」恢复点，以免提供一个声称完整、实则缺失这些数据的恢复点。以本机为准的覆盖仍会继续。"
+        : "云端存在另一台设备尚未确认的同步写入，本次「以本机为准」会越过它们，且无法将其纳入恢复点，因此已跳过创建「冲突前的云端版本」。");
+    }
     await lease.assert();
     const result = await publish(user, state, exported, changes, options, lock);
     lockReleased = true;
@@ -2701,6 +2781,13 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
     }
 
     if (!initialRemote.exists && legacy && firstEmptyDevice) {
+      // #6a: this legacy-zip migration is intentionally NOT run through the cloud-snapshot strict
+      // classification (classifyCloudRecoverySnapshot / assertStrictCloudSnapshot). A zip backup has
+      // no cloud snapshot parent document (complete/entityCount) to classify; its integrity gate is
+      // zipToSnapshot's own container validation — manifest format/version, the v7 outer-container
+      // checksum, and per-asset byte verification (assertArchiveAssetBytes) — all of which throw
+      // before the destructive restore below. A pre-v7 archive without checksums is accepted on
+      // trust (legacy-unverified semantics) by design and must not be blocked here.
       progress(options, "downloading", "正在迁移旧版云端备份。", 0, 1);
       const archive = await withTimeout(
         getCloudStorageBlob(user.uid, legacySnapshotRef(user.uid)),
@@ -2714,7 +2801,7 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
 
     const remote = await getRemoteState(user.uid);
     if (await hasRemoteRevisionsBetween(user.uid, remote.state.headRevision, lock.revision)) {
-      throw new Error("云端存在尚未确认的同步写入，已暂停新写入以保护数据。请先在上次发起同步的设备重试核对。");
+      throw new Error("云端存在尚未确认的同步写入（通常是一次发布中断所致），已暂停新写入以保护数据。请等待发起该写入的设备完成同步后重试；若该设备不可用，可在本机执行一次「以本机为准」的冲突解决，越过这些未确认写入。");
     }
     if (firstEmptyDevice && remote.exists && remote.state.headRevision > 0) {
       const estimate = await readEstimateFor(user.uid, remote.state, state, migratedLedger, initialExport);
@@ -2742,7 +2829,7 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
       progress(options, "done", "已从云端恢复现有数据。");
       return { kind: "synced", uploaded: 0, downloaded, revision: remote.state.headRevision, pending: 0, restored: true };
     }
-    const remoteChanges = remote.exists ? await getRemoteChanges(user.uid, state.lastPulledRevision, remote.state) : { entities: [], reviewEvents: [] };
+    const remoteChanges = remote.exists ? await getRemoteChanges(user.uid, state.lastPulledRevision, remote.state) : { entities: [], reviewEvents: [], droppedCount: 0 };
     const changed = await deriveLocalCloudChanges(restored ? await exportCloudSync(await storage.createCloudSyncSnapshot()) : initialExport, migratedLedger);
     const mergedRemoteChanges = await mergeRemoteFieldChanges(initialExport, changed, remoteChanges, migratedLedger);
     const normalLocal = (firstEmptyDevice ? [] : changed.entities)
@@ -2769,7 +2856,11 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
     let downloaded = 0;
     if (!restored && (remoteChanges.entities.length || remoteChanges.reviewEvents.length)) {
       await applyRemote(user.uid, initialExport, mergedRemoteChanges, options, initialEpoch);
-      const completeThroughRevision = state.remoteDatasetCompleteThroughRevision !== undefined
+      // A document the tolerant reader dropped was never applied locally, so local can no longer be
+      // claimed equal to cloud through head. Advance the pull cursor but freeze the completeness
+      // declaration; only a full restore can re-establish it.
+      const completeThroughRevision = remoteChanges.droppedCount === 0
+        && state.remoteDatasetCompleteThroughRevision !== undefined
         && state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision
         ? remote.state.headRevision
         : undefined;
@@ -2778,7 +2869,9 @@ export const synchronizeCloudChanges = async (user: User, options: CloudSyncOpti
       restored = true;
     }
     if (!restored && downloaded === 0 && remote.state.headRevision > state.lastPulledRevision) {
-      const completeThroughRevision = state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision ? remote.state.headRevision : undefined;
+      // Every in-range document may have been dropped (parsed to nothing), which lands here instead of
+      // the applied branch above. Same rule: the pull cursor advances, completeness stays frozen.
+      const completeThroughRevision = remoteChanges.droppedCount === 0 && state.remoteDatasetCompleteThroughRevision === state.lastPulledRevision ? remote.state.headRevision : undefined;
       await persistLedgers(state, [], [], completeThroughRevision, remote.state.headRevision);
     }
     const skipReExport = downloaded === 0 && !restored;
@@ -3010,6 +3103,10 @@ export const resolveCloudSyncConflict = async (
     await lease.assert();
     const restored = await restoreRemote(user.uid, options, initialEpoch).catch(async (error: unknown) => {
       if (error instanceof CloudSyncLocalMutationError) throw error;
+      // This catch is only a legacy-zip fallback for transport-level failures. A strict integrity
+      // rejection means the current cloud dataset was deliberately refused as corrupt; falling back
+      // to an old legacy zip would mask that refusal and restore stale data, so it must propagate.
+      if (error instanceof CloudSnapshotIntegrityError) throw error;
       const legacy = await getCloudSnapshotInfo(user.uid);
       if (!legacy) throw error;
       const archive = await withTimeout(
