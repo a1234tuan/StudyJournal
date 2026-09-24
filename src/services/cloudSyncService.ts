@@ -2003,8 +2003,26 @@ const collectSnapshotEntities = async (uid: string, snapshotIds: string[]) => {
     FIRESTORE_READ_TIMEOUT_MS,
     "读取恢复快照内容超时，请确认网络可连接后重试。",
   );
-  const parsed = await Promise.all(children.map((items) => parseAndNormalizeRemoteEntities(items.docs)));
-  return parsed.flat();
+  // A snapshot's `entities` subcollection is not homogeneous: makeRemoteSnapshot writes entity docs
+  // and review-event docs (`review-event:` prefix, no entityType/entityId) into the same subcollection,
+  // and the raw server count the referenced-set proof compares against includes both. Partition by the
+  // same prefix the restore path uses (assertStrictCloudSnapshot) and count every document that
+  // tolerantly parses as either kind, so the proof compares like with like; a document that parses as
+  // neither is a genuine drop and still shortfalls `consumed`. Review events reference no Storage
+  // object, so only the entities feed the protection set.
+  const entities: RemoteEntity[] = [];
+  let consumed = 0;
+  for (const items of children) {
+    const entityDocs = items.docs.filter((item) => !item.id.startsWith(REVIEW_EVENT_DOCUMENT_PREFIX));
+    const eventDocs = items.docs.filter((item) => item.id.startsWith(REVIEW_EVENT_DOCUMENT_PREFIX));
+    const parsedEntities = await parseAndNormalizeRemoteEntities(entityDocs);
+    const parsedEvents = eventDocs
+      .map((item) => parseRemoteReviewEvent(item.id, item.data()))
+      .filter((event): event is RemoteReviewEvent => Boolean(event));
+    entities.push(...parsedEntities);
+    consumed += parsedEntities.length + parsedEvents.length;
+  }
+  return { entities, consumed };
 };
 
 type StorageCleanupOptions = { allowExpensive?: boolean; deadline?: number };
@@ -2093,14 +2111,16 @@ const cleanUpUnreferencedStorage = async (
     // at revision > head with its asset already in Storage. getAllRemote filters those out, which used
     // to let GC delete a blob the originating device still needs. Read the whole collection instead.
     const active = protectedRemote.exists ? (await getAllRemoteDocuments(uid)).entities : [];
-    const snapshots = await collectSnapshotEntities(uid, protectedSnapshotIds);
-    const referenced = [...active, ...snapshots];
-    // #1 judgment ②: prove the tolerant read captured every referenced document before deleting
-    // anything it did not mention. protectedReferenceCount is the raw server count over the same two
-    // collections; if the tolerant parser dropped a malformed document, `referenced` comes up short and
-    // the "unreferenced" set is not trustworthy. Both sides use the same whole-collection predicate, so
-    // pending documents sit on both sides and cannot cause a permanent mismatch — only a real drop can.
-    if (referenced.length !== protectedReferenceCount) {
+    const snapshotRead = await collectSnapshotEntities(uid, protectedSnapshotIds);
+    const referenced = [...active, ...snapshotRead.entities];
+    // #1 judgment ②: prove the tolerant read consumed every document the raw server count saw before
+    // deleting anything it did not mention. protectedReferenceCount is the raw count over the active
+    // entity collection plus each retained snapshot subcollection; a snapshot subcollection holds entity
+    // docs AND review-event docs, so the read side must count both (snapshotRead.consumed) or the two
+    // sides never balance for a real snapshot. Both sides use the same whole-collection predicate, so
+    // pending documents sit on both and cannot cause a permanent mismatch — only a real tolerant drop
+    // (a document that parses as neither an entity nor a review event) can shortfall the count.
+    if (active.length + snapshotRead.consumed !== protectedReferenceCount) {
       return { kind: "deferred-cost", message: "云端存在无法读取的同步数据，无法证明资源引用完整，已跳过资源清理以避免误删。" };
     }
     const assetHashes = new Set(referenced.map(referencedAssetHash).filter((hash): hash is string => Boolean(hash)));

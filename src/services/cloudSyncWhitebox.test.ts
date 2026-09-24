@@ -1331,4 +1331,40 @@ describe('N2: Storage GC refuses to delete blobs it cannot prove are unreference
             expect(storageProbe.deleted).toEqual([]);
         } finally { await close(devices); }
     });
+
+    it('N2-5: a retained snapshot whose subcollection mixes an entity and a review event still balances, so a true orphan is reclaimed', async () => {
+        const devices = await boot();
+        try {
+            remote.db = devices[0];
+            const service = await import('./cloudSyncService');
+            // Active set references hashA.
+            remote.documents.set(`users/${UID}/syncEntities/asset:hashA`, assetDoc('hashA', 1));
+            // Four parent markers so cleanup has an expired page (slice(SNAPSHOT_LIMIT)) and therefore
+            // actually calls cleanUpUnreferencedStorage; snap1..snap3 are retained.
+            seedSnapshots(4);
+            // A retained snapshot's `entities` subcollection is NOT homogeneous: makeRemoteSnapshot
+            // writes entity docs AND review-event docs (`review-event:` prefix, no entityType/entityId)
+            // into the same subcollection, and its commit entityCount counts both. The raw server count
+            // therefore includes the review event, so the referenced-set proof must account for it too,
+            // or judgment ② can never balance for any real snapshot.
+            remote.documents.set(`users/${UID}/syncSnapshots/snap1/entities/asset:hashS`, {
+                key: 'asset:hashS', entityType: 'asset', entityId: 'hashS',
+                payload: { id: 'hashS', contentHash: 'hashS', size: 16, mimeType: 'image/png', fileName: 's.png', kind: 'image' },
+                revision: 1, deleted: false,
+                contentHash: 'entity-hashS', contentHashVersion: 2, contentHashAlgorithm: 'sha256', updatedAt: stamp,
+            });
+            remote.documents.set(`users/${UID}/syncSnapshots/snap1/entities/review-event:evt1`, {
+                id: 'evt1', contentHash: 'evt-hash', payload: { id: 'evt1' }, revision: 1, kind: 'review-event',
+            });
+            storageProbe.objects.set(assetRoot, new Set(['hashA', 'hashS', 'hashOrphan']));
+
+            const state = await runGc(service, devices[0]);
+            expect(state.lastSnapshotMaintenanceStatus).toBe('completed');
+            // The true orphan is reclaimed ...
+            expect(storageProbe.deleted).toContain(`${assetRoot}/hashOrphan`);
+            // ... while assets referenced by the active set and by the retained snapshot both survive.
+            expect(storageProbe.deleted).not.toContain(`${assetRoot}/hashA`);
+            expect(storageProbe.deleted).not.toContain(`${assetRoot}/hashS`);
+        } finally { await close(devices); }
+    });
 });
