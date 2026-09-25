@@ -233,6 +233,7 @@ export const UsageGuidePage = () => (
           <details className="guide-details">
             <summary><span><Sparkles size={18} />AI、OCR 与语音数据</span><ChevronDown size={17} /></summary>
             <div>
+              <p>电脑编辑并保存后，点击云同步；手机登录同一账号，再点击同步即可获取日志和知识库。不需要选择来源或手动复制。恢复副本单独保留，不会自动上传。</p>
               <p>AI 供应商凭据和 OCR Token 只保存在本机，不进入备份或云同步；换设备或清除数据后需要重新填写。</p>
               <p>语音复述的临时会话和主动保留的本机历史不进入云同步或完整备份。需要长期保留时，请在摘要页整理为正式日志。</p>
               <p>服务商、模型和语音链路以各设置页面当前显示为准，教程不固定推荐某个供应商。</p>

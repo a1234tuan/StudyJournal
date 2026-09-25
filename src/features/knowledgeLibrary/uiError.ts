@@ -7,6 +7,10 @@ export const knowledgeDiagnostics = (): readonly KnowledgeFailure[] => diagnosti
 export function knowledgeUiError(error: unknown, stage = "本机操作"): KnowledgeFailure {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.replace(/^firestore\//, "") : "unknown";
   const domainMessages: Record<string, string> = {
+    timeout: "知识库同步请求超时，提交结果尚待核对。本机内容保留，再次同步会先检查云端回执。",
+    busy: "知识库正在另一个窗口同步或整理，请稍后再试。本机内容保留。",
+    migration: "旧知识内容需要核对，本机原内容和草稿已保留。请在知识库的恢复管理中查看，不要重复复制。",
+    cancelled: "本轮知识同步已中断，本机内容保留。再次同步会先核对云端结果。",
     corrupt: "知识库云提交校验失败，已安全停止且未跳过历史。本机内容仍保留；可重试或保全副本，持续失败需修复云端历史。",
     protected: "此恢复副本正在保全待确认内容，只能查看。请先另存可编辑副本或处理依赖操作。",
     stale: "内容已在其他位置更新。你的输入仍保留，请重新打开并比较后保存。",

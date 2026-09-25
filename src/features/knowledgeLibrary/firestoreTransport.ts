@@ -5,9 +5,9 @@ import { normalizeKnowledgeCloudSlot, type KnowledgeCloudCommit, type KnowledgeC
 import { registerDefaultLibrary, type KnowledgeRegistry } from "./scope";
 import type { KnowledgeTransport } from "./sync";
 
-const withKnowledgeTimeout = async <Value>(promise: Promise<Value>): Promise<Value> => {
+export const withKnowledgeTimeout = async <Value>(promise: Promise<Value>): Promise<Value> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new KnowledgeError("missing", "知识同步请求超时，提交结果待核对；本机内容仍保留")), 30000); })]); }
+  try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new KnowledgeError("timeout", "知识同步请求超时，提交结果待核对；本机内容仍保留")), 30000); })]); }
   finally { if (timer) clearTimeout(timer); }
 };
 export const createKnowledgeTransport = (database: Firestore, uid: string): KnowledgeTransport => {

@@ -14,6 +14,8 @@ vi.mock("../services/cloudSyncService", () => ({
   synchronizeCloudChanges: mocks.synchronizeCloudChanges,
 }));
 
+vi.mock("../features/knowledgeLibrary/runtime", () => ({ synchronizeBoundKnowledge: vi.fn(async () => ({ status: "no-change", message: "知识库：没有新变化。" })) }));
+
 import { CloudSyncConflictDialog } from "./CloudSyncConflictDialog";
 
 const readEstimate = {

@@ -63,6 +63,15 @@ const snapshot = (id: string, snapshotStatus: string, label = id) => ({
 });
 
 describe("CloudSyncPanel Google sign-in", () => {
+  it("explains one-click knowledge sync without source selection or misleading combined counts", async () => {
+    mocks.currentUser = { uid: "user", email: "user@example.com" };
+    render(<CloudSyncPanel onRestored={vi.fn()} />);
+    expect(screen.getByText(/将已保存的日志和知识库同步到当前账号/)).toBeInTheDocument();
+    expect(screen.queryByText("知识库同步范围", { exact: true })).toBeNull();
+    expect(screen.queryByLabelText("复制来源知识库")).toBeNull();
+    expect(await screen.findByText("普通日志：本机待同步 0 项 / 云端待拉取 0 项")).toBeInTheDocument();
+    expect(screen.getByText(/知识库会一起同步/)).toBeInTheDocument();
+  });
   afterEach(resetAll);
 
   it("shows cancellation and network causes while keeping the sign-in button retryable", async () => {

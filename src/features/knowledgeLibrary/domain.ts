@@ -74,6 +74,26 @@ export interface KnowledgeImportProgress {
   next: number; total: number; status: "active" | "completed";
 }
 export interface KnowledgeImportStep { libraryId: string; sessionId: string; ordinal: number; command: KnowledgeCommand }
+export interface KnowledgeSyncBinding {
+  ownerScope: KnowledgeOwner;
+  localLibraryId: string | null;
+  cloudLibraryId: string | null;
+  policyVersion: 1;
+  generation: number;
+  leaseId?: string;
+  leaseUntil?: number;
+}
+export interface KnowledgeLibraryMigration {
+  ownerScope: KnowledgeOwner;
+  sourceLibraryId: string;
+  targetLibraryId: string;
+  cloudLibraryId: string;
+  sessionId: string;
+  sourceHash: string;
+  sourceGeneration: number;
+  sourceEpoch: number;
+  phase: "local-copying" | "awaiting-cloud" | "confirmed";
+}
 export interface KnowledgeSyncFailure {
   code: "invalid" | "receipt" | "cycle"; cursor: number; sequence: number; fingerprint: string; attempts: number; recoveryLibraryId?: string;
 }
@@ -98,7 +118,7 @@ export interface KnowledgeBackupScope {
   capturedGenerations: Record<string, number>;
 }
 export class KnowledgeError extends Error {
-  constructor(readonly code: "invalid" | "stale" | "budget" | "cycle" | "scope" | "missing" | "receipt" | "protected" | "corrupt", message: string) {
+  constructor(readonly code: "invalid" | "stale" | "budget" | "cycle" | "scope" | "missing" | "receipt" | "protected" | "corrupt" | "busy" | "migration" | "cancelled" | "timeout", message: string) {
     super(message);
     this.name = "KnowledgeError";
   }

@@ -42,7 +42,7 @@ describe("knowledge repository transaction boundaries", () => {
     const second = new StudyJournalDatabase(name);
     try {
       await Promise.all([upgraded.open(), second.open()]);
-      expect(upgraded.verno).toBe(26);
+      expect(upgraded.verno).toBe(27);
       expect(await upgraded.blocks.get("old-record")).toEqual(record);
       const restoredAsset = await upgraded.assets.get("blob");
       expect(restoredAsset).toMatchObject({ id: asset.id, title: asset.title });

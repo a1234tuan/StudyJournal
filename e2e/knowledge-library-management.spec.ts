@@ -21,7 +21,7 @@ const manage = async (page: Page) => {
   await expect(page.getByRole("dialog").getByRole("heading", { name: "知识库管理", exact: true })).toHaveCount(1);
 };
 
-test("switches, renames, creates and deletes libraries by pointer without losing logs", async ({ page }) => {
+test("switches, renames and deletes legacy libraries without offering new independent libraries", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
   await page.evaluate(async () => {
@@ -39,7 +39,7 @@ test("switches, renames, creates and deletes libraries by pointer without losing
   for (const id of ["two", "three", "one", "two"]) {
     await manage(page);
     await expect(page.locator("dialog[open]")).toHaveCount(1);
-    const row = page.getByRole("dialog").locator(".knowledge-library-list button").filter({ hasText: "ID " + id });
+    const row = page.getByRole("dialog").locator(".knowledge-library-list button").nth(["one", "three", "two"].indexOf(id));
     await pointerClick(page, row);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(active(page).getByRole("button", { name: "专题 " + id, exact: true })).toBeVisible();
@@ -72,11 +72,8 @@ test("switches, renames, creates and deletes libraries by pointer without losing
   expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeLibraries.count())).toBe(2);
   expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.blocks.get("keep-log"))).toMatchObject({ contentHtml: "<p>原文</p>" });
   await manage(page);
-  await page.getByRole("button", { name: "新建独立知识库", exact: true }).click();
-  await pointerClick(page, name); await name.fill("项目资料");
-  await page.getByRole("button", { name: "创建独立库", exact: true }).dblclick();
-  await expect(active(page).getByRole("button", { name: "当前库：项目资料" })).toBeVisible();
-  expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeLibraries.count())).toBe(3);
+  await expect(page.getByRole("button", { name: "新建独立知识库", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭操作窗口", exact: true }).click();
   await active(page).getByRole("button", { name: "更多知识库操作" }).click();
   await expect(page.getByRole("button", { name: "未加入专题的日志", exact: true })).toHaveCount(1);
   await expect(page.getByRole("button", { name: "知识库与同步", exact: true })).toHaveCount(0);
@@ -173,12 +170,13 @@ test("keeps recovery copies with unresolved blocked commands undeletable", async
   });
   await home(page);
   await manage(page);
-  await pointerClick(page, page.getByRole("dialog").locator(".knowledge-library-list button").filter({ hasText: "待确认恢复副本" }));
+  await page.getByText(/恢复管理 ·/).click();
+  await pointerClick(page, page.getByRole("button", { name: "查看保留内容：待确认恢复副本", exact: true }));
   if (await page.getByRole("dialog").count()) await page.getByRole("dialog").getByRole("button", { name: "关闭操作窗口" }).click();
   await manage(page);
   const deleteButton = page.getByRole("button", { name: "删除本机库", exact: true });
   await expect(deleteButton).toBeDisabled();
-  await expect(page.getByText("该恢复副本仍被待确认操作引用，请先处理待确认版本。", { exact: true })).toBeVisible();
+  await expect(page.getByText("保留内容不会自动删除。", { exact: true })).toBeVisible();
   await capture(page, "protected-recovery-library.png");
 });
 
@@ -274,23 +272,22 @@ test("shows safe cloud-history recovery without skipping damaged commits", async
   await expect(active(page).getByRole("button", { name: "创建第一个专题", exact: true })).toBeDisabled();
   await capture(page, "cloud-history-preserved-copy.png");
 });
-test("renders a resumable copy when its original source no longer exists", async ({ page }) => {
+test("keeps preserved source drafts accessible without the old sync selection UI", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
   await page.evaluate(async () => {
+    const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { db } = await import("/src/db/database.ts");
-    await db.knowledgeLibraries.put({ id: "copy-target", ownerScope: "account:copy-preview", cloudLibraryId: "cloud-preview", title: "账号知识库", createdAt: new Date().toISOString(), detached: false });
-    await db.knowledgeImportSessions.put({ libraryId: "copy-target", id: "interrupted", sourceLibraryId: "removed-source", sourceGeneration: 0, sourceHash: "preview", next: 2, total: 100, status: "active" });
-    const { default: React } = await import("/node_modules/.vite/deps/react.js");
-    const { default: ReactDOM } = await import("/node_modules/.vite/deps/react-dom_client.js");
-    const { default: Settings } = await import("/src/features/knowledgeLibrary/KnowledgeSyncSettings.tsx");
-    const host = document.createElement("section");
-    host.style.cssText = "position:fixed;inset:0;z-index:9999;background:var(--color-bg);padding:24px;overflow:auto";
-    document.body.appendChild(host);
-    ReactDOM.createRoot(host).render(React.createElement(Settings, { uid: "copy-preview", disabled: false }));
+    await repository.createLibrary("默认知识库", "current");
+    await repository.createLibrary("旧本机内容", "preserved");
+    await db.knowledgeLibraryMigrations.put({ ownerScope: "deviceGuest", sourceLibraryId: "preserved", targetLibraryId: "current", cloudLibraryId: "cloud", sourceHash: "preview", sourceEpoch: 0, sourceGeneration: 0, sessionId: "saved", phase: "confirmed" });
+    await db.knowledgeDrafts.put({ libraryId: "preserved", id: "draft", entityId: "node", unit: "note", text: "旧输入仍在这里", expectedRevision: null, dataGeneration: 0 });
   });
-  await expect(page.getByText("未完成复制 · 账号知识库 · 2/100", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "继续未完成复制", exact: true })).toBeEnabled();
+  await home(page); await manage(page);
+  await page.getByText(/恢复管理 ·/).click();
+  await page.getByText("未提交草稿", { exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "保留的草稿" })).toHaveValue("旧输入仍在这里");
   await expect(page.getByLabel("复制来源知识库")).toHaveCount(0);
-  await capture(page, "resume-copy-without-source.png");
+  await expect(page.getByRole("button", { name: "新建独立知识库", exact: true })).toHaveCount(0);
+  await capture(page, "preserved-draft-recovery.png");
 });

@@ -1,50 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({
-  user: { currentUser: { uid: "A" } as { uid: string } | null },
-  owner: "account:A", libraries: [] as Array<{ id: string; cloudLibraryId: string | null }>,
-  connect: vi.fn(), synchronize: vi.fn(), open: vi.fn(), offlineCount: vi.fn(),
-}));
+const mocks = vi.hoisted(() => ({ user: { currentUser: { uid: "A" } as { uid: string } | null }, owner: "account:A", synchronize: vi.fn() }));
 vi.mock("../../services/firebase", () => ({ firebaseAuth: mocks.user, firestore: {} }));
 vi.mock("../../services/autoBackupService", () => ({ markAutoBackupDirty: vi.fn() }));
 vi.mock("./context", () => ({ currentKnowledgeOwner: () => mocks.owner, knowledgeContextGeneration: () => 0, changeKnowledgeOwner: vi.fn() }));
 vi.mock("./firestoreTransport", () => ({ createKnowledgeTransport: () => ({}) }));
-vi.mock("./repository", () => ({ KnowledgeRepository: class { listLibraries() { return Promise.resolve(mocks.libraries); } open = mocks.open; } }));
-vi.mock("./sync", () => ({ KnowledgeSync: class { connect = mocks.connect; synchronize = mocks.synchronize; } }));
-vi.mock("../../db/database", () => ({ db: { knowledgeLibraries: { where: () => ({ anyOf: () => ({ filter: () => ({ count: mocks.offlineCount }) }) }) } } }));
+vi.mock("./oneClickSync", () => ({ synchronizeKnowledge: mocks.synchronize }));
 import { synchronizeBoundKnowledge } from "./runtime";
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.user.currentUser = { uid: "A" }; mocks.owner = "account:A"; mocks.libraries = [];
-  mocks.connect.mockResolvedValue({ library: { id: "default", cloudLibraryId: "cloud" } });
-  mocks.open.mockImplementation(async libraryId => ({ context: { libraryId } }));
-  mocks.synchronize.mockResolvedValue({ pending: 0, uploaded: 0 }); mocks.offlineCount.mockResolvedValue(0);
+  vi.clearAllMocks(); mocks.user.currentUser = { uid: "A" }; mocks.owner = "account:A";
+  mocks.synchronize.mockResolvedValue({ status: "success", uploaded: 3, pending: 0, message: "知识库：同步完成。" });
 });
 describe("global knowledge sync entry", () => {
-  it("connects the default account library on first global sync without uploading independent libraries", async () => {
-    mocks.libraries = [{ id: "offline", cloudLibraryId: null }]; mocks.offlineCount.mockResolvedValue(1);
-    expect(await synchronizeBoundKnowledge()).toContain("本机独立库未上传");
-    expect(mocks.connect).toHaveBeenCalledWith();
-    expect(mocks.open).toHaveBeenCalledWith("default");
-    expect(mocks.open).not.toHaveBeenCalledWith("offline");
-    expect(mocks.synchronize).toHaveBeenCalledTimes(1);
+  it("delegates automatic adoption and forwards operation guards and progress", async () => {
+    const options = { isCurrent: () => true, onProgress: vi.fn() };
+    expect(await synchronizeBoundKnowledge(options)).toMatchObject({ status: "success", uploaded: 3 });
+    expect(mocks.synchronize).toHaveBeenCalledWith(expect.anything(), options);
   });
-  it("reuses the existing bound library and reports pending changes", async () => {
-    mocks.libraries = [{ id: "bound", cloudLibraryId: "cloud" }]; mocks.synchronize.mockResolvedValue({ pending: 2 });
-    expect(await synchronizeBoundKnowledge()).toContain("2 项待同步");
-    expect(mocks.connect).not.toHaveBeenCalled();
-    expect(mocks.synchronize).toHaveBeenCalledWith({ libraryId: "bound" });
-  });
-  it("does not connect as a guest or cross a stale account context", async () => {
-    mocks.owner = "deviceGuest";
-    expect(await synchronizeBoundKnowledge()).toContain("尚未登录");
-    expect(mocks.connect).not.toHaveBeenCalled();
-  });
-  it("reports discovery failure without blocking the ordinary journal sync caller", async () => {
-    mocks.connect.mockRejectedValueOnce(new Error("unavailable"));
-    expect(await synchronizeBoundKnowledge()).toContain("同步未完成，本机内容保留");
+  it.each(["deviceGuest", "account:B"])("does not synchronize across a stale owner: %s", async owner => {
+    mocks.owner = owner;
+    expect(await synchronizeBoundKnowledge()).toMatchObject({ status: "skipped" });
     expect(mocks.synchronize).not.toHaveBeenCalled();
   });
-  it("explains permission failure rather than presenting only an opaque diagnostic code", async () => {
-    mocks.connect.mockRejectedValueOnce({ code: "permission-denied" });
-    expect(await synchronizeBoundKnowledge()).toContain("反复重试不会解决权限问题");
+  it("requires an authenticated app session", async () => {
+    mocks.user.currentUser = null;
+    expect(await synchronizeBoundKnowledge()).toMatchObject({ status: "skipped", message: expect.stringContaining("尚未登录") });
+    expect(mocks.synchronize).not.toHaveBeenCalled();
   });
 });

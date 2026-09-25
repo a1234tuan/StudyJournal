@@ -29,9 +29,10 @@ const writeRemote = async (database: StudyJournalDatabase, libraryId: string, st
   }
 };
 export class KnowledgeSync {
-  constructor(readonly repository: KnowledgeRepository, readonly transport: KnowledgeTransport) {}
+  constructor(readonly repository: KnowledgeRepository, readonly transport: KnowledgeTransport, readonly assertActive: () => Promise<void> = async () => undefined) {}
 
   async connect(localLibraryId?: string): Promise<{ library: KnowledgeLibrary; importSourceId?: string }> {
+    await this.assertActive();
     const owner = this.repository.currentOwner();
     const generation = this.repository.contextGeneration();
     if (!owner.startsWith("account:")) throw new KnowledgeError("scope", "请先登录账号再启用知识同步");
@@ -46,6 +47,7 @@ export class KnowledgeSync {
     let library: KnowledgeLibrary | undefined;
     let importSourceId: string | undefined;
     await database.transaction("rw", knowledgeTables(database), async () => {
+      await this.assertActive();
       if (this.repository.currentOwner() !== owner || generation !== this.repository.contextGeneration()) throw new KnowledgeError("scope", "绑定期间账号已变化");
       library = await database.knowledgeLibraries.where("[ownerScope+cloudLibraryId]").equals([owner, registry.cloudLibraryId]).first();
       if (library) { if (localSource && localSource.id !== library.id) importSourceId = localSource.id; return; }
@@ -77,11 +79,13 @@ export class KnowledgeSync {
   }
 
   async pull(context: KnowledgeContext): Promise<void> {
+    await this.assertActive();
     const baseline = await this.repository.assertContext(context);
     let failed = { cursor: baseline.sync.cursor, sequence: baseline.sync.cursor + 1, fingerprint: knowledgeHash({ cursor: baseline.sync.cursor, phase: "transport" }) };
     try {
       await this.pullValidated(context, detail => { failed = detail; });
       await this.repository.database.transaction("rw", knowledgeTables(this.repository.database), async () => {
+        await this.assertActive();
         const { sync } = await this.repository.assertContext(context);
         if (sync.failure) { const { failure: _failure, ...current } = sync; await this.repository.database.knowledgeSyncState.put(current); }
       });
@@ -106,6 +110,7 @@ export class KnowledgeSync {
       const packets = await this.transport.commits(library.cloudLibraryId, cursor, end);
       if (!packets.length) throw new KnowledgeError("missing", "云提交尚未完整到达，请稍后重试");
       await database.transaction("rw", knowledgeTables(database), async () => {
+        await this.assertActive();
         const checked = await this.repository.assertContext(context);
         if (checked.sync.cursor !== cursor) throw new KnowledgeError("stale", "另一窗口已拉取，请重试");
         let remote = await readKnowledgeRemote(database, library.id);
@@ -151,6 +156,8 @@ export class KnowledgeSync {
   async synchronize(context: KnowledgeContext): Promise<{ pending: number; uploaded: number }> {
     const database = this.repository.database;
     const { library } = await this.repository.assertContext(context);
+    await this.assertActive();
+    await this.repository.assertWritable(library.id);
     if (!library.cloudLibraryId) return { pending: await database.knowledgeCommands.where("libraryId").equals(library.id).count(), uploaded: 0 };
     await this.pull(context);
     let uploaded = 0;
@@ -178,6 +185,7 @@ export class KnowledgeSync {
         }
         const packet = knowledgeCloudPacket(remote, after, entry.command);
         await database.transaction("rw", knowledgeTables(database), async () => {
+          await this.assertActive();
           await this.repository.assertContext(context);
           await database.knowledgeCommands.update([library.id, entry.id], { status: "unknown" });
         });

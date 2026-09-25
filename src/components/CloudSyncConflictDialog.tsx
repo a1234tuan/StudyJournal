@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { MotionPresence } from "./MotionPresence";
 import { formatUiError } from "../lib/uiError";
+import { completeCloudSync } from "../services/cloudSyncCoordinator";
 import { getCurrentCloudUser, resolveCloudSyncConflict, synchronizeCloudChanges } from "../services/cloudSyncService";
 import { cloudSyncStore, useCloudSyncStore } from "../services/cloudSyncStore";
 
@@ -12,6 +13,10 @@ interface CloudSyncConflictDialogProps {
 }
 
 const errorMessage = (error: unknown) => formatUiError(error, "cloud-sync");
+const finishSync = async (result: { uploaded: number; downloaded: number; pending?: number }, isCurrent: () => boolean) => {
+  const outcome = await completeCloudSync(result, { isCurrent, onProgress: message => { if (isCurrent()) cloudSyncStore.setMessage(message); } });
+  if (outcome && isCurrent()) cloudSyncStore.setOutcome(outcome.status, outcome.message);
+};
 
 /**
  * Global modal for resolving cloud sync conflicts. Mounted once at the app shell root so it can
@@ -31,7 +36,7 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
     approvals = { read: false, write: false },
   ) => {
     const user = getCurrentCloudUser();
-    if (!user) return;
+    if (!user || cloudSyncStore.getSnapshot().busy !== null) return;
     cloudSyncStore.setBusy("resolve");
     const token = cloudSyncStore.currentToken();
     const isCurrentOperation = () =>
@@ -51,32 +56,33 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
       if (!isCurrentOperation()) return;
       if (result.kind === "conflict") {
         cloudSyncStore.setConflict(result.conflict);
-        cloudSyncStore.setMessage("云端状态已变化，请重新选择同步策略。");
+        cloudSyncStore.setMessage("云端状态已变化，请重新选择同步策略。知识库本次尚未同步。");
         return;
       }
       if (result.kind === "read-budget") {
         setApprovedBudgets(approvals);
         cloudSyncStore.setReadBudget(result.estimate);
         cloudSyncStore.setReadBudgetChoice(result.choice);
-        cloudSyncStore.setMessage(result.message);
+        cloudSyncStore.setMessage(result.message + " 知识库本次尚未同步。");
         return;
       }
       if (result.kind === "write-budget") {
         setApprovedBudgets(approvals);
         cloudSyncStore.setWriteBudget(result.estimate);
         cloudSyncStore.setWriteBudgetChoice(result.choice);
-        cloudSyncStore.setMessage(result.message);
+        cloudSyncStore.setMessage(result.message + " 知识库本次尚未同步。");
         return;
       }
       if (result.kind === "uncertain") {
         cloudSyncStore.setConflict(undefined);
-        cloudSyncStore.setOutcome("uncertain", result.message);
+        cloudSyncStore.setOutcome("uncertain", result.message + " 知识库本次尚未同步。");
         return;
       }
       cloudSyncStore.setConflict(undefined);
       setApprovedBudgets({ read: false, write: false });
       if (choice === "cloud") {
         await onRestored();
+        if (!isCurrentOperation()) return;
         cloudSyncStore.setMessage("正在上传本机剩余更改。");
         const finalResult = await synchronizeCloudChanges(user, {
           onProgress: (event) => {
@@ -87,33 +93,25 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
         if (finalResult.kind === "synced") {
           const uploaded = result.uploaded + finalResult.uploaded;
           const downloaded = result.downloaded + finalResult.downloaded;
-          const noChange = uploaded === 0 && downloaded === 0;
-          cloudSyncStore.setOutcome(
-            noChange ? "no-change" : "success",
-            noChange ? "同步完成：本机和云端均无新变化。" : `同步完成：上传 ${uploaded} 项，下载 ${downloaded} 项。`,
-          );
+          await finishSync({ uploaded, downloaded, pending: finalResult.pending }, isCurrentOperation);
         } else if (finalResult.kind === "uncertain") {
-          cloudSyncStore.setOutcome("uncertain", finalResult.message);
+          cloudSyncStore.setOutcome("uncertain", finalResult.message + " 知识库本次尚未同步。");
         } else if (finalResult.kind === "read-budget") {
           cloudSyncStore.setConflict({ reason: "concurrent-changes", localChanges: 0, remoteChanges: 0, cloudRevision: 0 });
           cloudSyncStore.setReadBudget(finalResult.estimate);
           cloudSyncStore.setReadBudgetChoice(finalResult.choice);
-          cloudSyncStore.setMessage(finalResult.message);
+          cloudSyncStore.setMessage(finalResult.message + " 知识库本次尚未同步。");
         } else if (finalResult.kind === "write-budget") {
           cloudSyncStore.setConflict({ reason: "concurrent-changes", localChanges: 0, remoteChanges: 0, cloudRevision: 0 });
           cloudSyncStore.setWriteBudget(finalResult.estimate);
           cloudSyncStore.setWriteBudgetChoice(finalResult.choice);
-          cloudSyncStore.setMessage(finalResult.message);
+          cloudSyncStore.setMessage(finalResult.message + " 知识库本次尚未同步。");
         } else {
           cloudSyncStore.setConflict(finalResult.conflict);
           cloudSyncStore.setMessage("已恢复云端数据，但上传本机数据时再次遇到冲突，请重新选择策略。");
         }
       } else {
-        const noChange = result.uploaded === 0 && result.downloaded === 0;
-        cloudSyncStore.setOutcome(
-          noChange ? "no-change" : "success",
-          noChange ? "同步完成：本机和云端均无新变化。" : `同步完成：上传 ${result.uploaded} 项，下载 ${result.downloaded} 项。`,
-        );
+        await finishSync(result, isCurrentOperation);
       }
     } catch (error) {
       if (!isCurrentOperation()) return;
@@ -131,43 +129,40 @@ export const CloudSyncConflictDialog = ({ onRestored }: CloudSyncConflictDialogP
 
   const continueWriteBudget = async () => {
     const user = getCurrentCloudUser();
-    if (!user) return;
+    if (!user || cloudSyncStore.getSnapshot().busy !== null) return;
     if (writeBudgetChoice === "sync") {
       cloudSyncStore.setBusy("sync");
       const token = cloudSyncStore.currentToken();
+      const isCurrentOperation = () => cloudSyncStore.isCurrent(token) && getCurrentCloudUser()?.uid === user.uid;
       try {
         const result = await synchronizeCloudChanges(user, {
           allowExpensiveWrite: true,
           onProgress: (event) => {
-            if (cloudSyncStore.isCurrent(token)) cloudSyncStore.setMessage(event.message);
+            if (isCurrentOperation()) cloudSyncStore.setMessage(event.message);
           },
         });
-        if (!cloudSyncStore.isCurrent(token)) return;
+        if (!isCurrentOperation()) return;
         if (result.kind === "synced") {
           cloudSyncStore.setConflict(undefined);
           if (result.restored) await onRestored();
-          const noChange = result.uploaded === 0 && result.downloaded === 0;
-          cloudSyncStore.setOutcome(
-            noChange ? "no-change" : "success",
-            noChange ? "同步完成：本机和云端均无新变化。" : `同步完成：上传 ${result.uploaded} 项，下载 ${result.downloaded} 项。`,
-          );
+          await finishSync(result, isCurrentOperation);
         } else if (result.kind === "uncertain") {
           cloudSyncStore.setConflict(undefined);
-          cloudSyncStore.setOutcome("uncertain", result.message);
+          cloudSyncStore.setOutcome("uncertain", result.message + " 知识库本次尚未同步。");
         } else if (result.kind === "conflict") {
           cloudSyncStore.setConflict(result.conflict);
-          cloudSyncStore.setMessage("云端状态已变化，请重新选择同步策略。");
+          cloudSyncStore.setMessage("云端状态已变化，请重新选择同步策略。知识库本次尚未同步。");
         } else if (result.kind === "read-budget") {
           cloudSyncStore.setReadBudget(result.estimate);
           cloudSyncStore.setReadBudgetChoice(result.choice);
-          cloudSyncStore.setMessage(result.message);
+          cloudSyncStore.setMessage(result.message + " 知识库本次尚未同步。");
         } else {
           cloudSyncStore.setWriteBudget(result.estimate);
           cloudSyncStore.setWriteBudgetChoice(result.choice);
-          cloudSyncStore.setMessage(result.message);
+          cloudSyncStore.setMessage(result.message + " 知识库本次尚未同步。");
         }
       } catch (error) {
-        cloudSyncStore.setOutcome("error", errorMessage(error));
+        if (isCurrentOperation()) cloudSyncStore.setOutcome("error", errorMessage(error) + " 知识库本次尚未同步。");
       } finally {
         cloudSyncStore.finishBusy(token);
       }

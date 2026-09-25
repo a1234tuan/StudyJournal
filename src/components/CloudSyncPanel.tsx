@@ -1,5 +1,5 @@
 import { Cloud, CloudDownload, HardDrive, History, LogIn, LogOut, RefreshCw, Wrench } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 
 import { formatActionableError, formatUiError } from "../lib/uiError";
@@ -26,7 +26,6 @@ import { FirebaseStorageUsageRequestGate } from "../services/firebaseStorageUsag
 import { cloudGoogleSignInErrorMessage } from "../services/cloudGoogleSignIn";
 import { CloudSyncButton } from "./CloudSyncButton";
 import { SurfaceCard } from "./ui";
-const KnowledgeSyncSettings = lazy(() => import("../features/knowledgeLibrary/KnowledgeSyncSettings"));
 
 interface CloudSyncPanelProps {
   onRestored: () => Promise<void> | void;
@@ -62,7 +61,6 @@ const formatBytes = (bytes: number): string => {
 // it's reachable from anywhere. This panel keeps account management, status display, and
 // snapshot recovery — it still embeds CloudSyncButton so this page can also kick off a sync.
 export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
-  const [knowledgeSettingsOpen, setKnowledgeSettingsOpen] = useState(false);
   const [user, setUser] = useState<User | null>(() => getCurrentCloudUser());
   const [status, setStatus] = useState<CloudSyncStatus>();
   const [storageUsage, setStorageUsage] = useState<FirebaseStorageUsage | null | undefined>();
@@ -287,7 +285,7 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
   return (
     <section className="more-section backup-actions-section">
       <h2>云同步</h2>
-      {user && <details onToggle={event => setKnowledgeSettingsOpen(event.currentTarget.open)}><summary>知识库同步范围</summary>{knowledgeSettingsOpen && <Suspense fallback={<p role="status">正在读取知识库设置…</p>}><KnowledgeSyncSettings key={user.uid} uid={user.uid} disabled={busy !== null} /></Suspense>}</details>}
+      <p>点击“同步更改”，将已保存的日志和知识库同步到当前账号。其他设备登录同一账号后，点击同步即可获取内容。</p>
       <div className="more-grid backup-action-grid">
         <SurfaceCard className="more-action-card backup-action-card" variant="raised">
           <div>
@@ -316,7 +314,8 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
               <RefreshCw size={20} />
               <div>
                 <h3>同步更改</h3>
-                <p>{status ? `本机待同步 ${status.localPending} 项 / 云端待拉取 ${status.remotePending} 项` : "点击后检查同步状态"}</p>
+                <small>知识库会一起同步；本次结果以同步完成后的提示为准。</small>
+                <p>{status ? `普通日志：本机待同步 ${status.localPending} 项 / 云端待拉取 ${status.remotePending} 项` : "点击后检查同步状态"}</p>
               </div>
             </div>
             <CloudSyncButton className="backup-sync-button" onSignedOut={() => undefined} onRestored={onRestored} />
@@ -434,7 +433,7 @@ export const CloudSyncPanel = ({ onRestored }: CloudSyncPanelProps) => {
         </div>
       ) : null}
 
-      {status?.lastSyncedAt ? <p className="import-warning">上次完成同步：{formatDateTime(status.lastSyncedAt)} / 云端修订 {status.cloudRevision}</p> : null}
+      {status?.lastSyncedAt ? <p className="import-warning">普通日志上次同步：{formatDateTime(status.lastSyncedAt)} / 云端修订 {status.cloudRevision}</p> : null}
       {status?.lastSnapshotMaintenanceError ? (
         <p className="import-warning" role="status">
           {status.lastSnapshotMaintenanceStatus === "deferred-cost" ? "自动恢复点清理已延期" : "后台恢复点清理待重试"}{status.lastSnapshotMaintenanceFailedAt ? `（${formatDateTime(status.lastSnapshotMaintenanceFailedAt)}）` : ""}：{status.lastSnapshotMaintenanceError}

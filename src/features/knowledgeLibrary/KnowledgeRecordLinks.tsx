@@ -1,3 +1,4 @@
+import { db } from "../../db/database";
 import { liveQuery } from "dexie";
 import { BookPlus } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -15,6 +16,7 @@ export const KnowledgeRecordLinks = ({ recordId, onOpen, menu = false }: { recor
     const subscription = liveQuery(async () => {
       const result: Array<KnowledgeRecordLocation & { title: string }> = [];
       for (const library of await knowledgeRepository.listLibraries()) {
+        if (await db.knowledgeLibraryMigrations.where("sourceLibraryId").equals(library.id).first()) continue;
         const { state } = await knowledgeRepository.open(library.id);
         for (const reference of knowledgeBacklinks(state, recordId)) result.push({ libraryId: library.id, workspaceId: reference.workspaceId, selectedNodeId: reference.nodeId, title: knowledgeLabel(state, state.entities[reference.workspaceId]) + " / " + knowledgeLabel(state, state.entities[reference.nodeId]) });
       }

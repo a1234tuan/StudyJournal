@@ -130,6 +130,8 @@ revisionId = commandId + 单元标识；规范化内容以确定性 JSON 编码�
 
 #### C1. 同账号发现默认云库、首次绑定与离线双库汇入
 
+> 2026-09-25 修订：日常操作的“手动选来源并复制、继续编辑独立原库”已由 `knowledge-library-one-click-sync-plan-2026-09-25.md` 的一键自动接管替代，实现与实测见 `knowledge-library-one-click-sync-implementation-2026-09-25.md`。下文保留历史设计；默认云库唯一性、保护副本、鉴权及坏历史停止边界仍有效。
+
 **首期一个账号只有一个默认同步云库；本机可有多个未绑定库/恢复副本。** 专题是库内对象，“手机的数据结构”不等于为每个专题另建一个云库。云库生命周期不得由客户端登录时自动删除或替换。
 
 1. 固定注册入口为 /knowledgeUsers/{uid}/registry/default，保存 protocolVersion、cloudLibraryId、registrationRevision。首次明确启用知识同步时，在一次事务内读取注册项：不存在才创建注册项、空云库 head 和注册 receipt；已存在就返回那个 cloudLibraryId。两台同时创建只能有一个胜者，失败方读回胜者，不能遗留第二个可用“默认库”。候选 UUID 和 requestId 在重试回调外生成。未登录、离线或权限错误不能被当成“注册项不存在”。

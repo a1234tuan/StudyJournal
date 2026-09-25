@@ -99,7 +99,7 @@ test("keeps same-name libraries distinct and centralizes sync", async ({ page })
   await dialog.getByRole("button", { name: "保存名称" }).click();
   await expect(dialog.locator(".knowledge-library-list")).toContainText("考试复习");
   await expect(dialog.getByRole("button", { name: "开启知识库同步", exact: true })).toHaveCount(0);
-  await expect(dialog.getByText(/云同步由应用顶部/)).toBeVisible();
+  await expect(dialog.getByText(/日常内容会随云同步一起保存/)).toBeVisible();
   expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeLibraries.count())).toBe(3);
 });
 

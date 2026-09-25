@@ -33,6 +33,32 @@ const publish = (database: Firestore, libraryId: string, packet: KnowledgeCloudP
 };
 
 describe("knowledge P0 isolated atomic protocol", () => {
+  it("AUTH-01: real client transport discovers, registers, publishes and pulls with owner auth only", async () => {
+    const owner = "one-click-" + crypto.randomUUID();
+    const writer = createKnowledgeTransport(environment.authenticatedContext(owner).firestore(), owner);
+    const reader = createKnowledgeTransport(environment.authenticatedContext(owner).firestore(), owner);
+    expect(await writer.discover()).toBeNull();
+    const registry = await writer.register("one-click-library", "one-click-registration");
+    expect(await reader.discover()).toEqual(registry);
+    const initial = emptyKnowledgeState();
+    const command: KnowledgeCommand = { protocolVersion: 1, id: "desktop-topic", libraryId: registry.cloudLibraryId, operation: "create", entity: { id: "one-click-topic", kind: "workspace", workspaceId: "one-click-topic", nodeId: "", recordId: "" }, expected: { title: null, note: null, archived: null, deleted: null }, changes: { title: "电脑编辑，手机获取", note: "", archived: false, deleted: false } };
+    const next = applyKnowledgeCommand(initial, command);
+    const packet = knowledgeCloudPacket(initial, next, command);
+    await assertSucceeds(writer.publish(registry.cloudLibraryId, 0, packet));
+    expect(await reader.head(registry.cloudLibraryId)).toBe(1);
+    expect(await reader.receipt(registry.cloudLibraryId, command.id)).toEqual(packet.receipt);
+    const packets = await reader.commits(registry.cloudLibraryId, 0, 1);
+    expect(packets).toHaveLength(1);
+    expect(applyKnowledgeCloudPacket(initial, packets[0])).toEqual(next);
+    await assertSucceeds(writer.publish(registry.cloudLibraryId, 0, packet));
+    expect(await reader.head(registry.cloudLibraryId)).toBe(1);
+    const stranger = createKnowledgeTransport(environment.authenticatedContext("stranger").firestore(), owner);
+    const anonymous = createKnowledgeTransport(environment.unauthenticatedContext().firestore(), owner);
+    await assertFails(stranger.discover());
+    await assertFails(anonymous.discover());
+    await assertFails(stranger.publish(registry.cloudLibraryId, 1, packet));
+    await assertFails(anonymous.register("forbidden-library", "forbidden-registration"));
+  });
   it("BIND-01: competing first registrations adopt one immutable default with no orphan head", async () => {
     const phone = environment.authenticatedContext(uid).firestore();
     const desktop = environment.authenticatedContext(uid).firestore();

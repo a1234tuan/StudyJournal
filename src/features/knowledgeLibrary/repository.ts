@@ -3,9 +3,10 @@ import type { StudyJournalDatabase } from "../../db/database";
 import { knowledgeHash, revisionIdentity } from "./canonical";
 import { emptyKnowledgeState, KnowledgeError, type KnowledgeBackupScope, type KnowledgeCommand, type KnowledgeContext, type KnowledgeDraft, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeOwner, type KnowledgePosition, type KnowledgeState, type KnowledgeSyncState, type KnowledgeUnit } from "./domain";
 import { applyKnowledgeCommand, knowledgeWrites, revisionValue, validateKnowledgeState, valueOf } from "./protocol";
-import { KNOWLEDGE_SCHEMA_26_STORES, type StoredKnowledgeConflict } from "./schema";
+import { KNOWLEDGE_SCHEMA_27_STORES, type StoredKnowledgeConflict } from "./schema";
+import { getDefaultKnowledgeLibrary } from "./defaultLibrary";
 
-export const knowledgeTables = (database: StudyJournalDatabase) => Object.keys(KNOWLEDGE_SCHEMA_26_STORES).map(name => database.table(name));
+export const knowledgeTables = (database: StudyJournalDatabase) => Object.keys(KNOWLEDGE_SCHEMA_27_STORES).map(name => database.table(name));
 const withoutLibrary = <Value extends { libraryId: string }>(row: Value): Omit<Value, "libraryId"> => { const { libraryId: _libraryId, ...value } = row; return value; };
 export const knowledgeEntityTable = (database: StudyJournalDatabase, kind: KnowledgeEntity["kind"]) => kind === "workspace" ? database.knowledgeWorkspaces : kind === "node" ? database.knowledgeNodes : database.knowledgeReferences;
 export const readKnowledgeState = async (database: StudyJournalDatabase, libraryId: string): Promise<KnowledgeState> => {
@@ -82,10 +83,9 @@ export class KnowledgeRepository {
     if (!title.trim() || new TextEncoder().encode(title.trim()).byteLength > 512) throw new KnowledgeError("invalid", "专题名称无效");
     return this.database.transaction("rw", knowledgeTables(this.database), async () => {
       if (intent.ownerScope !== this.currentOwner() || intent.sessionGeneration !== this.contextGeneration()) throw new KnowledgeError("scope", "账号已变化");
-      const available = await this.listLibraries();
       const library = intent.context
         ? (await this.assertContext(intent.context)).library
-        : available[0] ?? await this.createLibrary("我的知识库", "library-" + intent.id);
+        : await getDefaultKnowledgeLibrary(this.database, intent.ownerScope) ?? await this.createLibrary("我的知识库", "library-" + intent.id);
       const opened = await this.open(library.id);
       const command = createKnowledgeEntity(library.cloudLibraryId ?? library.id, "workspace", title.trim());
       command.id = intent.id;
@@ -101,6 +101,7 @@ export class KnowledgeRepository {
     if (!name || new TextEncoder().encode(name).byteLength > 512) throw new KnowledgeError("invalid", "知识库名称无效");
     await this.database.transaction("rw", knowledgeTables(this.database), async () => {
       const { library, sync } = await this.assertContext(context);
+      await this.assertWritable(library.id);
       if (library.title === name) return;
       const available = await this.listLibraries();
       if (available.some(item => item.id !== library.id && item.title === name)) throw new KnowledgeError("invalid", "名称已存在");
@@ -123,7 +124,10 @@ export class KnowledgeRepository {
     return !!await this.database.knowledgeCommands.filter(command => command.status === "blocked" && command.recoveryLibraryId === libraryId).first() || !!await this.database.knowledgeSyncState.filter(state => state.failure?.recoveryLibraryId === libraryId).first();
   }
 
-  async assertWritable(libraryId: string): Promise<void> {
+  async assertWritable(libraryId: string, importSessionId?: string): Promise<void> {
+    if (await this.database.knowledgeLibraryMigrations.where("sourceLibraryId").equals(libraryId).first()) throw new KnowledgeError("migration", "旧内容已经纳入同步，请回到知识库继续编辑；此处保留原内容");
+    const copying = await this.database.knowledgeLibraryMigrations.where("targetLibraryId").equals(libraryId).filter(migration => migration.phase === "local-copying").toArray();
+    if (copying.some(migration => migration.sessionId !== importSessionId)) throw new KnowledgeError("busy", "正在整理本机知识库，请稍后继续编辑");
     if (await this.isRecoveryProtected(libraryId)) throw new KnowledgeError("protected", "待确认恢复副本只读，请先另存副本或处理依赖操作");
   }
 
@@ -201,10 +205,11 @@ export class KnowledgeRepository {
     });
   }
 
-  async execute(context: KnowledgeContext, command: KnowledgeCommand, clearDraftId?: string, importSessionId?: string): Promise<KnowledgeState> {
+  async execute(context: KnowledgeContext, command: KnowledgeCommand, clearDraftId?: string, importSessionId?: string, assertActive?: () => Promise<void>): Promise<KnowledgeState> {
     return this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      await assertActive?.();
       const { library, sync } = await this.assertContext(context);
-      await this.assertWritable(library.id);
+      await this.assertWritable(library.id, importSessionId);
       if (command.libraryId !== (library.cloudLibraryId ?? library.id)) throw new KnowledgeError("scope", "命令属于其他知识库");
       const before = await readKnowledgeState(this.database, library.id);
       const importSession = importSessionId ? await this.database.knowledgeImportSessions.get([library.id, importSessionId]) : undefined;

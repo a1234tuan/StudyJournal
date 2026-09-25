@@ -19,7 +19,7 @@ it("migrates active steps and shrinks completed sessions atomically from schema2
   const database = new StudyJournalDatabase(name);
   try {
     await database.open();
-    expect(database.verno).toBe(26);
+    expect(database.verno).toBe(27);
     expect(await database.knowledgeImportSteps.count()).toBe(1);
     expect(await database.knowledgeImportSteps.get(["target", "active", 1])).toMatchObject({ command: commands[1] });
     expect(await database.knowledgeImportSessions.get(["target", "done"])).toMatchObject({ next: 2, total: 2, status: "completed" });
