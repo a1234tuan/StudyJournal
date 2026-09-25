@@ -17,10 +17,12 @@ const guideSections = [
   { id: "understand", label: "理解产品" },
   { id: "quick-start", label: "快速开始" },
   { id: "record", label: "记录与整理" },
+  { id: "daily-plan", label: "今日计划" },
   { id: "review", label: "间隔复习" },
   { id: "coach", label: "学习助教" },
   { id: "ai-modes", label: "AI 学习方式" },
-  { id: "library", label: "资料管理" },
+  { id: "library", label: "搜索与资料管理" },
+  { id: "knowledge", label: "知识库" },
   { id: "safety", label: "数据与设置" },
   { id: "find", label: "按任务查找" },
 ] as const;
@@ -34,7 +36,9 @@ const quickStartSteps = [
 
 const taskLinks = [
   ["开始第一次学习", "quick-start", "完成一次记录与复习"],
+  ["安排今天的学习", "daily-plan", "使用今日计划并记录兑现过程"],
   ["整理或找到日志", "library", "分类、标签、搜索与收藏"],
+  ["建立长期目录", "knowledge", "用节点组织日志并导出 Markdown ZIP"],
   ["安排复习", "review", "选择策略并理解评分"],
   ["反复卡在同类问题", "coach", "用学习助教设计针对性训练"],
   ["围绕资料追问", "ai-modes", "使用 AI 问答"],
@@ -47,7 +51,7 @@ export const UsageGuidePage = () => (
     <PageHeader
       eyebrow="Product guide"
       title="使用教程"
-      subtitle="先建立自己的学习闭环，再按需要使用 AI、语音和资料工具。"
+      subtitle="先建立自己的学习闭环，再用今日计划和知识库把学习过程组织起来。"
       density="compact"
     />
 
@@ -115,10 +119,16 @@ export const UsageGuidePage = () => (
           />
           <figcaption>写入日志的有效内容，会继续服务于搜索、复习和 AI 上下文。</figcaption>
         </figure>
+      </section>
+
+      <section id="daily-plan" className="usage-guide-section">
+        <p className="guide-section-index">04 · 今日计划</p>
+        <h2>先写下今天准备完成什么，再用日志兑现它</h2>
+        <p className="guide-section-summary">今日计划记录当天的学习意图；实际过程、结果和卡点仍然写入日志。</p>
         <div className="guide-definition-grid">
-          <div><span>今日计划</span><p>按学科列出今天准备完成的内容，计划标题会保留，方便之后回看当天安排。</p></div>
-          <div><span>计划如何完成</span><p>打开计划条目并写下实际过程、结果或卡点；保存有效日志后，该计划才会显示为已完成。</p></div>
-          <div><span>历史与统计</span><p>只展示有计划的日期，完成情况来自实际日志记录。计划不会自动生成日志，也不会代替你的复习判断。</p></div>
+          <div><span>选择学科</span><p>按学科列出当天准备学习的内容，计划标题会保留，方便之后回看当天安排。</p></div>
+          <div><span>写下计划</span><p>计划可以是一个概念、一组题目、一个章节或需要解决的卡点。</p></div>
+          <div><span>用日志兑现</span><p>进入计划条目写下实际过程、结果和卡点；保存有效日志后，该计划才会显示为已完成。</p></div>
         </div>
         <figure className="guide-figure guide-figure-wide">
           <img
@@ -129,10 +139,11 @@ export const UsageGuidePage = () => (
           />
           <figcaption>计划是当天的意图；写入实际日志，才是对计划的兑现。</figcaption>
         </figure>
+        <p className="guide-callout"><Check size={17} />计划不会自动改变复习状态，也不会代替你对学习结果的判断。</p>
       </section>
 
       <section id="review" className="usage-guide-section">
-        <p className="guide-section-index">04 · 间隔复习</p>
+        <p className="guide-section-index">05 · 间隔复习</p>
         <h2>评分决定下一次出现，而不是宣布永久掌握</h2>
         <p className="guide-section-summary">进入“复习”后，先主动回忆，再根据这一次的真实表现评分。按钮下方会显示预计下次复习时间。</p>
         <div className="guide-compare">
@@ -153,7 +164,7 @@ export const UsageGuidePage = () => (
       </section>
 
       <section id="coach" className="usage-guide-section">
-        <p className="guide-section-index">05 · 学习助教</p>
+        <p className="guide-section-index">06 · 学习助教</p>
         <h2>把“哪里不会”变成一次具体训练</h2>
         <div className="guide-definition-grid">
           <div><span>它是什么</span><p>位于“复习 → 学习助教”的反馈与训练工作区。</p></div>
@@ -173,7 +184,7 @@ export const UsageGuidePage = () => (
       </section>
 
       <section id="ai-modes" className="usage-guide-section">
-        <p className="guide-section-index">06 · AI 学习方式</p>
+        <p className="guide-section-index">07 · AI 学习方式</p>
         <h2>同一份资料，选择不同的学习动作</h2>
         <div className="guide-mode-list">
           <div><MessageCircleQuestion size={20} /><span><h3>AI 问答</h3><p>从“更多 → AI 问答”选择日志范围，适合追问、抽测、解释和辨析。</p></span></div>
@@ -197,11 +208,11 @@ export const UsageGuidePage = () => (
       </section>
 
       <section id="library" className="usage-guide-section">
-        <p className="guide-section-index">07 · 搜索与资料管理</p>
+        <p className="guide-section-index">08 · 搜索与资料管理</p>
         <h2>在需要时快速找回，而不是记住每个入口</h2>
-        <p className="guide-section-summary">常用浏览留在“日志”；低频整理工具集中在“更多”。</p>
+        <p className="guide-section-summary">“日志”负责按时间浏览，“知识库”负责按结构整理，低频设置和工具集中在“更多”。</p>
         <div className="guide-reference-list">
-          <div><Search size={18} /><span><strong>搜索与 OCR</strong><p>全局搜索可查找日志内容；在“更多 → OCR 设置”配置后，已识别的图片文字也会参与检索和 AI 上下文。</p></span></div>
+          <div><Search size={18} /><span><strong>搜索与 OCR</strong><p>全局搜索可查找日志内容；在“更多 → OCR 设置”配置后，已识别的图片文字也会参与检索和 AI 上下文。未完成任务也在 OCR 设置页集中处理。</p></span></div>
           <div><BookOpenCheck size={18} /><span><strong>学科、标签与收藏</strong><p>学科建立稳定目录，标签连接细分主题，收藏保留最近常用或最重要的日志。</p></span></div>
           <div><Headphones size={18} /><span><strong>录音库</strong><p>日志录音和知识播客可按来源集中播放；原始内容仍与对应日志保持关联。</p></span></div>
         </div>
@@ -216,8 +227,29 @@ export const UsageGuidePage = () => (
         </details>
       </section>
 
+      <section id="knowledge" className="usage-guide-section">
+        <p className="guide-section-index">09 · 知识库</p>
+        <h2>把日志放进目录树，在需要时按结构找回</h2>
+        <p className="guide-section-summary">知识库改变的是日志的组织方式，不会改变日志原本的内容、复习记录或学习状态。</p>
+        <div className="guide-definition-grid">
+          <div><span>节点是目录</span><p>创建专题和节点，使用父子层级表达学科、主题、项目或长期资料结构。</p></div>
+          <div><span>日志是内容</span><p>一条日志可以放入一个或多个节点；日志正文仍然保持原来的编辑和复习语义。</p></div>
+          <div><span>结构可以带走</span><p>知识库可以按照目录树导出为 Markdown ZIP，用于阅读、迁移和长期保存。</p></div>
+        </div>
+        <figure className="guide-figure guide-figure-wide">
+          <img
+            src="/guide/knowledge-library.png"
+            alt="知识库流程：创建节点、建立层级、放入日志、按目录打开，并导出为 Markdown ZIP"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>节点对应文件夹，日志对应 Markdown 文件；导出后目录结构仍然可以继续使用。</figcaption>
+        </figure>
+        <p className="guide-callout"><BookOpenCheck size={17} />Desktop 端可以从左侧导航进入知识库；日志界面中的知识库入口仍然保留。</p>
+      </section>
+
       <section id="safety" className="usage-guide-section">
-        <p className="guide-section-index">08 · 数据安全与设置</p>
+        <p className="guide-section-index">10 · 数据安全与设置</p>
         <h2>先知道什么会保存，再配置长期使用方式</h2>
         <p className="guide-section-summary">完整备份用于恢复；AI 材料导出用于阅读和问答。两者不能互相替代。</p>
         <div className="guide-details-list">
@@ -225,6 +257,7 @@ export const UsageGuidePage = () => (
             <summary><span><ShieldCheck size={18} />备份、恢复与导出</span><ChevronDown size={17} /></summary>
             <div>
               <p><strong>完整备份：</strong>在“更多 → 备份与恢复”导出可恢复的 zip，也可以绑定自动备份文件夹。</p>
+              <p><strong>知识库导出：</strong>在知识库的“更多操作”中导出按节点整理的 Markdown ZIP，用于阅读和迁移，不用于恢复应用数据。</p>
               <p><strong>日志互通：</strong>用于选择性迁移日志，不等同于完整恢复。</p>
               <p><strong>AI 材料导出：</strong>在 AI 问答的“更多操作”中导出 Markdown、JSON 或 TXT，不用于恢复应用数据。</p>
               <p className="guide-warning">导入完整备份会覆盖当前本地数据。导入前先导出一份当前备份。</p>
@@ -250,7 +283,7 @@ export const UsageGuidePage = () => (
       </section>
 
       <section id="find" className="usage-guide-section guide-find-section">
-        <p className="guide-section-index">09 · 按任务查找</p>
+        <p className="guide-section-index">11 · 按任务查找</p>
         <h2>你现在想做什么？</h2>
         <div className="guide-task-index">
           {taskLinks.map(([title, target, detail]) => (
@@ -266,7 +299,7 @@ export const UsageGuidePage = () => (
             <p><strong>AI 无法开始：</strong>在 AI 问答的“更多操作 → AI 设置”中检查当前供应商、API Key 和模型。</p>
             <p><strong>图片内容无法检索：</strong>在“更多 → OCR 设置”检查 Token，并在图片资源中重新识别。</p>
             <p><strong>换设备后凭据消失：</strong>这是正常的本机安全边界，需要在新设备重新配置。</p>
-            <p><strong>录音找不到：</strong>打开侧栏“录音”或“更多 → 录音库”，也可回到对应日志查看。</p>
+            <p><strong>录音找不到：</strong>打开“更多 → 录音库”，也可回到对应日志查看；Desktop 左侧导航现在用于进入知识库。</p>
           </div>
         </details>
         <p className="guide-callout"><MessageCircleQuestion size={17} />反馈：微信：A6472589；邮箱：kkleo0218@gmail.com</p>

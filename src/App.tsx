@@ -225,7 +225,7 @@ const navItems: Array<{ tab: TabKey; subRoute?: Exclude<MoreSubRoute, null>; lab
   { tab: "today", label: "今天", icon: Home },
   { tab: "journal", label: "日志", icon: CalendarDays },
   { tab: "review", label: "复习", icon: CalendarCheck },
-  { tab: "more", subRoute: "recordings", label: "录音", icon: Mic2 },
+  { tab: "more", subRoute: "knowledge", label: "知识库", icon: BookOpenText },
   { tab: "more", label: "更多", icon: MoreHorizontal },
 ];
 
@@ -1462,7 +1462,18 @@ export const App = () => {
           />
         );
       case "ocrSettings":
-        return <OcrSettingsPage onChanged={app.refresh} />;
+        return (
+          <OcrSettingsPage
+            records={app.recordBlocks}
+            assets={app.assets}
+            onChanged={app.refresh}
+            onRetry={async (assetId) => {
+              await runOcrForAsset(assetId, { force: true, onAssetChanged: app.refresh });
+              await app.refresh();
+            }}
+            onOpenRecord={(record, assetId) => openRecordInTab(record, "more", assetId)}
+          />
+        );
       case "ocrDashboard":
         return (
           <OcrDashboardPage
@@ -1536,7 +1547,6 @@ export const App = () => {
             onOpenBackup={() => openMoreSubRoute("backup")}
             onOpenAi={() => openMoreSubRoute("ai")}
             onOpenOcrSettings={() => openMoreSubRoute("ocrSettings")}
-            onOpenOcrDashboard={() => openMoreSubRoute("ocrDashboard")}
             onOpenPodcasts={() => openMoreSubRoute("podcasts")}
             onOpenStats={() => openMoreSubRoute("stats")}
             onOpenSettings={() => openMoreSubRoute("settings")}

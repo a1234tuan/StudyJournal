@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, BrainCircuit, ChevronRight, Download, FileText, Headphones, Layers3, LayoutTemplate, ListChecks, Mic2, Settings, ScanSearch, Trash2 } from "lucide-react";
+import { BarChart3, BookOpen, BrainCircuit, ChevronRight, Download, FileText, Headphones, Layers3, LayoutTemplate, ListChecks, Mic2, Settings, Trash2 } from "lucide-react";
 
 import type { AppSettings, AutoBackupSettings } from "../types";
 import { createDefaultAiPresets } from "../db/defaults";
@@ -11,7 +11,6 @@ interface MorePageProps {
   onOpenBackup: () => void;
   onOpenAi: () => void;
   onOpenOcrSettings: () => void;
-  onOpenOcrDashboard?: () => void;
   onOpenPodcasts: () => void;
   onOpenStats: () => void;
   onOpenSettings: () => void;
@@ -60,7 +59,6 @@ export const MorePage = ({
   onOpenBackup,
   onOpenAi,
   onOpenOcrSettings,
-  onOpenOcrDashboard = () => undefined,
   onOpenPodcasts,
   onOpenStats,
   onOpenSettings,
@@ -106,14 +104,6 @@ export const MorePage = ({
           meta="PaddleOCR"
           trailing={<ChevronRight size={17} />}
           onClick={onOpenOcrSettings}
-        />
-        <ListRow
-          className="more-summary-row"
-          icon={<ScanSearch size={19} />}
-          title="OCR 失败看板"
-          meta="待处理图片"
-          trailing={<ChevronRight size={17} />}
-          onClick={onOpenOcrDashboard}
         />
       </div>
     </section>

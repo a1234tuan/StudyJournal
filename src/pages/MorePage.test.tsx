@@ -10,7 +10,6 @@ const renderMorePage = (settings = DEFAULT_SETTINGS) => {
     onOpenBackup: vi.fn(),
     onOpenAi: vi.fn(),
     onOpenOcrSettings: vi.fn(),
-    onOpenOcrDashboard: vi.fn(),
     onOpenPodcasts: vi.fn(),
     onOpenStats: vi.fn(),
     onOpenSettings: vi.fn(),
@@ -33,7 +32,7 @@ describe("MorePage", () => {
     expect(screen.getByText("备份与恢复")).toBeInTheDocument();
     expect(screen.getByText("AI 问答")).toBeInTheDocument();
     expect(screen.getByText("OCR 设置")).toBeInTheDocument();
-    expect(screen.getByText("OCR 失败看板")).toBeInTheDocument();
+    expect(screen.queryByText("OCR 失败看板")).not.toBeInTheDocument();
     expect(screen.getByText("使用教程")).toBeInTheDocument();
     expect(screen.getByText("回收站")).toBeInTheDocument();
     expect(screen.getByText("模板")).toBeInTheDocument();
@@ -54,14 +53,12 @@ describe("MorePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /备份与恢复/ }));
     fireEvent.click(screen.getByRole("button", { name: /AI 问答/ }));
     fireEvent.click(screen.getByRole("button", { name: /OCR 设置/ }));
-    fireEvent.click(screen.getByRole("button", { name: /OCR 失败看板/ }));
     fireEvent.click(screen.getByRole("button", { name: /模板/ }));
     fireEvent.click(screen.getByRole("button", { name: /使用教程/ }));
 
     expect(props.onOpenBackup).toHaveBeenCalledTimes(1);
     expect(props.onOpenAi).toHaveBeenCalledTimes(1);
     expect(props.onOpenOcrSettings).toHaveBeenCalledTimes(1);
-    expect(props.onOpenOcrDashboard).toHaveBeenCalledTimes(1);
     expect(props.onOpenTemplates).toHaveBeenCalledTimes(1);
     expect(props.onOpenGuide).toHaveBeenCalledTimes(1);
   });

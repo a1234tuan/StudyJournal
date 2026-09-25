@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 
-import type { Asset, ExportKind, StorageSnapshot } from "../types";
+import type { Asset, ExportKind, RecordBlock, StorageSnapshot } from "../types";
 import {
   createKnowledgeJsonPayload,
+  createKnowledgeOutlineZip,
   createPlainText,
   createReadableRecordHtml,
   createReadableRecordMarkdown,
@@ -182,6 +183,37 @@ describe("knowledge export", () => {
     expect(dataStructure).toContain("标签：树、重点");
     expect(dataStructure).toContain("二叉树遍历 OCR 文本");
     expect(os).toContain("## 2026-06-20 进程");
+  });
+
+  it("exports the visible knowledge tree as nested folders and keeps unorganized records", async () => {
+    const state = {
+      sequence: 0,
+      entities: {
+        w1: { id: "w1", kind: "workspace", workspaceId: "w1", nodeId: "", recordId: "", units: { title: "rev-w1" } },
+        n1: { id: "n1", kind: "node", workspaceId: "w1", nodeId: "", recordId: "", units: { title: "rev-n1", position: "rev-p1" } },
+        n2: { id: "n2", kind: "node", workspaceId: "w1", nodeId: "", recordId: "", units: { title: "rev-n2", position: "rev-p2" } },
+        ref1: { id: "ref1", kind: "reference", workspaceId: "w1", nodeId: "n2", recordId: "r1", units: { remark: "rev-ref1" } },
+      },
+      revisions: {
+        "rev-w1": { id: "rev-w1", entityId: "w1", unit: "title", value: "学习", parents: [], commandId: "c1" },
+        "rev-n1": { id: "rev-n1", entityId: "n1", unit: "title", value: "数学", parents: [], commandId: "c2" },
+        "rev-p1": { id: "rev-p1", entityId: "n1", unit: "position", value: { parentNodeId: "@root", orderKey: "a" }, parents: [], commandId: "c3" },
+        "rev-n2": { id: "rev-n2", entityId: "n2", unit: "title", value: "代数", parents: [], commandId: "c4" },
+        "rev-p2": { id: "rev-p2", entityId: "n2", unit: "position", value: { parentNodeId: "n1", orderKey: "a" }, parents: [], commandId: "c5" },
+        "rev-ref1": { id: "rev-ref1", entityId: "ref1", unit: "remark", value: "重点", parents: [], commandId: "c6" },
+      },
+      candidates: {},
+      groups: {},
+      receipts: {},
+    } as never;
+
+    const zip = await JSZip.loadAsync(await createKnowledgeOutlineZip({ state, records: snapshot.payload.blocks.filter((block): block is RecordBlock => block.type === "record"), assets: snapshot.assets, libraryTitle: "我的知识库", exportedAt: stamp }));
+    expect(zip.file("我的知识库/学习/数学/代数/2026-06-21-树.md")).toBeTruthy();
+    expect(zip.file("我的知识库/_未归类/2026-06-20-进程.md")).toBeTruthy();
+    expect(await zip.file("我的知识库/学习/数学/代数/2026-06-21-树.md")?.async("string")).toContain("## 树");
+    expect(await zip.file("我的知识库/学习/数学/代数/2026-06-21-树.md")?.async("string")).toContain("../../assets/a1-tree.png");
+    expect(zip.file("我的知识库/assets/a1-tree.png")).toBeTruthy();
+    expect(await zip.file("我的知识库/README.md")?.async("string")).toContain("Markdown 日志：2");
   });
 
   it("exports JSON records with formulas, assets and OCR text", () => {

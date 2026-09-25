@@ -24,14 +24,14 @@ describe("UsageGuidePage", () => {
 
     expect(screen.getByRole("navigation", { name: "教程目录" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /01.*理解产品/ })).toHaveAttribute("href", "#understand");
-    expect(screen.getByRole("link", { name: /09.*按任务查找/ })).toHaveAttribute("href", "#find");
+    expect(screen.getByRole("link", { name: /11.*按任务查找/ })).toHaveAttribute("href", "#find");
   });
 
-  it("renders all six semantic illustrations without stale setup copy", () => {
+  it("renders all seven semantic illustrations without stale setup copy", () => {
     render(<UsageGuidePage />);
 
     const images = screen.getAllByRole("img");
-    expect(images).toHaveLength(6);
+    expect(images).toHaveLength(7);
     expect(images.map((image) => image.getAttribute("src"))).toEqual([
       "/guide/learning-loop.png",
       "/guide/record-structure.png",
@@ -39,6 +39,7 @@ describe("UsageGuidePage", () => {
       "/guide/review-spacing.png",
       "/guide/coach-flow.png",
       "/guide/ai-learning-modes.png",
+      "/guide/knowledge-library.png",
     ]);
     expect(images.every((image) => image.getAttribute("alt")?.trim())).toBe(true);
     expect(screen.getByText(/计划是当天的意图/)).toBeInTheDocument();

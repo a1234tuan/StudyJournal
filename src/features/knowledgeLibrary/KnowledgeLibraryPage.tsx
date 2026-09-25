@@ -3,8 +3,8 @@ import { getDefaultKnowledgeLibrary } from "./defaultLibrary";
 import { knowledgeHash } from "./canonical";
 import { KnowledgeRecoveryPanel } from "./KnowledgeRecoveryPanel";
 import { liveQuery } from "dexie";
-import { ArrowLeft, BookOpen, ChevronRight, GitBranch, List, MoreHorizontal, Plus, Search, X } from "lucide-react";
-import type { BackupAssetMeta, RecordBlock } from "../../types";
+import { ArrowLeft, BookOpen, ChevronRight, Download, GitBranch, List, MoreHorizontal, Plus, Search, X } from "lucide-react";
+import type { Asset, RecordBlock } from "../../types";
 import { db } from "../../db/database";
 import { usePageTransitionLayerState } from "../../components/PageTransition";
 import { prepareKnowledgeImport, resumeKnowledgeImport } from "./import";
@@ -22,8 +22,9 @@ import { KnowledgeOutline, KnowledgeTitleInput, type KnowledgeTitleEditor } from
 import { KnowledgeResults } from "./KnowledgeResults";
 import { knowledgeUiError, type KnowledgeFailure } from "./uiError";
 import { orderBetween } from "./orderKey";
+import { exportKnowledgeOutline } from "../../services/knowledgeExportService";
 import "./knowledgeLibrary.css";
-interface Props { records: readonly RecordBlock[]; assets?: readonly BackupAssetMeta[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void }
+interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void }
 interface Editing { command: KnowledgeCommand; unit: KnowledgeUnit; text: string; context: KnowledgeContext; label: string; isNew: boolean }
 type Panel = "search" | "unorganized" | "manage" | "trash" | "conflicts" | "menu" | "node-menu";
 export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavigation, onBack, onOpenRecord }: Props) => {
@@ -86,6 +87,12 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     try { await task(); if (success && !success.startsWith("已保存")) setMessage(success); }
     catch (error) { errorText(error, stage); }
     finally { busyRef.current = false; setBusy(false); }
+  };
+  const exportCurrentKnowledge = async () => {
+    if (!library || recoveryProtected || preservedSource || copyingTarget) return;
+    if (!window.confirm("将当前知识库按节点目录导出为 Markdown ZIP？这不是完整备份。")) return;
+    const result = await exportKnowledgeOutline({ state, records, assets, libraryTitle: library.title });
+    setMessage(result);
   };
   useEffect(() => {
     const changed = () => { setOwner(currentKnowledgeOwner()); setPanel(undefined); setPicker(false); setEditing(undefined); setTopicTitle(undefined); setNextAction(undefined); setMoveNode(undefined); setSelectedRecords([]); setMessage("账号已变化，请在当前账号下重新打开知识库。"); };
@@ -345,7 +352,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
       {editingForm}
       {(panel === "search" || panel === "unorganized" || picker) && <KnowledgeResults key={picker ? "picker" : panel} state={state} records={records} assets={assets} workspaceId={workspace?.id} mode={picker ? "picker" : panel === "unorganized" ? "unorganized" : "search"} selected={selectedRecords} onSelected={setSelectedRecords} onOpen={openHit} footer={resultFooter} />}
       {moveNode && <><label>移动到<select value={moveTarget} onChange={event => setMoveTarget(event.target.value)}><option value={ROOT_NODE}>专题根分支</option>{Object.values(state.entities).filter(entity => entity.kind === "node" && entity.workspaceId === workspace?.id && entity.id !== moveNode && isKnowledgeVisible(state, entity)).map(entity => <option key={entity.id} value={entity.id}>{knowledgeLabel(state, entity)}</option>)}</select></label><div className="knowledge-dialog-actions"><button className="primary-button" disabled={busy} onClick={() => void run(() => move(moveNode, moveTarget))}>确认移动</button></div></>}
-      {panel === "menu" && <div className="knowledge-menu">{workspace && <><button onClick={() => { afterClose(() => onNavigation({ workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); }}>全部专题</button><button onClick={() => void run(() => beginEdit(workspace, "title"))}>重命名专题</button><button onClick={() => void run(() => beginEdit(workspace, "note"))}>专题说明</button></>}<button onClick={() => openPanel("unorganized")}>未加入专题的日志</button><button onClick={() => openPanel("manage")}>知识库管理</button><button onClick={() => openPanel("trash")}>回收站与归档</button>{!!(conflicts.length + blockedCommands.length) && <button onClick={() => openPanel("conflicts")}>需要处理 · {conflicts.length + blockedCommands.length}</button>}{workspace && <details><summary>归档与删除</summary><button onClick={() => void run(async () => { if (context && window.confirm("归档此专题？可从归档列表恢复。")) { await knowledgeRepository.execute(context, editKnowledgeEntity(scope, state, workspace, "archived", true)); setPanel(undefined); onNavigation({ workspaceId: undefined, selectedNodeId: undefined }); } })}>归档专题</button><button onClick={() => void changeLifecycle(workspace, true)}>删除专题</button></details>}</div>}
+       {panel === "menu" && <div className="knowledge-menu">{workspace && <><button onClick={() => { afterClose(() => onNavigation({ workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); }}>全部专题</button><button onClick={() => void run(() => beginEdit(workspace, "title"))}>重命名专题</button><button onClick={() => void run(() => beginEdit(workspace, "note"))}>专题说明</button></>}<button disabled={busy || !library || recoveryProtected || preservedSource || copyingTarget} onClick={() => void run(exportCurrentKnowledge, undefined, "导出知识库") }><Download size={16} />导出知识库</button><button onClick={() => openPanel("unorganized")}>未加入专题的日志</button><button onClick={() => openPanel("manage")}>知识库管理</button><button onClick={() => openPanel("trash")}>回收站与归档</button>{!!(conflicts.length + blockedCommands.length) && <button onClick={() => openPanel("conflicts")}>需要处理 · {conflicts.length + blockedCommands.length}</button>}{workspace && <details><summary>归档与删除</summary><button onClick={() => void run(async () => { if (context && window.confirm("归档此专题？可从归档列表恢复。")) { await knowledgeRepository.execute(context, editKnowledgeEntity(scope, state, workspace, "archived", true)); setPanel(undefined); onNavigation({ workspaceId: undefined, selectedNodeId: undefined }); } })}>归档专题</button><button onClick={() => void changeLifecycle(workspace, true)}>删除专题</button></details>}</div>}
       {panel === "node-menu" && selected && <div className="knowledge-menu"><button onClick={() => beginCreate((valueOf(state, selected, "position") as KnowledgePosition).parentNodeId)}>添加同级节点</button><button onClick={() => void run(() => beginEdit(selected, "title"))}>编辑标题</button><button onClick={() => void run(() => beginEdit(selected, "note"))}>编辑说明</button><button onClick={() => { setPanel(undefined); setMoveNode(selected.id); setMoveTarget(ROOT_NODE); }}>移动到</button><button onClick={() => void changeLifecycle(selected, true)}>删除分支</button></div>}
       {panel === "manage" && <section className="knowledge-panel knowledge-management">
         <p>日常内容会随云同步一起保存，其他设备使用同一账号即可获取。</p>

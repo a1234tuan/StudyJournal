@@ -49,14 +49,14 @@ export const buildOcrDashboardItems = (records: readonly RecordBlock[], assets: 
     .sort((left, right) => right.record.date.localeCompare(left.record.date) || left.record.order - right.record.order || left.key.localeCompare(right.key));
 };
 
-interface OcrDashboardPageProps {
+export interface OcrDashboardPageProps {
   records: readonly RecordBlock[];
   assets: readonly Asset[];
   onRetry: (assetId: string) => Promise<void>;
   onOpenRecord?: (record: RecordBlock, assetId: string) => void;
 }
 
-export const OcrDashboardPage = ({ records, assets, onRetry, onOpenRecord }: OcrDashboardPageProps) => {
+export const OcrDashboardPanel = ({ records, assets, onRetry, onOpenRecord }: OcrDashboardPageProps) => {
   const items = buildOcrDashboardItems(records, assets);
   const [retrying, setRetrying] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<Record<string, string>>({});
@@ -78,16 +78,7 @@ export const OcrDashboardPage = ({ records, assets, onRetry, onOpenRecord }: Ocr
     }
   };
 
-  return (
-    <main className="page ocr-dashboard-page">
-      <PageHeader
-        eyebrow="OCR"
-        title="OCR 失败看板"
-        subtitle="集中查看仍未完成的图片识别任务。识别成功的图片会自动从这里移除。"
-        density="compact"
-      />
-
-      {items.length === 0 ? (
+  return items.length === 0 ? (
         <section className="ocr-dashboard-empty">
           <ImageIcon size={28} aria-hidden="true" />
           <h2>没有待处理的图片</h2>
@@ -127,7 +118,17 @@ export const OcrDashboardPage = ({ records, assets, onRetry, onOpenRecord }: Ocr
             );
           })}
         </section>
-      )}
-    </main>
-  );
+      )
 };
+
+export const OcrDashboardPage = (props: OcrDashboardPageProps) => (
+  <main className="page ocr-dashboard-page">
+    <PageHeader
+      eyebrow="OCR"
+      title="OCR 任务状态"
+      subtitle="集中查看仍未完成的图片识别任务。识别成功的图片会自动从这里移除。"
+      density="compact"
+    />
+    <OcrDashboardPanel {...props} />
+  </main>
+);

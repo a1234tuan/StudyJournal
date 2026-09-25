@@ -4,6 +4,7 @@ import { saveAs } from "file-saver";
 
 import type {
   Asset,
+  BackupAssetMeta,
   ExportKind,
   ExportOptions,
   KnowledgeExportPayload,
@@ -12,6 +13,9 @@ import type {
   StorageAdapter,
   StorageSnapshot,
 } from "../types";
+import { isKnowledgeVisible, valueOf } from "../features/knowledgeLibrary/protocol";
+import { knowledgeChildren, knowledgeLabel } from "../features/knowledgeLibrary/query";
+import { ROOT_NODE, type KnowledgeEntity, type KnowledgePosition, type KnowledgeState } from "../features/knowledgeLibrary/domain";
 import { getAllVisibleSubjects } from "../lib/subjects";
 import { snapshotToZip } from "./backup";
 import { isNativePlatform } from "../lib/platform";
@@ -98,6 +102,165 @@ const recordToMarkdown = (record: KnowledgeRecord): string => {
 const subjectMarkdown = (subject: string, records: KnowledgeRecord[]): string => {
   const body = records.filter((record) => record.subject === subject).map(recordToMarkdown);
   return [`# ${subject}`, "", body.length > 0 ? body.join("\n\n---\n\n") : "暂无记录", ""].join("\n");
+};
+
+export interface KnowledgeOutlineExportInput {
+  state: KnowledgeState;
+  records: readonly RecordBlock[];
+  assets?: readonly Asset[] | readonly BackupAssetMeta[];
+  libraryTitle?: string;
+  exportedAt?: string;
+}
+
+export interface KnowledgeOutlineExportSummary {
+  workspaces: number;
+  nodes: number;
+  records: number;
+  unorganizedRecords: number;
+}
+
+const outlineSegment = (value: string, fallback: string): string => sanitizeFileName(value.trim() || fallback);
+
+const liveRecords = (records: readonly RecordBlock[]): RecordBlock[] =>
+  records.filter((record): record is RecordBlock => record.type === "record" && !record.deletedAt);
+
+const visibleEntities = (state: KnowledgeState): KnowledgeEntity[] =>
+  Object.values(state.entities).filter((entity) => isKnowledgeVisible(state, entity));
+
+const visibleReferences = (state: KnowledgeState): KnowledgeEntity[] =>
+  visibleEntities(state).filter((entity) => entity.kind === "reference");
+
+const knowledgeOutlineSummary = (input: KnowledgeOutlineExportInput): KnowledgeOutlineExportSummary => {
+  const records = liveRecords(input.records);
+  const recordIds = new Set(records.map((record) => record.id));
+  const entities = visibleEntities(input.state);
+  const references = visibleReferences(input.state).filter((reference) => recordIds.has(reference.recordId));
+  const organized = new Set(references.map((reference) => reference.recordId));
+  return {
+    workspaces: entities.filter((entity) => entity.kind === "workspace").length,
+    nodes: entities.filter((entity) => entity.kind === "node").length,
+    records: references.length,
+    unorganizedRecords: records.filter((record) => !organized.has(record.id)).length,
+  };
+};
+
+const nodeNoteMarkdown = (state: KnowledgeState, entity: KnowledgeEntity, label: string): string => {
+  const note = valueOf(state, entity, "note");
+  return typeof note === "string" && note.trim()
+    ? [`# ${label}`, "", note.trim(), ""].join("\n")
+    : "";
+};
+
+const uniqueRecordFileName = (record: RecordBlock, used: Map<string, number>): string => {
+  const base = outlineSegment(`${record.date}-${record.title}`, `${record.date}-未命名日志`);
+  const count = used.get(base) ?? 0;
+  used.set(base, count + 1);
+  return `${base}${count ? `-${record.id.slice(0, 8)}` : ""}.md`;
+};
+
+const recordMarkdownForFolder = (record: RecordBlock, assets: Asset[], folderPath: string, rootFolder: string): string => {
+  const belowRootSegments = folderPath.split("/").length - rootFolder.split("/").length;
+  const assetPrefix = `${"../".repeat(Math.max(1, belowRootSegments))}assets/`;
+  return recordToLinearMarkdown(record, assets).replaceAll("../assets/", assetPrefix).trim() + "\n";
+};
+
+export const createKnowledgeOutlineZip = async (input: KnowledgeOutlineExportInput): Promise<Blob> => {
+  const records = liveRecords(input.records);
+  const recordMap = new Map(records.map((record) => [record.id, record]));
+  const entities = visibleEntities(input.state);
+  const workspaces = entities
+    .filter((entity) => entity.kind === "workspace")
+    .sort((left, right) => knowledgeLabel(input.state, left).localeCompare(knowledgeLabel(input.state, right), "zh-CN") || left.id.localeCompare(right.id));
+  const references = entities.filter((entity) => entity.kind === "reference");
+  const referencesByNode = new Map<string, KnowledgeEntity[]>();
+  for (const reference of references) {
+    const list = referencesByNode.get(reference.nodeId) ?? [];
+    list.push(reference);
+    referencesByNode.set(reference.nodeId, list);
+  }
+  const assets = (input.assets ?? []).filter((asset): asset is Asset => "data" in asset);
+  const zip = new JSZip();
+  const rootFolder = outlineSegment(input.libraryTitle ?? "知识库", "知识库");
+  const organizedRecordIds = new Set<string>();
+  let workspaceCount = 0;
+  let nodeCount = 0;
+  let recordCount = 0;
+
+  const writeNode = (workspaceId: string, node: KnowledgeEntity, parentPath: string): void => {
+    const label = knowledgeLabel(input.state, node);
+    const path = `${parentPath}/${outlineSegment(label, "未命名节点")}`;
+    zip.folder(path);
+    nodeCount += 1;
+    const note = nodeNoteMarkdown(input.state, node, label);
+    if (note) zip.file(`${path}/_节点说明.md`, note);
+
+    const usedNames = new Map<string, number>();
+    for (const reference of referencesByNode.get(node.id) ?? []) {
+      const record = recordMap.get(reference.recordId);
+      if (!record) continue;
+      organizedRecordIds.add(record.id);
+      recordCount += 1;
+      zip.file(`${path}/${uniqueRecordFileName(record, usedNames)}`, recordMarkdownForFolder(record, assets, path, rootFolder));
+    }
+
+    for (const child of knowledgeChildren(input.state, workspaceId, node.id).filter((entity) => isKnowledgeVisible(input.state, entity))) {
+      writeNode(workspaceId, child, path);
+    }
+  };
+
+  for (const workspace of workspaces) {
+    workspaceCount += 1;
+    const workspacePath = `${rootFolder}/${outlineSegment(knowledgeLabel(input.state, workspace), "未命名专题")}`;
+    zip.folder(workspacePath);
+    const note = nodeNoteMarkdown(input.state, workspace, knowledgeLabel(input.state, workspace));
+    if (note) zip.file(`${workspacePath}/_专题说明.md`, note);
+    for (const node of knowledgeChildren(input.state, workspace.id, ROOT_NODE).filter((entity) => isKnowledgeVisible(input.state, entity))) {
+      writeNode(workspace.id, node, workspacePath);
+    }
+  }
+
+  const unorganized = records.filter((record) => !organizedRecordIds.has(record.id));
+  if (unorganized.length > 0) {
+    const path = `${rootFolder}/_未归类`;
+    const usedNames = new Map<string, number>();
+    zip.folder(path);
+    for (const record of unorganized) {
+      recordCount += 1;
+      zip.file(`${path}/${uniqueRecordFileName(record, usedNames)}`, recordMarkdownForFolder(record, assets, path, rootFolder));
+    }
+  }
+
+  const exportedAt = input.exportedAt ?? new Date().toISOString();
+  const summary = knowledgeOutlineSummary(input);
+  for (const asset of assets) {
+    const fileName = sanitizeFileName(asset.fileName || asset.title || asset.id);
+    zip.file(`${rootFolder}/assets/${asset.id}-${fileName}`, asset.data);
+  }
+  zip.file(`${rootFolder}/README.md`, [
+    `# ${input.libraryTitle?.trim() || "知识库"}`,
+    "",
+    `导出时间：${exportedAt}`,
+    `专题：${summary.workspaces}`,
+    `节点：${summary.nodes}`,
+    `Markdown 日志：${recordCount}`,
+    `未归类日志：${summary.unorganizedRecords}`,
+    `附件资源：${assets.length}`,
+    "",
+    "本 ZIP 按知识库目录树导出。节点对应文件夹，日志对应 Markdown 文件；它不是 StudyJournal 的完整恢复备份。",
+    "",
+  ].join("\n"));
+  return zip.generateAsync({ type: "blob" });
+};
+
+export const exportKnowledgeOutline = async (
+  input: KnowledgeOutlineExportInput,
+  options: ExportOptions = {},
+): Promise<string> => {
+  const date = (input.exportedAt ?? new Date().toISOString()).slice(0, 10);
+  const summary = knowledgeOutlineSummary(input);
+  const zip = await createKnowledgeOutlineZip(input);
+  const message = await writeOrDownload(zip, `study-journal-knowledge-tree-${date}.zip`, "学习日志知识库目录树", options);
+  return `${message} 共生成 ${summary.records + summary.unorganizedRecords} 个 Markdown 日志文件。`;
 };
 
 export const createSubjectMarkdownZip = async (snapshot: StorageSnapshot): Promise<Blob> => {
