@@ -157,6 +157,10 @@
   position: absolute;
 }
 
+.image-lightbox-presence {
+  z-index: 60;
+}
+
 .motion-presence-modal.motion-presence-exiting > :first-child {
   animation: modal-panel-out 140ms ease-in both;
 }

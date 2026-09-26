@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { Asset, RecordBlock } from "../types";
 import { formatUiError } from "../lib/uiError";
+import { describeOcrForAi } from "../services/ocrDiagnostics";
 import { PageHeader } from "../components/ui";
 
 export type OcrDashboardStatus = "idle" | "queued" | "running" | "failed" | "timeout";
@@ -30,7 +31,11 @@ export const buildOcrDashboardItems = (records: readonly RecordBlock[], assets: 
       .filter((ref) => ref.kind === "image")
       .map((ref): OcrDashboardItem | undefined => {
         const asset = assetsById.get(ref.id);
-        if (!asset || asset.ocrStatus === "done") {
+        if (!asset) {
+          return undefined;
+        }
+        const busy = asset.ocrStatus === "queued" || asset.ocrStatus === "running";
+        if (describeOcrForAi(asset).included && !busy) {
           return undefined;
         }
         const key = `${record.id}:${asset.id}`;
@@ -42,7 +47,7 @@ export const buildOcrDashboardItems = (records: readonly RecordBlock[], assets: 
           key,
           record,
           asset,
-          status: asset.ocrStatus ?? "idle",
+          status: asset.ocrStatus === "done" ? "idle" : asset.ocrStatus ?? "idle",
         } satisfies OcrDashboardItem;
       })
       .filter((item): item is OcrDashboardItem => Boolean(item)))
@@ -82,7 +87,7 @@ export const OcrDashboardPanel = ({ records, assets, onRetry, onOpenRecord }: Oc
         <section className="ocr-dashboard-empty">
           <ImageIcon size={28} aria-hidden="true" />
           <h2>没有待处理的图片</h2>
-          <p>当前所有日志图片都已完成 OCR，或还没有引用图片。</p>
+          <p>当前所有日志图片都已有可用 OCR 文字，或还没有引用图片。</p>
         </section>
       ) : (
         <section className="ocr-dashboard-list" aria-label="待处理 OCR 图片">
@@ -97,7 +102,7 @@ export const OcrDashboardPanel = ({ records, assets, onRetry, onOpenRecord }: Oc
                   <p>{item.record.date} · {item.record.subject}</p>
                   <p className="ocr-dashboard-asset-name">图片：{item.asset.title || item.asset.fileName}</p>
                   <p className={`ocr-dashboard-status ocr-dashboard-status-${item.status}`}>
-                    {OCR_STATUS_LABELS[item.status]}
+                    {describeOcrForAi(item.asset).included ? `已有可用 OCR 文字 · 本机${OCR_STATUS_LABELS[item.status]}` : OCR_STATUS_LABELS[item.status]}
                     {item.asset.ocrError ? ` · ${item.asset.ocrError}` : ""}
                   </p>
                   {messages[item.key] && <p className="status-message">{messages[item.key]}</p>}

@@ -199,6 +199,84 @@ for (const theme of ["reading", "modern"] as const) {
   });
 }
 
+test("image preview covers review controls and leaves its close button unobstructed", async ({ page }) => {
+  await page.goto("/?preview=stage3");
+  await page.getByRole("button", { name: /^复习/ }).first().click();
+  await expect(page.getByRole("button", { name: "打开批注工具" })).toBeVisible();
+  await page.evaluate(async () => {
+    const databasePath = "/src/db/database.ts";
+    const { db } = await import(databasePath);
+    const canvas = document.createElement("canvas");
+    canvas.width = 160;
+    canvas.height = 100;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#2364aa";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const data = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!)));
+    const stamp = new Date().toISOString();
+    const assetId = "review-close-button-regression";
+    await db.assets.put({
+      id: assetId, fileName: "preview.png", title: "预览关闭测试", kind: "image",
+      mimeType: data.type, size: data.size, data, createdAt: stamp, updatedAt: stamp,
+    });
+    const record = await db.blocks.get("stage3-preview-record");
+    await db.blocks.update(record.id, {
+      contentHtml: `${record.contentHtml}<record-asset data-asset-id="${assetId}" data-kind="image" data-title="预览关闭测试"></record-asset>`,
+      assets: [...record.assets, { id: assetId, title: "预览关闭测试", kind: "image" }],
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /^复习/ }).first().click();
+  await page.getByTitle("预览图片", { exact: true }).click();
+  const preview = page.locator(".image-lightbox");
+  const closeButton = preview.getByRole("button", { name: "关闭", exact: true });
+  const assertPreviewCovers = async (selector: string) => {
+    await expect.poll(() => page.evaluate((controlSelector) => {
+      const control = document.querySelector(controlSelector)!;
+      const rect = control.getBoundingClientRect();
+      const previewElement = document.querySelector(".image-lightbox")!;
+      return [0.2, 0.5, 0.8].every((fraction) => previewElement.contains(
+        document.elementFromPoint(rect.x + rect.width * fraction, rect.y + rect.height / 2),
+      ));
+    }, selector)).toBe(true);
+  };
+  await expect(closeButton).toBeVisible();
+  await assertPreviewCovers(".review-bottom-controls");
+  await assertPreviewCovers(".review-annotation-entry");
+  const ratingButton = page.getByRole("button", { name: /^良好/ });
+  const ratingBox = await ratingButton.boundingBox();
+  await page.mouse.click(ratingBox!.x + ratingBox!.width / 2, ratingBox!.y + ratingBox!.height / 2);
+  await expect(preview).toBeVisible();
+  await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeAttached();
+  await expect.poll(async () => {
+    const entryBox = await page.locator(".review-annotation-entry").boundingBox();
+    const closeBox = await closeButton.boundingBox();
+    return Boolean(entryBox && closeBox && entryBox.y >= closeBox.y + closeBox.height + 8);
+  }).toBe(true);
+  expect(await closeButton.evaluate((button) => {
+    const rect = button.getBoundingClientRect();
+    return [0.2, 0.5, 0.8].every((fraction) => button.contains(
+      document.elementFromPoint(rect.x + rect.width * fraction, rect.y + rect.height / 2),
+    ));
+  })).toBe(true);
+  await closeButton.click();
+  await expect(preview).toHaveCount(0);
+  await page.getByRole("button", { name: "打开批注工具" }).click();
+  await expect(page.getByRole("toolbar", { name: "批注工具栏" })).toBeVisible();
+  await page.getByTitle("预览图片", { exact: true }).click();
+  await expect(closeButton).toBeVisible();
+  await assertPreviewCovers(".review-annotation-toolbar");
+  await assertPreviewCovers(".review-annotation-entry");
+  const rectangleBox = await page.getByRole("button", { name: "矩形", exact: true }).boundingBox();
+  await page.mouse.click(rectangleBox!.x + rectangleBox!.width / 2, rectangleBox!.y + rectangleBox!.height / 2);
+  await expect(preview).toBeVisible();
+  await expect(page.getByRole("button", { name: "浏览", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await closeButton.click();
+  await expect(preview).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭批注工具" }).click();
+  await expect(page.locator(".review-bottom-controls")).toBeVisible();
+});
+
 test("keeps rating undo across tabs and exposes annotation tools", async ({ page }, testInfo) => {
   await page.goto("/?preview=stage3");
   await page.getByRole("button", { name: /^复习/ }).first().click();

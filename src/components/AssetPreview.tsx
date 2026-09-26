@@ -190,15 +190,15 @@ export const AssetPreview = (props: AssetPreviewProps) => {
       setPlaying(false);
     }
   };
-  const ocrDone = asset.kind === "image" && asset.ocrStatus === "done" && Boolean(asset.ocrText?.trim());
+  const ocrDiagnostic = describeOcrForAi(asset);
+  const ocrDone = ocrDiagnostic.included;
   const ocrBusy = asset.ocrStatus === "running" || asset.ocrStatus === "queued";
   const ocrBusyLabel = asset.ocrStatus === "queued" ? "排队中" : "识别中";
   const canRetryOcr = asset.kind === "image" && !ocrBusy && !ocrDone;
-  const ocrDiagnostic = describeOcrForAi(asset);
   const viewTitle = title === asset.fileName && asset.kind === "image" ? "" : title;
   const ocrBadge = asset.kind === "image"
     ? ocrDone
-      ? "OCR✅"
+      ? `OCR✅${ocrBusy ? ` · 本机${ocrBusyLabel}` : ""}`
       : ocrBusy
         ? ocrBusyLabel
         : asset.ocrStatus === "failed" || asset.ocrStatus === "timeout"
@@ -346,7 +346,7 @@ export const AssetPreview = (props: AssetPreviewProps) => {
         </button>
         <div className="ocr-row">
           <span>
-            {ocrDone ? "OCR✅" : `OCR：${ocrBusy ? ocrBusyLabel : asset.ocrStatus === "failed" ? "失败" : asset.ocrStatus === "timeout" ? "超时" : "未识别"}`}
+            {ocrDone ? ocrBadge : `OCR：${ocrBusy ? ocrBusyLabel : asset.ocrStatus === "failed" ? "失败" : asset.ocrStatus === "timeout" ? "超时" : "未识别"}`}
           </span>
           {showOcrDetails && (
             <button type="button" className="subtle-button" onClick={() => setOcrDetailsOpen((value) => !value)}>
@@ -360,7 +360,7 @@ export const AssetPreview = (props: AssetPreviewProps) => {
           )}
         </div>
         {asset.ocrText && <p className="ocr-snippet">{asset.ocrText.slice(0, 120)}</p>}
-        {asset.ocrError && <p className="status-message">{asset.ocrError}</p>}
+        {!ocrDone && asset.ocrError && <p className="status-message">{asset.ocrError}</p>}
         {ocrDetailsOpen && (
           <dl className="ocr-details">
             <div>
@@ -376,9 +376,15 @@ export const AssetPreview = (props: AssetPreviewProps) => {
               <dd>{ocrDiagnostic.textLength}</dd>
             </div>
             <div>
-              <dt>状态</dt>
+              <dt>本机任务状态</dt>
               <dd>{asset.ocrStatus ?? "idle"}</dd>
             </div>
+            {ocrDone && asset.ocrError && (
+              <div>
+                <dt>本机上次错误</dt>
+                <dd>{asset.ocrError}</dd>
+              </div>
+            )}
             <div>
               <dt>Job ID</dt>
               <dd>{asset.ocrJobId ?? "无"}</dd>
