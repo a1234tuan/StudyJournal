@@ -3854,7 +3854,7 @@
 .review-rating-bar button {
   min-height: 48px;
   gap: 2px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--review-rating-tint, var(--color-surface));
   color: var(--color-text);
@@ -3863,7 +3863,7 @@
 
 .review-rating-bar button:hover,
 .review-rating-bar button:focus-visible {
-  background: color-mix(in srgb, var(--color-text) 4%, var(--review-rating-tint, var(--color-surface)));
+  background: var(--review-rating-tint, var(--color-surface));
   color: var(--color-text);
 }
 
@@ -3883,19 +3883,60 @@
 }
 
 .review-rating-bar .forgot {
-  --review-rating-tint: color-mix(in srgb, var(--color-danger) 11%, var(--color-surface));
+  --review-rating-tint: #f4e5e1;
 }
 
 .review-rating-bar .fuzzy {
-  --review-rating-tint: color-mix(in srgb, #41464d 9%, var(--color-surface));
+  --review-rating-tint: #ececea;
 }
 
 .review-rating-bar .good {
-  --review-rating-tint: color-mix(in srgb, var(--color-success) 11%, var(--color-surface));
+  --review-rating-tint: #e6f1e9;
 }
 
 .review-rating-bar .easy {
-  --review-rating-tint: color-mix(in srgb, #5b8dd8 11%, var(--color-surface));
+  --review-rating-tint: #e6eefb;
+}
+
+@supports (background: color-mix(in srgb, black, white)) {
+  .review-rating-bar button {
+    border-color: color-mix(in srgb, var(--color-border) 82%, transparent);
+  }
+
+  .review-rating-bar button:hover,
+  .review-rating-bar button:focus-visible {
+    background: color-mix(in srgb, var(--color-text) 4%, var(--review-rating-tint, var(--color-surface)));
+  }
+
+  .review-rating-bar .forgot {
+    --review-rating-tint: color-mix(in srgb, var(--color-danger) 11%, var(--color-surface));
+  }
+
+  .review-rating-bar .fuzzy {
+    --review-rating-tint: color-mix(in srgb, #41464d 9%, var(--color-surface));
+  }
+
+  .review-rating-bar .good {
+    --review-rating-tint: color-mix(in srgb, var(--color-success) 11%, var(--color-surface));
+  }
+
+  .review-rating-bar .easy {
+    --review-rating-tint: color-mix(in srgb, #5b8dd8 11%, var(--color-surface));
+  }
+}
+
+@supports not (background: color-mix(in srgb, black, white)) {
+  :root[data-theme="dark"] .review-rating-bar .forgot { --review-rating-tint: #49302f; }
+  :root[data-theme="dark"] .review-rating-bar .fuzzy { --review-rating-tint: #343a3d; }
+  :root[data-theme="dark"] .review-rating-bar .good { --review-rating-tint: #294333; }
+  :root[data-theme="dark"] .review-rating-bar .easy { --review-rating-tint: #2d3b55; }
+
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="system"] .review-rating-bar .forgot { --review-rating-tint: #49302f; }
+    :root[data-theme="system"] .review-rating-bar .fuzzy { --review-rating-tint: #343a3d; }
+    :root[data-theme="system"] .review-rating-bar .good { --review-rating-tint: #294333; }
+    :root[data-theme="system"] .review-rating-bar .easy { --review-rating-tint: #2d3b55; }
+  }
 }
 
 .review-empty-state {
