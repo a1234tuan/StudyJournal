@@ -86,7 +86,8 @@ test("desktop review layout, brand and click feedback use the new visual hierarc
     };
   });
   expect(sessionGeometry.centerDelta).toBeLessThanOrEqual(1);
-  expect(sessionGeometry.cardWidth).toBeLessThanOrEqual(760.5);
+  await expect(page.locator(".sidebar")).toBeVisible();
+  expect(sessionGeometry.cardWidth).toBeCloseTo(960, 0);
   expect(sessionGeometry.focusAfterBody).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("desktop-review-centered.png"), fullPage: false });
 

@@ -166,7 +166,8 @@ body {
 }
 
 .app-shell {
-  grid-template-columns: 240px minmax(0, 1fr);
+  --sidebar-width: 240px;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .sidebar {
@@ -453,6 +454,40 @@ body {
 .review-record-card .rich-editor { font-family: var(--font-reading); line-height: var(--reading-line-height, 1.8); }
 .review-rating-bar { border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
 .review-rating-bar button { border-radius: 0; box-shadow: none; }
+
+@media (min-width: 921px) {
+  .app-shell.desktop-review-session {
+    --review-reading-width: 960px;
+    --review-column-width: min(var(--review-reading-width), calc(100% - var(--sidebar-width) - 2 * var(--space-page-x)));
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  }
+
+  .app-shell.desktop-review-session .sidebar {
+    display: flex;
+  }
+
+  .desktop-review-session .review-page-session-active {
+    width: min(calc(var(--review-reading-width) + 2 * var(--space-page-x)), 100%);
+  }
+
+  .desktop-review-session .review-session-chrome,
+  .desktop-review-session .review-record-card {
+    width: 100%;
+  }
+
+  .desktop-review-session .review-record-card {
+    padding-inline: 0;
+  }
+
+  .desktop-review-session .review-record-card .editor-shell.read-only {
+    max-width: none;
+  }
+
+  .desktop-review-session .review-viewport-dock {
+    left: calc(50% + var(--sidebar-width) / 2);
+    width: var(--review-column-width);
+  }
+}
 
 .adaptive-review-page { width: min(800px, 100%); }
 .adaptive-review-header { border-bottom-color: var(--color-border); }

@@ -844,7 +844,7 @@ button:disabled {
   margin: 0 0.12em;
   padding: 0.08em 0.28em;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--surface-2) 75%, transparent);
+  background: transparent;
   vertical-align: baseline;
 }
 
@@ -1186,7 +1186,7 @@ button:disabled {
   margin-top: 10px;
   padding: 12px;
   border-radius: 8px;
-  background: var(--surface-2);
+  background: transparent;
 }
 
 .todo-list {

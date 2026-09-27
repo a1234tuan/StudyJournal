@@ -14,12 +14,15 @@ export interface ReviewUndoEntry {
   dailyLimitIds: string[];
   showAllDue: boolean;
   reviewProgress: ReviewSessionProgress;
+  feedbackDraftKey?: string;
 }
 
 export interface ReviewSessionRuntimeState {
   day: string;
   ratedRecordIds: string[];
   undoHistory: ReviewUndoEntry[];
+  feedbackDrafts?: Record<string, Record<string, DecisionBlockFeedbackDraft>>;
+  showAllDue?: boolean;
 }
 
 export const createReviewSessionRuntime = (day: string): ReviewSessionRuntimeState => ({

@@ -102,6 +102,7 @@ import { reviewCoachRepository } from "./features/reviewCoach/repository";
 import { voiceRecallRuntime } from "./features/voiceRecall/runtimeController";
 import { voiceRecallRepository } from "./features/voiceRecall/repository";
 import { readVisualTheme, writeVisualTheme, type VisualTheme } from "./lib/visualTheme";
+import { pendingReviewNavigation } from "./features/reviewSession/navigationGuard";
 
 const sameIds = (left: string[], right: string[]) =>
   left.length === right.length && left.every((id, index) => id === right[index]);
@@ -285,6 +286,7 @@ export const App = () => {
   const lastBackPressRef = useRef(0);
   const backToastTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef<NavigationState>({ activeTab, tabMemory, activeAiSessionId });
+  const reviewNavigationAttemptRef = useRef(0);
   const knowledgeOriginsRef = useRef<Array<{ state: NavigationState; scrollY: number; owner: string }>>([]);
   const webNavigationSessionRef = useRef<string | null>(null);
   const webNavigationIndexRef = useRef(0);
@@ -392,8 +394,18 @@ export const App = () => {
     setBackToast("");
   }, []);
 
-  const commitNavigation = useCallback((next: NavigationState, options: NavigationCommitOptions = {}) => {
+  const commitNavigation = useCallback((next: NavigationState, options: NavigationCommitOptions = {}): boolean | undefined => {
     const current = navigationStateRef.current;
+    const attempt = ++reviewNavigationAttemptRef.current;
+    if (current.activeTab === "review" && buildTabPageKey(current.activeTab, current.tabMemory, current.activeAiSessionId) !== buildTabPageKey(next.activeTab, next.tabMemory, next.activeAiSessionId)) {
+      const pending = pendingReviewNavigation();
+      if (pending) {
+        void pending.then(() => {
+          if (reviewNavigationAttemptRef.current === attempt) commitNavigation(next, options);
+        }).catch(() => undefined);
+        return;
+      }
+    }
     if (current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && (next.activeTab !== "more" || next.tabMemory.more.subRoute !== "knowledge" || next.tabMemory.more.recordId || next.tabMemory.more.knowledge?.libraryId !== current.tabMemory.more.knowledge?.libraryId)) {
       const leave = new Event("knowledge-navigation-leave", { cancelable: true }); window.dispatchEvent(leave); if (leave.defaultPrevented) return;
     }
@@ -1962,6 +1974,13 @@ export const App = () => {
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
     || (activeTab === "review" && Boolean(tabMemory.review.voiceRecall)),
   );
+  const desktopReviewSessionActive = activeTab === "review"
+    && tabMemory.review.mode === "queue"
+    && Boolean(tabMemory.review.currentRecordId)
+    && !currentRecord
+    && !tabMemory.review.voiceRecall
+    && !reviewCoachOpen
+    && !Capacitor.isNativePlatform();
 
   const shellClassName = [
     "app-shell",
@@ -1970,6 +1989,7 @@ export const App = () => {
     aiWorkspaceActive ? "ai-chat-active" : "",
     podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
+    desktopReviewSessionActive ? "desktop-review-session" : "",
     activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()

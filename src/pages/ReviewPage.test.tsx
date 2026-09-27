@@ -6,6 +6,15 @@ import type { RecordBlock, RecordReviewLog, RecordReviewRating, RecordReviewStat
 import type { AnalysisQueueItem, DecisionBlockFeedback } from "../features/reviewCoach/domain";
 import { createInitialReviewLibraryState } from "../lib/tabNavigation";
 import { coachTestInterpretation } from "../features/reviewCoach/reviewCoachTestFixtures";
+import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain";
+
+vi.mock("../features/reviewAnnotations/repository", () => ({
+  reviewAnnotationRepository: {
+    openDraft: vi.fn(async (draft: ReviewAnnotationDraft) => draft),
+    upsertDraft: vi.fn(async () => true),
+    clearAfterRating: vi.fn(async () => undefined),
+  },
+}));
 
 const richTextEditorMock = vi.hoisted(() => ({
   props: [] as any[],
@@ -482,7 +491,7 @@ describe("ReviewPage", () => {
     expect(layout?.children[1]).toHaveClass("decision-block-reflection-list");
   });
 
-  it("replaces the rating dock with annotation tools and restores it when annotation closes", () => {
+  it("replaces the rating dock with annotation tools and restores it when annotation closes", async () => {
     renderReviewPage({
       records: records.map((item) => item.id === "active" ? withDecisionBlock(item) : item),
       mode: "queue",
@@ -495,6 +504,7 @@ describe("ReviewPage", () => {
     expect(document.querySelector(".review-bottom-controls")).toHaveClass("review-viewport-dock", "has-decision-blocks");
     expect(screen.queryByRole("toolbar", { name: "批注工具栏" })).not.toBeInTheDocument();
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "打开批注工具" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "打开批注工具" }));
     expect(document.querySelector(".review-bottom-controls")).toBeNull();
     expect(screen.getByRole("toolbar", { name: "批注工具栏" })).toHaveClass("review-viewport-dock");

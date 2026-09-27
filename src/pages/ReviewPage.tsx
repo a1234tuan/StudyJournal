@@ -351,15 +351,16 @@ export const ReviewPage = ({
   const [undoing, setUndoing] = useState(false);
   const [ratingError, setRatingError] = useState("");
   const [annotationOpen, setAnnotationOpen] = useState(false);
-  const [showAllDue, setShowAllDue] = useState(false);
+  const showAllDue = reviewRuntime.showAllDue ?? false;
+  const setShowAllDue = useCallback((value: boolean) => {
+    onReviewRuntimeChange((current) => ({ ...current, showAllDue: value }));
+  }, [onReviewRuntimeChange]);
   const [libraryFiltersOpen, setLibraryFiltersOpen] = useState(false);
-  const [blockFeedbackDrafts, setBlockFeedbackDrafts] = useState<Record<string, DecisionBlockFeedbackDraft>>({});
   const [queueNoteDrafts, setQueueNoteDrafts] = useState<Record<string, string>>({});
   const [interpretationDrafts, setInterpretationDrafts] = useState<Record<string, { stuckAt: string; preferredPractice: string }>>({});
   const [legacyLinkTargets, setLegacyLinkTargets] = useState<Record<string, string>>({});
   const [legacyIncludeInAnalysis, setLegacyIncludeInAnalysis] = useState<Record<string, boolean>>({});
   const [feedbackActionId, setFeedbackActionId] = useState<string>();
-  const feedbackDraftRecordIdRef = useRef<string>();
   const today = todayISO();
   const [dailyLimitIds, setDailyLimitIds] = useState<string[]>(() => suggestedDailyLimitIds(dueReviews, today));
   const [sessionProgress, setSessionProgress] = useState<ReviewSessionProgress | undefined>(
@@ -425,6 +426,16 @@ export const ReviewPage = ({
   const currentId = currentRecordId && effectiveQueue.includes(currentRecordId) ? currentRecordId : effectiveQueue[0];
   const currentRecord = currentId ? recordMap.get(currentId) : undefined;
   const currentReview = currentId ? queuedDueReviews.find((review) => review.recordId === currentId) : undefined;
+  const feedbackDraftKey = JSON.stringify([currentId, reviewOccurrenceKey(currentReview), currentRecord?.updatedAt]);
+  const blockFeedbackDrafts = reviewRuntime.feedbackDrafts?.[feedbackDraftKey] ?? {};
+  const updateFeedbackDrafts = useCallback((key: string, update: SetStateAction<Record<string, DecisionBlockFeedbackDraft>>) => {
+    onReviewRuntimeChange((current) => {
+      const previous = current.feedbackDrafts?.[key] ?? {};
+      const next = typeof update === "function" ? update(previous) : update;
+      return { ...current, feedbackDrafts: { ...current.feedbackDrafts, [key]: next } };
+    });
+  }, [onReviewRuntimeChange]);
+  const setBlockFeedbackDrafts = (update: SetStateAction<Record<string, DecisionBlockFeedbackDraft>>) => updateFeedbackDrafts(feedbackDraftKey, update);
   const currentReviewLogs = currentId ? reviewLogsByRecord[currentId] ?? EMPTY_REVIEW_LOGS : EMPTY_REVIEW_LOGS;
   const currentEvaluationLogs = useMemo(
     () => currentReviewLogs.filter(hasEvaluationText),
@@ -564,7 +575,6 @@ export const ReviewPage = ({
   }, [onEnsureDay, today, dueReviews.length]);
 
   useEffect(() => {
-    setShowAllDue(false);
     setDailyLimitIds([]);
   }, [today]);
 
@@ -615,9 +625,6 @@ export const ReviewPage = ({
   }, [today, updateSessionProgress]);
 
   useEffect(() => {
-    if (feedbackDraftRecordIdRef.current === currentId) return;
-    feedbackDraftRecordIdRef.current = currentId;
-    setBlockFeedbackDrafts({});
     setLegacyLinkTargets({});
     setLegacyIncludeInAnalysis({});
   }, [currentId]);
@@ -705,8 +712,14 @@ export const ReviewPage = ({
             dailyLimitIds,
             showAllDue,
             reviewProgress: previousProgress,
+            feedbackDraftKey,
           }],
         }));
+        onReviewRuntimeChange((current) => {
+          const feedbackDrafts = { ...current.feedbackDrafts };
+          delete feedbackDrafts[feedbackDraftKey];
+          return { ...current, feedbackDrafts };
+        });
         try {
           await reviewAnnotationRepository.clearAfterRating(ratedId, ratedOccurrenceKey);
         } catch (error) {
@@ -719,8 +732,7 @@ export const ReviewPage = ({
         ratedRecordIds: current.ratedRecordIds.filter((id) => id !== ratedId),
       }));
       updateSessionProgress(previousProgress);
-      feedbackDraftRecordIdRef.current = previousCurrentId;
-      setBlockFeedbackDrafts(submittedDrafts);
+      updateFeedbackDrafts(feedbackDraftKey, submittedDrafts);
       onQueueChange(previousQueue);
       onCurrentRecordChange(previousCurrentId);
       setRatingError(formatUiError(error, "review-rating"));
@@ -748,8 +760,7 @@ export const ReviewPage = ({
         ratedRecordIds: current.ratedRecordIds.filter((id) => id !== entry.currentRecordId),
       }));
       updateSessionProgress(entry.reviewProgress);
-      feedbackDraftRecordIdRef.current = entry.currentRecordId;
-      setBlockFeedbackDrafts(entry.blockFeedbackDrafts);
+      if (entry.feedbackDraftKey) updateFeedbackDrafts(entry.feedbackDraftKey, entry.blockFeedbackDrafts);
       setShowAllDue(entry.showAllDue);
       setDailyLimitIds(entry.dailyLimitIds);
       onModeChange("queue");
@@ -761,7 +772,7 @@ export const ReviewPage = ({
     } finally {
       setUndoing(false);
     }
-  }, [onCurrentRecordChange, onModeChange, onQueueChange, onReviewRuntimeChange, onUndo, pendingUndoRestore, ratingRecordId, undoHistory, undoing, updateSessionProgress]);
+  }, [onCurrentRecordChange, onModeChange, onQueueChange, onReviewRuntimeChange, onUndo, pendingUndoRestore, ratingRecordId, setShowAllDue, undoHistory, undoing, updateFeedbackDrafts, updateSessionProgress]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1079,10 +1090,13 @@ export const ReviewPage = ({
                           <p className="decision-block-reflection-preview">{decisionBlockPreview(block.contentHtml)}</p>
                           <textarea
                             value={draft.comment}
-                            onChange={(event) => setBlockFeedbackDrafts((current) => ({
-                              ...current,
-                              [block.decisionBlockId]: { ...draft, comment: event.target.value },
-                            }))}
+                            onChange={(event) => {
+                              const comment = event.currentTarget.value;
+                              setBlockFeedbackDrafts((current) => ({
+                                ...current,
+                                [block.decisionBlockId]: { ...(current[block.decisionBlockId] ?? draft), comment },
+                              }));
+                            }}
                             disabled={Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}
                             aria-label={`复习重点 ${index + 1} 本次评论`}
                             placeholder="具体哪里卡住、为什么容易错，或这次想验证什么？"
@@ -1091,10 +1105,13 @@ export const ReviewPage = ({
                             <input
                               type="checkbox"
                               checked={draft.includeInAnalysis}
-                              onChange={(event) => setBlockFeedbackDrafts((current) => ({
-                                ...current,
-                                [block.decisionBlockId]: { ...draft, includeInAnalysis: event.target.checked },
-                              }))}
+                              onChange={(event) => {
+                                const includeInAnalysis = event.currentTarget.checked;
+                                setBlockFeedbackDrafts((current) => ({
+                                  ...current,
+                                  [block.decisionBlockId]: { ...(current[block.decisionBlockId] ?? draft), includeInAnalysis },
+                                }));
+                              }}
                             />
                             <span>加入待分析</span>
                           </label>

@@ -6,7 +6,8 @@ import { usePageTransitionLayerState } from "../../components/PageTransition";
 import { newId } from "../../lib/entity";
 import { formatUiError } from "../../lib/uiError";
 import type { ReviewAnnotationDraft, ReviewAnnotationElement, ReviewAnnotationPoint, ReviewAnnotationTool } from "./domain";
-import { reviewAnnotationRepository } from "./repository";
+import { reviewAnnotationPersistence } from "./persistence";
+import { registerReviewNavigationCheck } from "../reviewSession/navigationGuard";
 
 interface Props {
   recordId: string;
@@ -55,7 +56,13 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
   const pageLayerState = usePageTransitionLayerState();
   const rootRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number>();
-  const latestDraftRef = useRef<ReviewAnnotationDraft>();
+  const readyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const loadRef = useRef<Promise<void>>();
+  const reloadRef = useRef<() => Promise<void>>();
+  const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const draftId = recordId + ":" + occurrenceKey;
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
   const setOpen = (next: boolean | ((current: boolean) => boolean)) => {
@@ -81,6 +88,8 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
 
   useEffect(() => {
     let active = true;
+    readyRef.current = false;
+    setReady(false);
     // Re-seat the draft whenever the target card changes. Keeping the previous
     // card's elements would both render them over the new card and persist new
     // strokes under the previous card's key (commit() spreads `current`).
@@ -94,9 +103,27 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
     setSelectionBox(undefined);
     setEraserPointer(undefined);
     interactionRef.current = undefined;
-    void reviewAnnotationRepository.openDraft(emptyDraft(recordId, occurrenceKey, contentRevision)).then((saved) => {
-      if (active && saved && !saved.pendingClear && saved.contentRevision === contentRevision) setDraft(saved);
-    }).catch((reason) => active && setError(formatUiError(reason, "review-annotation")));
+    const load = async () => {
+      try {
+        const saved = await reviewAnnotationPersistence.open(emptyDraft(recordId, occurrenceKey, contentRevision));
+        if (active && saved && !saved.pendingClear && saved.contentRevision === contentRevision) {
+          setDraft(saved);
+          readyRef.current = true;
+          setReady(true);
+          setError("");
+        }
+      } catch (reason) {
+        if (active) setError(formatUiError(reason, "review-annotation"));
+        throw reason;
+      }
+    };
+    reloadRef.current = () => {
+      const loading = load();
+      loadRef.current = loading;
+      void loading.finally(() => { if (loadRef.current === loading) loadRef.current = undefined; }).catch(() => undefined);
+      return loading;
+    };
+    void reloadRef.current().catch(() => undefined);
     return () => { active = false; };
   }, [contentRevision, occurrenceKey, recordId]);
 
@@ -115,18 +142,59 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
     if (latestText) requestAnimationFrame(() => controlRefs.current.get(latestText.id)?.focus());
   }, [draft.elements, open]);
 
+  const flushPending = useCallback(async () => {
+    window.clearTimeout(saveTimer.current);
+    if (mountedRef.current) setSaving(true);
+    try {
+      if (!readyRef.current) await (loadRef.current ?? reloadRef.current?.());
+      await reviewAnnotationPersistence.flush(draftId);
+      if (mountedRef.current) setError("");
+    } catch (reason) {
+      if (mountedRef.current) setError(formatUiError(reason, "review-annotation") + " 未保存批注仍保留，请勿关闭应用。");
+      throw reason;
+    } finally {
+      if (mountedRef.current) setSaving(false);
+    }
+  }, [draftId]);
+
   const persist = useCallback((next: ReviewAnnotationDraft) => {
-    latestDraftRef.current = next;
+    reviewAnnotationPersistence.stage(next);
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      void reviewAnnotationRepository.upsertDraft(next).catch((reason) => setError(formatUiError(reason, "review-annotation")));
+      void flushPending().catch(() => undefined);
     }, 250);
-  }, []);
+  }, [flushPending]);
 
-  useEffect(() => () => {
-    window.clearTimeout(saveTimer.current);
-    if (latestDraftRef.current) void reviewAnnotationRepository.upsertDraft(latestDraftRef.current);
-  }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(saveTimer.current);
+      void reviewAnnotationPersistence.flush(draftId).catch(() => undefined);
+    };
+  }, [draftId]);
+
+  useEffect(() => {
+    if (pageLayerState === "exiting") return;
+    return registerReviewNavigationCheck(() => {
+      if (selectEditor || drawing || interactionRef.current) {
+        setError("请先完成当前批注操作；下拉选项请先保存或取消，再切换页面。");
+        return Promise.reject(new Error("Unfinished annotation interaction"));
+      }
+      if (!readyRef.current || reviewAnnotationPersistence.hasPending(draftId)) return flushPending();
+      return undefined;
+    });
+  }, [draftId, drawing, flushPending, pageLayerState, selectEditor]);
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!reviewAnnotationPersistence.hasPending(draftId) && !selectEditor && !drawing) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [draftId, drawing, selectEditor]);
 
   const commit = (elements: ReviewAnnotationElement[]) => setDraft((current) => {
     const history = [...current.history.slice(0, current.historyCursor + 1), elements].slice(-101);
@@ -220,6 +288,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
   const hitElement = (x: number, y: number) => [...draft.elements].reverse().find((element) => { const bounds = screenBounds(element); return bounds && x >= bounds.left - 8 && x <= bounds.right + 8 && y >= bounds.top - 8 && y <= bounds.bottom + 8; });
 
   const pointerDown = (event: ReactPointerEvent) => {
+    if (!readyRef.current) return;
     if (!open) return;
     if (tool === "selection") {
       if ((event.target as Element).closest("textarea,select,input")) return;
@@ -393,6 +462,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
       className={`review-annotation-entry ${open ? "active" : ""}`}
       aria-label={open ? "关闭批注工具" : "打开批注工具"}
       aria-pressed={open}
+      disabled={!ready}
       title={open ? "关闭批注" : "打开批注"}
       onClick={() => setOpen((value) => !value)}
     ><Pencil size={18} /></button>
@@ -448,6 +518,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
       if (element.kind === "select") return <select key={element.id} className="review-annotation-control" style={style} value={element.value} onChange={(event) => updateValue(element.id, event.target.value)}><option value="">请选择</option>{(element.options?.length ? element.options : ["选项 1", "选项 2", "选项 3"]).map((option) => <option key={option}>{option}</option>)}</select>;
       return <textarea key={element.id} ref={(node) => { if (node) controlRefs.current.set(element.id, node); else controlRefs.current.delete(element.id); }} className={`review-annotation-control ${element.kind}`} style={style} value={element.value} placeholder={element.kind === "text" ? "文本批注" : "输入内容"} onChange={(event) => updateValue(element.id, event.target.value)} />;
     })}
-    {error && <div className="review-annotation-error" role="alert">{error}</div>}
+    {saving && <div role="status">正在保存批注，请稍候…</div>}
+    {error && <div className="review-annotation-error" role="alert">{error}<button type="button" disabled={saving} onClick={() => void flushPending().catch(() => undefined)}>重试保存批注</button></div>}
   </div>;
 };
