@@ -270,3 +270,123 @@ test("case 8: the narrow layout stacks the form and the back chain unwinds layer
   await page.goBack();
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
 });
+
+test("case 9: a future plan persists without logs, stays hidden today, and opens only on arrival", async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date(2026, 8, 28, 10));
+  await openDashboard(page);
+  await openDailyPlan(page);
+  await page.getByLabel("计划日期", { exact: true }).fill("2026-09-30");
+  await addPlan(page, "提前制定的计划");
+  await expect(planRow(page, "提前制定的计划")).toBeDisabled();
+  await expect(planStatus(page, "提前制定的计划")).toHaveText("待开始");
+  await expect(planRow(page, "提前制定的计划")).toHaveCSS("cursor", "default");
+  await expect(planRow(page, "提前制定的计划")).toHaveCSS("opacity", "1");
+  await expect(live(page).getByRole("region", { name: "新建计划" }).getByLabel("计划日期", { exact: true })).toBeVisible();
+  await expect(live(page).getByRole("heading", { name: "9 月 30 日的计划" })).toBeVisible();
+  const composeBox = await live(page).getByRole("region", { name: "新建计划" }).boundingBox();
+  const listHeadingBox = await live(page).getByRole("heading", { name: "9 月 30 日的计划" }).boundingBox();
+  expect(listHeadingBox!.y - (composeBox!.y + composeBox!.height)).toBeGreaterThanOrEqual(12);
+  await expect(live(page).getByText(/提前计划会随云同步|才开放写日志|已安排/)).toHaveCount(0);
+  await expect(live(page).getByRole("button", { name: /^(今天|明天|回到今天)$/ })).toHaveCount(0);
+  const readCounts = () => page.evaluate(async () => {
+    const modulePath = "/src/db/database.ts";
+    const { db } = await import(modulePath);
+    return {
+      plans: await db.dailyPlans.toArray(),
+      records: await db.blocks.count(),
+      drafts: await db.recordDrafts.count(),
+      reviews: await db.recordReviews.count(),
+    };
+  });
+  const saved = await readCounts();
+  expect(saved.plans).toHaveLength(1);
+  expect(saved.plans[0]).toMatchObject({ date: "2026-09-30", title: "提前制定的计划" });
+  expect(saved.records).toBe(0);
+  expect(saved.drafts).toBe(0);
+  expect(saved.reviews).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath("scheduled-plan.png"), fullPage: true, animations: "disabled" });
+
+  await page.getByLabel("计划日期", { exact: true }).fill("2026-09-28");
+  await expect(planRow(page, "提前制定的计划")).toHaveCount(0);
+  await page.getByRole("tab", { name: "历史", exact: true }).click();
+  await expect(live(page).getByText("累计 0 天有计划")).toBeVisible();
+  await expect(planRow(page, "提前制定的计划")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await openDailyPlan(page);
+  await expect(planRow(page, "提前制定的计划")).toHaveCount(0);
+  await page.getByLabel("计划日期", { exact: true }).fill("2026-09-30");
+  await expect(planRow(page, "提前制定的计划")).toBeDisabled();
+  expect(await readCounts()).toEqual(saved);
+
+  await page.clock.setFixedTime(new Date(2026, 8, 30, 10));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(planRow(page, "提前制定的计划")).toBeEnabled();
+  expect(await readCounts()).toEqual(saved);
+  await openPlanLog(page, "提前制定的计划");
+  await writeInto(page, "到了计划日期，记录实际学习过程。");
+  await saveRecord(page);
+  await page.goBack();
+  await expect(page.getByLabel("计划日期", { exact: true })).toHaveValue("2026-09-30");
+  await expect(planStatus(page, "提前制定的计划")).toHaveText("已完成");
+  const completed = await readCounts();
+  expect(completed.records).toBe(1);
+  expect(completed.plans[0].linkedRecordId).toBeTruthy();
+});
+
+test("case 10: today mode follows the local date after resuming and leaves overdue plans in history", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 11, 31, 23, 50));
+  await openDashboard(page);
+  await openDailyPlan(page);
+  await addPlan(page, "留在历史中的计划");
+  await page.getByLabel("计划日期", { exact: true }).fill("2027-01-01");
+  await expect(page.getByLabel("计划日期", { exact: true })).toHaveValue("2027-01-01");
+  await addPlan(page, "跨年的计划");
+  await page.getByLabel("计划日期", { exact: true }).fill("2026-12-31");
+  await expect(planRow(page, "跨年的计划")).toHaveCount(0);
+
+  await page.clock.setFixedTime(new Date(2027, 0, 1, 9));
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByLabel("计划日期", { exact: true })).toHaveValue("2027-01-01");
+  await expect(planRow(page, "跨年的计划")).toBeEnabled();
+  await expect(planRow(page, "留在历史中的计划")).toHaveCount(0);
+  await page.getByRole("tab", { name: "历史", exact: true }).click();
+  await expect(planRow(page, "留在历史中的计划")).toBeEnabled();
+});
+
+test("case 11: the compact compose date preserves input, supports cancellation, and labels cross-year plans", async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date(2026, 8, 28, 10));
+  await openDashboard(page);
+  await openDailyPlan(page);
+  const compose = live(page).getByRole("region", { name: "新建计划" });
+  const date = compose.getByLabel("计划日期", { exact: true });
+  const title = compose.getByLabel("计划标题");
+  await expect(compose.locator(".daily-plan-date-display")).toHaveText("今天");
+  await title.fill("保留中的英语计划");
+  await compose.getByRole("button", { name: "英语", exact: true }).click();
+  await date.click();
+  await page.keyboard.press("Escape");
+  await title.click();
+  await expect(date).toHaveValue("2026-09-28");
+  await expect(title).toHaveValue("保留中的英语计划");
+  await date.fill("2027-01-02");
+  await title.click();
+  await expect(compose.locator(".daily-plan-date-display")).toHaveText("2027 年 1 月 2 日");
+  await expect(title).toHaveValue("保留中的英语计划");
+  await expect(compose.getByRole("button", { name: "英语", exact: true })).toHaveClass(/active/);
+  await expect(live(page).getByRole("heading", { name: "2027 年 1 月 2 日的计划" })).toBeVisible();
+  const dateBox = await date.boundingBox();
+  const subjectBox = await compose.locator(".daily-plan-compose-subject").boundingBox();
+  expect(dateBox).not.toBeNull();
+  expect(subjectBox).not.toBeNull();
+  expect(dateBox!.y + dateBox!.height).toBeLessThanOrEqual(subjectBox!.y);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath("compact-plan-date.png"), fullPage: true, animations: "disabled" });
+  await compose.getByRole("button", { name: "添加计划" }).click();
+  await expect(title).toHaveValue("");
+  await expect(date).toHaveValue("2027-01-02");
+  await expect(planRow(page, "保留中的英语计划")).toBeDisabled();
+  await expect(compose.getByRole("button", { name: "英语", exact: true })).toHaveClass(/active/);
+});

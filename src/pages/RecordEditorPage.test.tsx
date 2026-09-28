@@ -481,6 +481,126 @@ describe("RecordEditorPage", () => {
     expect(screen.getByText("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。")).toBeInTheDocument();
   });
 
+  it.each([
+    { favorite: false, updatedAt: "2026-06-21T00:02:00.000Z" },
+    { favorite: true, updatedAt: "2026-06-21T00:02:00.000Z" },
+    { favorite: false, updatedAt: stamp },
+    { favorite: true, updatedAt: stamp },
+  ])("saves dirty content after toggling favorite from $favorite at $updatedAt", async ({ favorite, updatedAt }) => {
+    const original = { ...record, favorite };
+    const saved = { ...original, favorite: !favorite, updatedAt };
+    let rerenderRecord!: (nextRecord: RecordBlock) => void;
+    const onToggleFavorite = vi.fn(async () => {
+      rerenderRecord(saved);
+    });
+    const rendered = renderEditor({ record: original, onToggleFavorite });
+    rerenderRecord = rendered.rerenderRecord;
+
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalledWith(record.id));
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "收藏后仍可保存" } });
+    act(() => {
+      richEditorMock.html = "<p>编辑中的正文</p>";
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    fireEvent.click(screen.getByRole("button", { name: favorite ? "取消收藏" : "收藏记录" }));
+    await waitFor(() => expect(onToggleFavorite).toHaveBeenCalledWith(original, !favorite));
+
+    fireEvent.click(rendered.saveButton());
+
+    await waitFor(() => expect(rendered.onSave).toHaveBeenCalledOnce());
+    expect(rendered.onSave.mock.calls[0][0]).toMatchObject({ title: "收藏后仍可保存", contentHtml: "<p>编辑中的正文</p>", favorite: !favorite });
+    expect(rendered.onSave.mock.calls[0][1]).toMatchObject({ expectedRecord: saved });
+    expect(screen.queryByText("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。")).not.toBeInTheDocument();
+  });
+
+  it("does not let favoriting authorize an old restored draft with an unknown base", async () => {
+    const currentRecord = { ...record, title: "另一设备的新标题", updatedAt: "2026-06-21T00:02:00.000Z" };
+    const savedRecord = { ...currentRecord, favorite: true, updatedAt: "2026-06-21T00:03:00.000Z" };
+    const storedDraft: RecordDraft = {
+      id: record.id,
+      recordId: record.id,
+      baseUpdatedAt: record.updatedAt,
+      draft: { ...record, title: "跨天恢复后的草稿" },
+      updatedAt: "2026-06-21T00:04:00.000Z",
+    };
+    const onGetDraft = vi.fn().mockResolvedValue(storedDraft);
+    let rerenderRecord!: (nextRecord: RecordBlock) => void;
+    const onToggleFavorite = vi.fn(async () => { rerenderRecord(savedRecord); });
+    const onSave = vi.fn().mockResolvedValue(savedRecord);
+    const rendered = renderEditor({ record: currentRecord, onGetDraft, onToggleFavorite, onSave });
+    rerenderRecord = rendered.rerenderRecord;
+
+    await waitFor(() => expect(screen.getByText("已恢复未保存草稿，点击保存后才会写入正式记录。")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "收藏记录" }));
+    await waitFor(() => expect(onToggleFavorite).toHaveBeenCalledWith(currentRecord, true));
+    await act(async () => { fireEvent.click(rendered.saveButton()); });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(rendered.onDeleteDraft).not.toHaveBeenCalled();
+    expect(rendered.onSaveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ baseUpdatedAt: record.updatedAt }));
+    expect(screen.getByRole("textbox", { name: "记录标题" })).toHaveValue("跨天恢复后的草稿");
+  });
+
+  it.each([
+    { title: "其他设备修改的标题" },
+    { contentHtml: "<p>其他设备修改的正文</p>" },
+    { deletedAt: "2026-06-21T00:02:00.000Z" },
+    { planId: "different-plan" },
+    { order: record.order + 1 },
+  ])("keeps a concurrent change protected when favorite also changes: %j", async (patch) => {
+    const rendered = renderEditor();
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "本机未保存内容" } });
+    rendered.rerenderRecord({ ...record, ...patch, favorite: true, updatedAt: "2026-06-21T00:02:00.000Z" });
+    await act(async () => { fireEvent.click(rendered.saveButton()); });
+    expect(rendered.onSave).not.toHaveBeenCalled();
+    expect(rendered.onDeleteDraft).not.toHaveBeenCalled();
+    expect(rendered.onSaveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ baseUpdatedAt: record.updatedAt }));
+  });
+
+  it("persists the rebased draft after an older queued write and restores it without conflict", async () => {
+    const olderWrite = deferred<RecordDraft>();
+    let storedDraft: RecordDraft | undefined;
+    const onSaveDraft = vi.fn(async (next: RecordDraft) => {
+      if (!storedDraft) await olderWrite.promise;
+      storedDraft = next;
+      return next;
+    });
+    const saved = { ...record, favorite: true, updatedAt: "2026-06-21T00:02:00.000Z" };
+    const rendered = renderEditor({ onSaveDraft });
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "重开后仍能保存" } });
+    await waitFor(() => expect(onSaveDraft).toHaveBeenCalledOnce());
+    rendered.rerenderRecord(saved);
+    await act(async () => { olderWrite.resolve(onSaveDraft.mock.calls[0][0]); });
+    await waitFor(() => expect(storedDraft?.baseUpdatedAt).toBe(saved.updatedAt));
+    expect(storedDraft?.draft).toMatchObject({ title: "重开后仍能保存", favorite: true });
+    rendered.unmount();
+    const reopened = renderEditor({ record: saved, onGetDraft: vi.fn(async () => storedDraft) });
+    await screen.findByText("已恢复未保存草稿，点击保存后才会写入正式记录。");
+    fireEvent.click(reopened.saveButton());
+    await waitFor(() => expect(reopened.onSave).toHaveBeenCalledOnce());
+    expect(reopened.onSave.mock.calls[0][1]).toMatchObject({ expectedRecord: saved });
+  });
+
+  it("keeps the accepted favorite when retrying a save rejected during the favorite refresh", async () => {
+    const firstSave = deferred<RecordBlock>();
+    const saved = { ...record, favorite: true, updatedAt: "2026-06-21T00:02:00.000Z" };
+    const onSave = vi.fn().mockImplementationOnce(() => firstSave.promise).mockResolvedValue(saved);
+    const rendered = renderEditor({ onSave });
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: "保留正文和收藏" } });
+    fireEvent.click(rendered.saveButton());
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    rendered.rerenderRecord(saved);
+    await act(async () => { firstSave.reject(new StaleRecordError()); });
+    await screen.findByText(/正式内容已更新，请核对本机草稿与最新内容/);
+    fireEvent.click(rendered.saveButton());
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    expect(onSave.mock.calls[1][0]).toMatchObject({ title: "保留正文和收藏", favorite: true });
+    expect(onSave.mock.calls[1][1]).toMatchObject({ expectedRecord: saved });
+  });
+
   it("returns immediately while a draft save is still in flight", async () => {
     const draftSave = deferred<RecordDraft>();
     let savedDraft!: RecordDraft;

@@ -19,6 +19,12 @@ export const nowISO = (): ISODateTime => new Date().toISOString();
 
 export const toISODate = (date: Date): ISODate => format(date, "yyyy-MM-dd");
 
+export const isISODate = (value: unknown): value is ISODate => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < "0001-01-01") return false;
+  const parsed = parseISO(value);
+  return isValid(parsed) && toISODate(parsed) === value;
+};
+
 export const isoDateTimeToLocalDate = (dateTime: ISODateTime): ISODate =>
   toISODate(new Date(dateTime));
 

@@ -672,6 +672,8 @@ export const App = () => {
           referenceStack: [],
           restoreScrollY: undefined,
           planOpen: true,
+          planView: "today",
+          planDate: undefined,
         },
       },
     }, { motion: "forward", scrollToTop: true });
@@ -688,6 +690,13 @@ export const App = () => {
         ? current
         : { ...current, tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, planView: view } } }
     ));
+  }, [updateNavigationState]);
+
+  const setDailyPlanDate = useCallback((date: string | undefined) => {
+    updateNavigationState((current) => ({
+      ...current,
+      tabMemory: { ...current.tabMemory, today: { ...current.tabMemory.today, planDate: date } },
+    }));
   }, [updateNavigationState]);
 
   const openVoiceRecall = useCallback((record?: RecordBlock, sourceKind: "record" | "review-card" = "review-card") => {
@@ -1613,6 +1622,8 @@ export const App = () => {
             inFlightDraftRecordIds={new Set(draftFlushTrackerRef.current.pendingRecordIds())}
             defaultSubject={app.activeSubjects[0]?.name}
             view={tabMemory.today.planView ?? "today"}
+            selectedDate={tabMemory.today.planDate}
+            onDateChange={setDailyPlanDate}
             onViewChange={setDailyPlanView}
             onBack={popCurrentTabDepth}
             onCreatePlan={app.createDailyPlan}

@@ -88,7 +88,7 @@ export interface RecordBlock extends BaseEntity {
  * See docs/daily-plan-final-plan-2026-09-16.md section 2.1.
  */
 export interface DailyPlan extends BaseEntity {
-  /** Local calendar day. Only ever built from todayISO()/addDaysISO(). */
+  /** Local calendar day in YYYY-MM-DD form. */
   date: ISODate;
   /** Free-form string (not a foreign key); archived subjects still render as-is. */
   subject: Subject;

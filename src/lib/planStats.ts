@@ -39,7 +39,7 @@ export interface PlanStats {
   last30: PlanWindowSummary;
   /** Consecutive fully-fulfilled planned days, counting back from the latest one. */
   streakDays: number;
-  /** Per subject across every planned day, most plans first. */
+  /** Per subject across planned days through today, most plans first. */
   subjects: PlanSubjectSummary[];
 }
 
@@ -91,5 +91,5 @@ export const derivePlanStats = (groups: PlanDateGroup[], today: ISODate): PlanSt
   last7: summarise(groups.filter((group) => withinLastDays(group.date, today, 7))),
   last30: summarise(groups.filter((group) => withinLastDays(group.date, today, 30))),
   streakDays: deriveStreakDays(groups, today),
-  subjects: deriveSubjects(groups),
+  subjects: deriveSubjects(groups.filter((group) => group.date <= today)),
 });

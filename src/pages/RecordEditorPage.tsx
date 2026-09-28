@@ -10,7 +10,7 @@ import { RecordTagChips, recordTagStyle } from "../components/RecordTagChips";
 import { AudioRecorder, type AudioRecorderHandle } from "../components/AudioRecorder";
 import { StructureInsertMenu } from "../components/StructureInsertMenu";
 import { TemplateInsertMenu } from "../components/TemplateInsertMenu";
-import { newId } from "../lib/entity";
+import { deepEqualIgnoring, newId } from "../lib/entity";
 import { isoDateTimeToLocalDate, nowISO } from "../lib/date";
 import { isDesktopPlatform, isNativePlatform } from "../lib/platform";
 import { formatUiError } from "../lib/uiError";
@@ -451,8 +451,18 @@ export const RecordEditorPage = ({
 
   useEffect(() => {
     const previousRecord = formalRecordRef.current;
-    if (previousRecord.id === record.id && (previousRecord.updatedAt !== record.updatedAt || hasDraftChanges(previousRecord, record)) && !draftLoadingRef.current) {
-      if (committingRef.current && !hasDraftChanges(draftRef.current, cloneRecord(record))) {
+    if (previousRecord.id === record.id && !deepEqualIgnoring(previousRecord, record, []) && !draftLoadingRef.current) {
+      if (remoteRecordChangedRef.current) return;
+      const favoriteOnlyChange = previousRecord.favorite !== record.favorite
+        && deepEqualIgnoring(previousRecord, record, ["favorite", "updatedAt"]);
+      if (favoriteOnlyChange) {
+        const merged = { ...draftRef.current, favorite: record.favorite, updatedAt: record.updatedAt };
+        cancelScheduledDraftSave();
+        formalRecordRef.current = structuredClone(record);
+        draftRef.current = merged;
+        setDraft(merged);
+        void flushDraftDetached(merged, { force: true });
+      } else if (committingRef.current && !hasDraftChanges(draftRef.current, cloneRecord(record))) {
         remoteRecordChangedRef.current = false;
       } else {
         const hasDecisionBlockIntent = pendingDecisionBlockRemovalsRef.current.size > 0 || restoredDecisionBlocksRef.current.size > 0;
@@ -470,7 +480,7 @@ export const RecordEditorPage = ({
       }
     }
     formalRecordRef.current = structuredClone(record);
-  }, [cancelScheduledDraftSave, record]);
+  }, [cancelScheduledDraftSave, flushDraftDetached, record]);
 
   useEffect(() => {
     if (!restoreLocked) {
@@ -837,6 +847,7 @@ export const RecordEditorPage = ({
       const editor = editorRef.current;
       draftToSave = syncEditableRecord({
         ...applyTagInput(draftRef.current),
+        favorite: formalRecordRef.current.favorite,
         contentHtml: editor && !editor.isDestroyed ? editor.getHTML() : draftRef.current.contentHtml,
       });
       draftRef.current = draftToSave;

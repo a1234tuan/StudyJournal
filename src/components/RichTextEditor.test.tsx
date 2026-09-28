@@ -1236,8 +1236,8 @@ describe("RichTextEditor", () => {
     editorView.unmount();
 
     render(<RichTextEditor value={html} onChange={vi.fn()} readOnly />);
-    await waitFor(() => expect(document.querySelector(".comparison-fixed-panel")).toBeInTheDocument());
-    expect(document.querySelectorAll(".comparison-table-right-scroll")).toHaveLength(1);
+    await waitFor(() => expect(document.querySelector("table.comparison-table-view")).toBeInTheDocument());
+    expect(document.querySelectorAll(".comparison-table-scroll")).toHaveLength(1);
     await waitFor(() => expect(document.querySelector(".comparison-markdown-cell strong")).toBeInTheDocument());
     expect(document.querySelector(".comparison-markdown-cell code")).toHaveTextContent("vector<int>");
     expect(document.querySelector(".comparison-markdown-cell strong")).toHaveTextContent("粗体");
@@ -3035,15 +3035,15 @@ describe("RichTextEditor", () => {
     await waitFor(() => expect(document.querySelector(".structure-flow-view")).toBeInTheDocument());
     await waitFor(() => expect(document.querySelector(".structure-flow-branch")).toBeInTheDocument());
     await waitFor(() => expect(document.querySelector(".comparison-table-view")).toBeInTheDocument());
-    await waitFor(() => expect(document.querySelector(".comparison-panel-view")).toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector("table.comparison-table-view")).toBeInTheDocument());
     await waitFor(() => expect(document.querySelector(".collapse-block-content")).toBeInTheDocument());
     await waitFor(() => expect(document.querySelector(".sticky-board-view")).toBeInTheDocument());
     expect(document.querySelector(".record-inline-node")).toBeInTheDocument();
-    expect(document.querySelector(".comparison-fixed-panel")).toBeInTheDocument();
-    expect(document.querySelector(".comparison-table-right-scroll")).toBeInTheDocument();
+    expect(document.querySelector(".comparison-fixed-panel")).not.toBeInTheDocument();
+    expect(document.querySelector(".comparison-table-scroll")).toBeInTheDocument();
     expect(document.querySelector('[role="columnheader"].sticky-column')).toHaveTextContent("Concept");
     expect(document.querySelector('[role="cell"].sticky-column')).toHaveTextContent("Logical file system");
-    expect(document.querySelectorAll(".comparison-table-right-scroll")).toHaveLength(1);
+    expect(document.querySelectorAll(".comparison-table-scroll")).toHaveLength(1);
   });
 
   it("persists a selectable trailing paragraph for root, collapse, and highlight containers", async () => {
@@ -3123,7 +3123,7 @@ describe("RichTextEditor", () => {
     expect(onChange).not.toHaveBeenCalledWith("<p>只读内容</p><p></p>");
   });
 
-  it("uses a single right-side scroller for read-only comparison table columns", async () => {
+  it("keeps every cell in one native table with a sticky first column and one scroller", async () => {
     const comparison = createDefaultComparisonTable();
     comparison.columns = comparison.columns.map((column, index) => ({
       ...column,
@@ -3138,15 +3138,20 @@ describe("RichTextEditor", () => {
       />,
     );
 
-    await waitFor(() => expect(document.querySelector(".comparison-table-right-scroll")).toBeInTheDocument());
-    expect(document.querySelector(".comparison-fixed-panel")).toBeInTheDocument();
-    expect(document.querySelectorAll(".comparison-table-right-scroll")).toHaveLength(1);
-    expect(document.querySelectorAll(".comparison-scroll-grid-row")).toHaveLength(comparison.rows.length + 1);
-
-    const rightScroller = document.querySelector<HTMLDivElement>(".comparison-table-right-scroll")!;
-    rightScroller.scrollLeft = 96;
-    fireEvent.scroll(rightScroller);
-
-    expect(rightScroller.scrollLeft).toBe(96);
+    await waitFor(() => expect(document.querySelector("table.comparison-table-view")).toBeInTheDocument());
+    expect(document.querySelector(".comparison-fixed-panel")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".comparison-table-scroll")).toHaveLength(1);
+    const rows = document.querySelectorAll(".comparison-table-view tr");
+    expect(rows).toHaveLength(comparison.rows.length + 1);
+    for (const row of rows) {
+      expect(row.children).toHaveLength(comparison.columns.length);
+      expect(row.firstElementChild).toHaveClass("sticky-column");
+      expect(row).not.toHaveAttribute("style");
+    }
+    expect(document.querySelectorAll('.comparison-table-view th[scope="col"]')).toHaveLength(comparison.columns.length);
+    const scroller = document.querySelector<HTMLDivElement>(".comparison-table-scroll")!;
+    scroller.scrollLeft = 96;
+    fireEvent.scroll(scroller);
+    expect(scroller.scrollLeft).toBe(96);
   });
 });

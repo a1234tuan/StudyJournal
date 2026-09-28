@@ -123,13 +123,14 @@ export const UsageGuidePage = () => (
 
       <section id="daily-plan" className="usage-guide-section">
         <p className="guide-section-index">04 · 今日计划</p>
-        <h2>先写下今天准备完成什么，再用日志兑现它</h2>
-        <p className="guide-section-summary">今日计划记录当天的学习意图；实际过程、结果和卡点仍然写入日志。</p>
+        <h2>先安排今天或未来的学习，再用日志兑现它</h2>
+        <p className="guide-section-summary">在添加计划卡片内选择日期，默认今天，也可以提前安排未来的学习；实际过程、结果和卡点仍然写入日志。</p>
         <div className="guide-definition-grid">
-          <div><span>选择学科</span><p>按学科列出当天准备学习的内容，计划标题会保留，方便之后回看当天安排。</p></div>
+          <div><span>选择日期与学科</span><p>按目标日期和学科列出准备学习的内容，计划标题会保留，方便之后回看当天安排。</p></div>
           <div><span>写下计划</span><p>计划可以是一个概念、一组题目、一个章节或需要解决的卡点。</p></div>
-          <div><span>用日志兑现</span><p>进入计划条目写下实际过程、结果和卡点；保存有效日志后，该计划才会显示为已完成。</p></div>
+          <div><span>到期用日志兑现</span><p>未来计划显示为“待开始”，不会提前生成日志。到了计划日期，进入条目写下实际过程、结果和卡点；保存有效日志后才显示为已完成。过期未写的计划保留在历史中，补写日志仍归属原计划日期。</p></div>
         </div>
+        <p className="guide-section-summary">提前制定的计划也进入云同步与完整数据备份范围，不必等到目标日期；实际上传和备份以对应操作成功为准。未来计划不计入当天待写入列表及历史完成统计。</p>
         <figure className="guide-figure guide-figure-wide">
           <img
             src="/guide/daily-plan.png"

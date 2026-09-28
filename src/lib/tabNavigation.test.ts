@@ -115,7 +115,7 @@ describe("tabNavigation", () => {
     it("closes the plan record into the plan page, keeping the view", () => {
       const memory = {
         ...createInitialTabMemory(),
-        today: { planOpen: true, planView: "history" as const, recordId: "plan-record", recordEditing: true },
+        today: { planOpen: true, planView: "history" as const, planDate: "2026-09-30", recordId: "plan-record", recordEditing: true },
       };
 
       const back = popTabDepth(memory, "today");
@@ -126,13 +126,14 @@ describe("tabNavigation", () => {
       expect(back.today.recordEditing).toBeUndefined();
       expect(back.today.planOpen).toBe(true);
       expect(back.today.planView).toBe("history");
+      expect(back.today.planDate).toBe("2026-09-30");
       expect(getTabDepth("today", back)).toBe(1);
     });
 
     it("closes the plan page back to the home dashboard and resets the view", () => {
       const memory = {
         ...createInitialTabMemory(),
-        today: { planOpen: true, planView: "history" as const },
+        today: { planOpen: true, planView: "history" as const, planDate: "2026-09-30" },
       };
 
       const back = popTabDepth(memory, "today");
@@ -141,6 +142,7 @@ describe("tabNavigation", () => {
       // trip and the popped state agree.
       expect(back.today.planOpen).toBe(false);
       expect(back.today.planView).toBe("today");
+      expect(back.today.planDate).toBeUndefined();
       expect(getTabDepth("today", back)).toBe(0);
       expect(back.today).toEqual(createInitialTabMemory().today);
     });

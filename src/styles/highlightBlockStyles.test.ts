@@ -77,8 +77,7 @@ describe("highlight block styles", () => {
     const flowBody = cssBlockFor(stylesCss, ".structure-flow-view");
     const chainBody = cssBlockFor(stylesCss, ".structure-flow-chain");
     const comparisonBody = cssBlockFor(stylesCss, ".comparison-table-scroll");
-    const comparisonPanelBody = cssBlockFor(stylesCss, ".comparison-panel-view");
-    const rightScrollBody = cssBlockFor(stylesCss, ".comparison-table-right-scroll");
+    const comparisonTableBody = cssBlockFor(stylesCss, ".comparison-table-view");
     const structureBody = cssBlockFor(stylesCss, ".structure-block");
 
     expect(flowBody).toContain("max-width: 100%");
@@ -92,40 +91,38 @@ describe("highlight block styles", () => {
     expect(chainBody).toContain("max-width: none");
     expect(comparisonBody).toContain("max-width: 100%");
     expect(comparisonBody).toContain("inline-size: 100%");
-    expect(comparisonBody).toContain("overflow-x: visible");
+    expect(comparisonBody).toContain("overflow-x: auto");
     expect(comparisonBody).toContain("overscroll-behavior-x: contain");
     expect(comparisonBody).toContain("touch-action: pan-x pan-y");
     expect(comparisonBody).toContain("position: relative");
     expect(comparisonBody).toContain("isolation: isolate");
     expect(comparisonBody).not.toContain("overflow-y: hidden");
-    expect(comparisonPanelBody).toContain("display: grid");
-    expect(comparisonPanelBody).toContain("grid-template-columns: minmax(150px, 38%) minmax(0, 1fr)");
-    expect(rightScrollBody).toContain("overflow-x: auto");
-    expect(rightScrollBody).toContain("touch-action: pan-x pan-y");
+    expect(comparisonBody).toContain("container-type: inline-size");
+    expect(comparisonTableBody).toContain("table-layout: auto");
+    expect(comparisonTableBody).toContain("border-spacing: 0");
     expect(structureBody).toContain("contain: inline-size");
   });
 
-  it("keeps comparison first-column cells outside the scrolling layer", () => {
+  it("keeps comparison first-column cells sticky in the shared native table", () => {
     const cellBody = cssBlockFor(stylesCss, ".comparison-grid-cell");
     const stickyBody = cssBlockFor(stylesCss, ".comparison-grid-cell.sticky-column");
     const stickyHeadBody = cssBlockFor(stylesCss, ".comparison-grid-head.sticky-column");
-    const fixedPanelBody = cssBlockFor(stylesCss, ".comparison-fixed-panel");
-    const scrollPanelBody = cssBlockFor(stylesCss, ".comparison-scroll-panel");
-    const scrollGridRowBody = cssBlockFor(stylesCss, ".comparison-scroll-grid-row");
+    const contentBody = cssBlockFor(stylesCss, ".comparison-cell-content");
+    const firstContentBody = cssBlockFor(stylesCss, ".comparison-grid-cell.sticky-column .comparison-cell-content");
 
     expect(cellBody).toContain("position: relative");
     expect(cellBody).toContain("z-index: 1");
     expect(cellBody).toContain("background: var(--surface)");
-    expect(fixedPanelBody).toContain("z-index: 2");
-    expect(scrollPanelBody).toContain("overflow: hidden");
-    expect(scrollGridRowBody).toContain("grid-template-columns: repeat(var(--comparison-scroll-column-count), minmax(150px, 260px))");
-    expect(scrollGridRowBody).toContain("width: max-content");
-    expect(stickyBody).not.toContain("position: sticky");
-    expect(stickyBody).not.toContain("left: 0");
+    expect(contentBody).toContain("max-width: min(26rem, 72cqi)");
+    expect(firstContentBody).toContain("max-width: min(12rem, 32cqi)");
+    expect(cellBody).toContain("vertical-align: top");
+    expect(stickyBody).toContain("position: sticky");
+    expect(stickyBody).toContain("left: 0");
     expect(stickyBody).toContain("z-index: 10");
     expect(stickyBody).toContain("background-clip: padding-box");
     expect(stickyHeadBody).toContain("z-index: 20");
-    expect(stylesCss).not.toContain(".comparison-table-view th,\n.comparison-table-view td");
+    expect(stylesCss).not.toContain(".comparison-fixed-panel");
+    expect(stylesCss).not.toContain(".comparison-scroll-grid-row");
     expect(stylesCss).not.toContain(".comparison-row-scroll");
   });
 
@@ -147,6 +144,17 @@ describe("highlight block styles", () => {
     expect(cssBlockFor(stylesCss, ".asset-card-view")).toContain("inline-size: 100%");
     expect(cssBlockFor(stylesCss, ".structure-block")).toContain("display: block");
     expect(cssBlockFor(stylesCss, ".record-highlight-block")).toContain("inline-size: 100%");
+  });
+
+  it("keeps collapse block editing controls compact and readable", () => {
+    expect(stylesCss).toMatch(/\.collapse-block\s*\{\s*padding:\s*9px 10px/);
+    expect(stylesCss).toMatch(/\.collapse-block-head\s*\{\s*display:\s*grid/);
+    expect(stylesCss).toContain("grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) max-content");
+
+    const labelBody = cssBlockFor(stylesCss, ".collapse-block-head label");
+    expect(labelBody).toContain("white-space: nowrap");
+    expect(labelBody).toContain("overflow-wrap: normal");
+    expect(labelBody).toContain("grid-column: 4");
   });
 
   it("prioritizes image space in compact read-only image cards", () => {
@@ -172,7 +180,7 @@ describe("highlight block styles", () => {
   });
 
   it("limits max-content sizing to inner wide-content canvases", () => {
-    const allowedSelectors = new Set([".structure-flow-chain", ".comparison-scroll-grid-row"]);
+    const allowedSelectors = new Set([".structure-flow-chain", ".comparison-table-view", ".comparison-cell-content"]);
     const selectorMatches = Array.from(stylesCss.matchAll(/(^|\n)\s*([^{}\n]+)\s*\{([^{}]*(?:width|min-width)\s*:\s*max-content[^{}]*)\}/g));
     const recordStructureSelectors = selectorMatches
       .map((match) => ({

@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DailyPlanPage } from "./DailyPlanPage";
@@ -52,6 +53,8 @@ const makeDraft = (recordId: string): RecordDraft => ({
 });
 
 interface RenderOptions {
+  today?: string | null;
+  selectedDate?: string;
   plans?: DailyPlan[];
   blocks?: RecordBlock[];
   deletedRecords?: RecordBlock[];
@@ -76,27 +79,33 @@ const renderPage = (options: RenderOptions = {}) => {
     onOpenPlan: options.onOpenPlan ?? vi.fn().mockResolvedValue(undefined),
     onOpenRecord: options.onOpenRecord ?? vi.fn(),
   };
-  const utils = render(
-    <DailyPlanPage
-      plans={options.plans ?? []}
-      blocks={options.blocks ?? []}
-      deletedRecords={options.deletedRecords ?? []}
-      recordDrafts={options.recordDrafts ?? []}
-      subjects={subjects}
-      assets={[]}
-      reviewStates={[]}
-      inFlightDraftRecordIds={options.inFlightDraftRecordIds ?? new Set<string>()}
-      today={today}
-      defaultSubject={options.defaultSubject}
-      view={options.view ?? "today"}
-      onViewChange={handlers.onViewChange}
-      onBack={handlers.onBack}
-      onCreatePlan={handlers.onCreatePlan}
-      onDeletePlan={handlers.onDeletePlan}
-      onOpenPlan={handlers.onOpenPlan}
-      onOpenRecord={handlers.onOpenRecord}
-    />,
-  );
+  const TestPage = () => {
+    const [selectedDate, setSelectedDate] = useState(options.selectedDate);
+    return (
+      <DailyPlanPage
+        plans={options.plans ?? []}
+        blocks={options.blocks ?? []}
+        deletedRecords={options.deletedRecords ?? []}
+        recordDrafts={options.recordDrafts ?? []}
+        subjects={subjects}
+        assets={[]}
+        reviewStates={[]}
+        inFlightDraftRecordIds={options.inFlightDraftRecordIds ?? new Set<string>()}
+        today={options.today === null ? undefined : options.today ?? today}
+        selectedDate={selectedDate}
+        onDateChange={setSelectedDate}
+        defaultSubject={options.defaultSubject}
+        view={options.view ?? "today"}
+        onViewChange={handlers.onViewChange}
+        onBack={handlers.onBack}
+        onCreatePlan={handlers.onCreatePlan}
+        onDeletePlan={handlers.onDeletePlan}
+        onOpenPlan={handlers.onOpenPlan}
+        onOpenRecord={handlers.onOpenRecord}
+      />
+    );
+  };
+  const utils = render(<TestPage />);
   return { ...utils, handlers };
 };
 
@@ -109,7 +118,123 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("scheduled daily plans", () => {
+  it("creates a plan for the selected future date and preserves the selection after save", async () => {
+    const { handlers } = renderPage();
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: "2027-01-02" } });
+    fireEvent.change(screen.getByLabelText("计划标题"), { target: { value: "提前复习" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加计划" }));
+    await waitFor(() => expect(handlers.onCreatePlan).toHaveBeenCalledWith({ date: "2027-01-02", subject: "数学", title: "提前复习" }));
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2027-01-02");
+  });
+
+  it("shows future plans only on their selected day and never opens them early", () => {
+    const future = makePlan({ date: addDaysISO(today, 1) });
+    const { handlers } = renderPage({ plans: [future] });
+    expect(screen.queryByRole("button", { name: new RegExp(PLAN_TITLE) })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: future.date } });
+    expect(openButtonFor(PLAN_TITLE)).toBeDisabled();
+    expect(openButtonFor(PLAN_TITLE)).toHaveTextContent("待开始");
+    fireEvent.click(openButtonFor(PLAN_TITLE));
+    expect(handlers.onOpenPlan).not.toHaveBeenCalled();
+    expect(screen.queryByText(/已安排/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "9 月 17 日的计划" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: today } });
+    expect(screen.getByLabelText("计划日期")).toHaveValue(today);
+    expect(screen.queryByRole("button", { name: new RegExp(PLAN_TITLE) })).not.toBeInTheDocument();
+  });
+
+  it("allows deleting a future plan without opening its log", async () => {
+    const future = makePlan({ date: addDaysISO(today, 1) });
+    const { handlers } = renderPage({ plans: [future], selectedDate: future.date });
+    fireEvent.click(screen.getByRole("button", { name: /删除计划/ }));
+    await waitFor(() => expect(handlers.onDeletePlan).toHaveBeenCalledWith(future));
+    expect(handlers.onOpenPlan).not.toHaveBeenCalled();
+  });
+
+  it("excludes future days from history and its day count", () => {
+    renderPage({ view: "history", plans: [makePlan({ date: addDaysISO(today, 1) })] });
+    expect(screen.getByText("累计 0 天有计划")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: new RegExp(PLAN_TITLE) })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "学科分布" })).not.toBeInTheDocument();
+  });
+
+  it.each(["", "2026-02-30", yesterday])("rejects invalid or past selection %s", (date) => {
+    renderPage();
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: date } });
+    expect(screen.getByRole("status")).toHaveTextContent("请选择今天或未来的有效日期");
+    expect(screen.getByLabelText("计划日期")).toHaveValue(today);
+  });
+
+  it("follows local midnight in today mode without showing yesterday's unfinished plans", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 16, 23, 59, 59));
+    renderPage({ today: null, plans: [makePlan(), makePlan({ id: "tomorrow", title: "明天的计划", date: "2026-09-17" })] });
+    expect(openButtonFor(PLAN_TITLE)).toBeEnabled();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2026-09-17");
+    expect(openButtonFor("明天的计划")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: new RegExp(PLAN_TITLE) })).not.toBeInTheDocument();
+  });
+
+  it("keeps an explicit selected day pinned and unlocks it on arrival", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 16, 23, 59, 59));
+    renderPage({ today: null, selectedDate: "2026-09-17", plans: [makePlan({ date: "2026-09-17" })] });
+    expect(openButtonFor(PLAN_TITLE)).toBeDisabled();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(openButtonFor(PLAN_TITLE)).toBeEnabled();
+    act(() => {
+      vi.setSystemTime(new Date(2026, 8, 18, 9));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2026-09-17");
+    expect(openButtonFor(PLAN_TITLE)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "添加计划" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: "2026-09-18" } });
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2026-09-18");
+  });
+
+  it("keeps a single neutral date field inside the compose card and removes redundant controls and copy", () => {
+    const { container } = renderPage({ selectedDate: "2026-09-17", plans: [makePlan({ date: "2026-09-17" })] });
+    const compose = screen.getByRole("region", { name: "新建计划" });
+    expect(within(compose).getByLabelText("计划日期")).toBeInTheDocument();
+    expect(container.querySelectorAll('input[type="date"]')).toHaveLength(1);
+    expect(container.querySelector(".daily-plan-date-controls")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(今天|明天|回到今天)$/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/提前计划会随云同步/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/才开放写日志/)).not.toBeInTheDocument();
+    expect(container.querySelector(".counter-pill")).not.toBeInTheDocument();
+  });
+
+  it("preserves the title and subject across date selection, then keeps the selected date after submission", async () => {
+    const { handlers } = renderPage();
+    fireEvent.change(screen.getByLabelText("计划标题"), { target: { value: "英语阅读" } });
+    fireEvent.click(screen.getByRole("button", { name: "英语" }));
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: "2027-01-02" } });
+    expect(screen.getByLabelText("计划标题")).toHaveValue("英语阅读");
+    expect(screen.getByRole("button", { name: "英语" })).toHaveClass("active");
+    expect(screen.getByRole("heading", { name: "2027 年 1 月 2 日的计划" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "添加计划" }));
+    await waitFor(() => expect(handlers.onCreatePlan).toHaveBeenCalledWith({ date: "2027-01-02", subject: "英语", title: "英语阅读" }));
+    await waitFor(() => expect(screen.getByLabelText("计划标题")).toHaveValue(""));
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2027-01-02");
+    expect(screen.getByRole("button", { name: "英语" })).toHaveClass("active");
+  });
+
+  it("returns to following today when today's date is selected in the field", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 16, 23, 59, 59));
+    renderPage({ today: null, selectedDate: "2026-09-18" });
+    fireEvent.change(screen.getByLabelText("计划日期"), { target: { value: "2026-09-16" } });
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(screen.getByLabelText("计划日期")).toHaveValue("2026-09-17");
+  });
 });
 
 describe("DailyPlanPage", () => {

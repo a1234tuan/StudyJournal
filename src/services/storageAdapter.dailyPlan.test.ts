@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudyJournalDatabase } from "../db/database";
 import { createBaseEntity } from "../lib/entity";
+import { addDaysISO, todayISO } from "../lib/date";
+import { exportCloudSync, materializeCloudSyncSnapshot } from "./cloudSyncModel";
 import type { DailyPlan, RecordBlock, RecordDraft } from "../types";
 
 Dexie.dependencies.indexedDB = indexedDB;
@@ -389,6 +391,29 @@ describe("batch physical delete", () => {
 });
 
 describe("snapshots carry every plan row", () => {
+  it("round-trips future plans through backup and cloud payloads without creating logs", async () => {
+    const future = await adapter.saveDailyPlan(plan({ id: "future", date: addDaysISO(todayISO(), 5) }));
+    const snapshot = await adapter.createSnapshot();
+    const streamable = await adapter.createStreamableSnapshot();
+    const exported = await exportCloudSync(await adapter.createCloudSyncSnapshot());
+    const transferred = materializeCloudSyncSnapshot(exported.entities, exported.reviewEvents, new Map());
+
+    expect(snapshot.payload.dailyPlans).toEqual([future]);
+    expect(streamable.payload.dailyPlans).toEqual([future]);
+    expect(transferred.payload.dailyPlans).toEqual([future]);
+    expect(exported.entities.filter((entity) => entity.entityType === "daily-plan")).toHaveLength(1);
+    expect(exported.entities.some((entity) => ["block", "draft", "review-state"].includes(entity.entityType))).toBe(false);
+
+    await adapter.deleteDailyPlan(future.id);
+    await adapter.restoreSnapshot(snapshot);
+    expect(await adapter.listDailyPlans(future.date)).toEqual([future]);
+    await adapter.deleteDailyPlan(future.id);
+    await adapter.restoreSnapshot(transferred);
+    expect(await adapter.listDailyPlans(future.date)).toEqual([future]);
+    expect(await database.blocks.count()).toBe(0);
+    expect(await database.recordDrafts.count()).toBe(0);
+    expect(await database.recordReviews.count()).toBe(0);
+  });
   it("includes soft-deleted plans so the tombstone can propagate", async () => {
     await adapter.saveDailyPlan(plan({ id: "p1" }));
     await adapter.saveDailyPlan(plan({ id: "p2", order: 1 }));

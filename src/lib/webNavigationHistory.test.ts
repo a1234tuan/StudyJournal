@@ -66,6 +66,7 @@ describe("web navigation history snapshots", () => {
     const memory = createInitialTabMemory();
     memory.today.planOpen = true;
     memory.today.planView = "history";
+    memory.today.planDate = "2026-09-30";
 
     const snapshot = createWebNavigationSnapshot("session-1", "today", memory, null, 0);
     const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(snapshot)));
@@ -73,6 +74,16 @@ describe("web navigation history snapshots", () => {
     expect(restored).not.toBeNull();
     expect(restored?.tabMemory.today.planOpen).toBe(true);
     expect(restored?.tabMemory.today.planView).toBe("history");
+    expect(restored?.tabMemory.today.planDate).toBe("2026-09-30");
+  });
+
+  it.each(["2026-02-30", "2026-9-30", "not-a-date", 20260930])("discards invalid selected plan date %s without losing navigation", (date) => {
+    const memory = createInitialTabMemory();
+    memory.today.planOpen = true;
+    memory.today.planDate = date as string;
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(createWebNavigationSnapshot("session-1", "today", memory, null, 0))));
+    expect(restored?.tabMemory.today.planOpen).toBe(true);
+    expect(restored?.tabMemory.today.planDate).toBeUndefined();
   });
 
   it("degrades an unknown plan view to the default instead of discarding the snapshot", () => {

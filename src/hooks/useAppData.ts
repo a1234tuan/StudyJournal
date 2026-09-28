@@ -30,7 +30,7 @@ import type {
 } from "../types";
 import { storage } from "../services/storageAdapter";
 import { createBaseEntity, newId } from "../lib/entity";
-import { nowISO, todayISO } from "../lib/date";
+import { isISODate, nowISO, todayISO } from "../lib/date";
 import { createTemplateBlocks } from "../db/defaults";
 import { extractDecisionBlocks, renewDecisionBlockIdentitiesInHtml } from "../features/reviewCoach/decisionBlockContent";
 import {
@@ -399,6 +399,9 @@ export const useAppData = () => {
    */
   const createDailyPlan = useCallback(
     async (input: { date: ISODate; subject: Subject; title: string }) => {
+      if (!isISODate(input.date) || input.date < todayISO()) {
+        throw new ActionableError("请选择今天或未来的有效日期制定计划。");
+      }
       const existing = await storage.listDailyPlans(input.date);
       const order = existing.reduce((max, plan) => Math.max(max, plan.order), -1) + 1;
       return saveDailyPlan({ ...createBaseEntity(), ...input, order });
@@ -998,20 +1001,24 @@ export const useAppData = () => {
    */
   const openRecordFromPlan = useCallback(
     async (plan: DailyPlan): Promise<RecordBlock | undefined> => {
-      const existing = plan.linkedRecordId
+      const current = await storage.getDailyPlan(plan.id);
+      if (!current || current.deletedAt) throw new ActionableError("计划已删除或不存在，请刷新后重试。");
+      if (!isISODate(current.date)) throw new ActionableError("计划日期无效，无法写入日志。");
+      if (current.date > todayISO()) throw new ActionableError(`这条计划尚未到日期，请在 ${current.date} 或之后写日志。`);
+      const existing = current.linkedRecordId
         ? (await storage.listBlocks()).find(
             (block): block is RecordBlock =>
-              block.id === plan.linkedRecordId && block.type === "record" && !block.deletedAt,
+              block.id === current.linkedRecordId && block.type === "record" && !block.deletedAt,
           )
         : undefined;
       if (existing) {
         return existing;
       }
-      const created = await createRecordBlock(plan.date, plan.subject, "", {
-        title: plan.title,
-        planId: plan.id,
+      const created = await createRecordBlock(current.date, current.subject, "", {
+        title: current.title,
+        planId: current.id,
       });
-      await storage.linkPlanRecord(plan.id, created.id);
+      await storage.linkPlanRecord(current.id, created.id);
       await refresh();
       return created;
     },

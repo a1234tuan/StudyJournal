@@ -71,6 +71,7 @@ describe("derivePlanStats", () => {
     expect(stats.last7).toMatchObject({ done: 1, total: 1 });
     expect(stats.last30).toMatchObject({ done: 1, total: 1 });
     expect(stats.today).toMatchObject({ done: 1, total: 1 });
+    expect(stats.subjects.reduce((total, subject) => total + subject.total, 0)).toBe(1);
   });
 
   it("counts a streak across days that have no plans", () => {

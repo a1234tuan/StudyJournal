@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronLeft, Circle, CircleDot, Layers, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronLeft, Circle, CircleDot, Clock3, Layers, Plus, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import type {
@@ -15,7 +15,8 @@ import type {
 } from "../types";
 import { PageHeader } from "../components/ui";
 import { SubjectPicker } from "../components/SubjectPicker";
-import { formatChineseDate, formatChineseMonthDay, todayISO } from "../lib/date";
+import { formatChineseDate, formatChineseMonthDay, isISODate } from "../lib/date";
+import { useLocalToday } from "../hooks/useLocalToday";
 import {
   buildDailyPlanViews,
   groupPlansByDate,
@@ -24,10 +25,10 @@ import {
 } from "../lib/dailyPlan";
 import { derivePlanStats } from "../lib/planStats";
 import type { PlanView } from "../lib/tabNavigation";
-import { formatUiError } from "../lib/uiError";
+import { formatActionableError } from "../lib/uiError";
 
 /**
- * The daily-plan workspace: create today's plans, fulfil them by writing the log
+ * The daily-plan workspace: create dated plans, fulfil them by writing the log
  * they stand for, and review the history.
  *
  * Two deliberate boundaries keep this page honest:
@@ -64,6 +65,8 @@ interface DailyPlanPageProps {
    */
   inFlightDraftRecordIds?: ReadonlySet<EntityId>;
   today?: ISODate;
+  selectedDate?: ISODate;
+  onDateChange: (date: ISODate | undefined) => void;
   defaultSubject?: Subject;
   view: PlanView;
   onViewChange: (view: PlanView) => void;
@@ -78,6 +81,7 @@ interface DailyPlanPageProps {
 
 interface PlanRowProps {
   view: DailyPlanView;
+  scheduled?: boolean;
   entering?: boolean;
   opening?: boolean;
   onEntered?: () => void;
@@ -85,15 +89,19 @@ interface PlanRowProps {
   onDelete: (plan: DailyPlan) => void;
 }
 
-const PlanRow = ({ view, entering = false, opening = false, onEntered, onOpen, onDelete }: PlanRowProps) => {
+const PlanRow = ({ view, scheduled = false, entering = false, opening = false, onEntered, onOpen, onDelete }: PlanRowProps) => {
   const { plan, outcome, record, linkedRecordDeleted } = view;
-  const statusClassName = outcome === "done" ? "done" : outcome === "draft" ? "draft" : "pending";
-  const statusIcon = outcome === "done"
+  const statusClassName = scheduled ? "pending" : outcome === "done" ? "done" : outcome === "draft" ? "draft" : "pending";
+  const statusIcon = scheduled
+    ? <Clock3 size={18} aria-hidden="true" />
+    : outcome === "done"
     ? <CheckCircle2 size={18} aria-hidden="true" />
     : outcome === "draft"
       ? <CircleDot size={18} aria-hidden="true" />
       : <Circle size={18} aria-hidden="true" />;
-  const statusLabel = outcome === "done"
+  const statusLabel = scheduled
+    ? "待开始"
+    : outcome === "done"
     ? "已完成"
     : outcome === "draft"
       ? "未保存（上次输入已保留）"
@@ -118,11 +126,11 @@ const PlanRow = ({ view, entering = false, opening = false, onEntered, onOpen, o
     >
       <button
         type="button"
-        className="daily-plan-row-main"
+        className={`daily-plan-row-main${scheduled ? " scheduled" : ""}`}
         onClick={() => onOpen(plan)}
-        disabled={opening}
+        disabled={opening || scheduled}
         aria-label={openLabel}
-        title={outcome === "done" ? "打开这条计划对应的日志" : "写一条日志来兑现这条计划"}
+        title={scheduled ? `${plan.date} 起可写日志` : outcome === "done" ? "打开这条计划对应的日志" : "写一条日志来兑现这条计划"}
       >
         <span className="daily-plan-row-heading">
           <span className="daily-plan-row-subject">{plan.subject}</span>
@@ -160,6 +168,8 @@ export const DailyPlanPage = ({
   reviewStates = [],
   inFlightDraftRecordIds,
   today,
+  selectedDate,
+  onDateChange,
   defaultSubject,
   view,
   onViewChange,
@@ -170,7 +180,14 @@ export const DailyPlanPage = ({
   onOpenRecord,
   onAddSubject,
 }: DailyPlanPageProps) => {
-  const todayDate = today ?? todayISO();
+  const localToday = useLocalToday();
+  const todayDate = today ?? localToday;
+  const planDate = selectedDate ?? todayDate;
+  const scheduled = planDate > todayDate;
+  const canCompose = planDate >= todayDate;
+  const dayLabel = planDate === todayDate
+    ? "今天"
+    : planDate.slice(0, 4) === todayDate.slice(0, 4) ? formatChineseMonthDay(planDate) : formatChineseDate(planDate);
   const activeSubjects = useMemo(
     () => subjects.filter((subject) => !subject.archivedAt).sort((a, b) => a.order - b.order),
     [subjects],
@@ -211,34 +228,44 @@ export const DailyPlanPage = ({
     [ctx, plans],
   );
   const stats = useMemo(() => derivePlanStats(groups, todayDate), [groups, todayDate]);
-  const todayGroup = useMemo(() => groups.find((group) => group.date === todayDate), [groups, todayDate]);
-  const visibleGroups = expandedHistory ? groups : groups.slice(0, HISTORY_PAGE_SIZE);
-  const remainingGroups = groups.length - visibleGroups.length;
+  const selectedGroup = useMemo(() => groups.find((group) => group.date === planDate), [groups, planDate]);
+  const historyGroups = useMemo(() => groups.filter((group) => group.date <= todayDate), [groups, todayDate]);
+  const visibleGroups = expandedHistory ? historyGroups : historyGroups.slice(0, HISTORY_PAGE_SIZE);
+  const remainingGroups = historyGroups.length - visibleGroups.length;
+
+  const selectDate = (date: ISODate | undefined) => {
+    if (date !== undefined && (!isISODate(date) || date < todayDate)) {
+      setMessage("请选择今天或未来的有效日期制定计划。");
+      return;
+    }
+    setMessage("");
+    onDateChange(date === todayDate ? undefined : date);
+  };
 
   const submit = useCallback(async () => {
     const title = draftTitle.trim();
-    if (!title || !subject || submitting) {
+    if (!title || !subject || submitting || !canCompose) {
       return;
     }
     setSubmitting(true);
     setMessage("");
     try {
-      const created = await onCreatePlan({ date: todayDate, subject, title });
+      const created = await onCreatePlan({ date: planDate, subject, title });
       setDraftTitle("");
       setJustAddedPlanId(created?.id);
     } catch (error) {
-      setMessage(formatUiError(error, "generic"));
+      setMessage(formatActionableError(error, "generic"));
     } finally {
       setSubmitting(false);
     }
-  }, [draftTitle, onCreatePlan, subject, submitting, todayDate]);
+  }, [canCompose, draftTitle, onCreatePlan, planDate, subject, submitting]);
 
   /**
    * In-page debounce, mandated by §5.4: navigation only starts once the record
    * write resolves, and the list stays clickable for that whole round trip.
    */
   const openPlan = useCallback(async (plan: DailyPlan) => {
-    if (openingPlanIds.has(plan.id)) {
+    if (plan.date > todayDate || openingPlanIds.has(plan.id)) {
       return;
     }
     setOpeningPlanIds((current) => new Set(current).add(plan.id));
@@ -249,7 +276,7 @@ export const DailyPlanPage = ({
         onOpenRecord(record);
       }
     } catch (error) {
-      setMessage(formatUiError(error, "generic"));
+      setMessage(formatActionableError(error, "generic"));
     } finally {
       setOpeningPlanIds((current) => {
         const next = new Set(current);
@@ -257,7 +284,7 @@ export const DailyPlanPage = ({
         return next;
       });
     }
-  }, [onOpenPlan, onOpenRecord, openingPlanIds]);
+  }, [onOpenPlan, onOpenRecord, openingPlanIds, todayDate]);
 
   const removePlan = useCallback(async (plan: DailyPlan) => {
     if (!window.confirm("删除这条计划？已经写好的日志会保留，日志上的「来自计划」标识也会保留。")) {
@@ -267,15 +294,15 @@ export const DailyPlanPage = ({
     try {
       await onDeletePlan(plan);
     } catch (error) {
-      setMessage(formatUiError(error, "generic"));
+      setMessage(formatActionableError(error, "generic"));
     }
   }, [onDeletePlan]);
 
-  const todaySummary = !todayGroup
+  const selectedSummary = !selectedGroup
     ? "列一条计划，做完顺手记下来。"
-    : todayGroup.doneCount > 0
-      ? `今天已经兑现 ${todayGroup.doneCount} 条计划。`
-      : `还有 ${todayGroup.totalCount} 条计划没写日志。`;
+    : selectedGroup.doneCount > 0
+      ? `${dayLabel}已经兑现 ${selectedGroup.doneCount} 条计划。`
+      : `还有 ${selectedGroup.totalCount} 条计划没写日志。`;
 
   const summaryCard = (label: string, summary: { done: number; total: number; hasData: boolean }) => (
     <article className="stats-state-card">
@@ -288,12 +315,12 @@ export const DailyPlanPage = ({
   return (
     <main className="page daily-plan-page primary-workspace-page">
       <PageHeader
-        eyebrow={view === "today" ? formatChineseDate(todayDate) : `累计 ${groups.length} 天有计划`}
-        title={view === "today" ? "今日计划" : "计划历史"}
+        eyebrow={view === "history" ? `累计 ${historyGroups.length} 天有计划` : undefined}
+        title={view === "today" ? (planDate === todayDate ? "今日计划" : "学习计划") : "计划历史"}
         density="compact"
-        actions={view === "today" && todayGroup ? (
-          <span className="counter-pill" title="今天的计划完成度">
-            {todayGroup.doneCount} / {todayGroup.totalCount} 完成
+        actions={view === "today" && selectedGroup && !scheduled ? (
+          <span className="counter-pill" title="所选日期的计划完成度">
+            {selectedGroup.doneCount} / {selectedGroup.totalCount} 完成
           </span>
         ) : undefined}
       />
@@ -318,8 +345,9 @@ export const DailyPlanPage = ({
             aria-selected={view === "today"}
             className={view === "today" ? "active" : ""}
             onClick={() => onViewChange("today")}
+            disabled={submitting}
           >
-            今日
+            按日
           </button>
           <button
             type="button"
@@ -327,6 +355,7 @@ export const DailyPlanPage = ({
             aria-selected={view === "history"}
             className={view === "history" ? "active" : ""}
             onClick={() => onViewChange("history")}
+            disabled={submitting}
           >
             历史
           </button>
@@ -338,58 +367,74 @@ export const DailyPlanPage = ({
       {view === "today" ? (
         <>
           <section className="daily-plan-compose" aria-label="新建计划">
-            <div className="daily-plan-compose-subject">
-              <SubjectPicker
-                value={subject || undefined}
-                subjects={subjects}
-                onChange={setSubject}
-                onAddSubject={onAddSubject}
-                disabled={submitting}
-              />
-            </div>
-            <div className="daily-plan-compose-row">
-              <input
-                value={draftTitle}
-                onChange={(event) => setDraftTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void submit();
-                  }
-                }}
-                maxLength={40}
-                placeholder="例如：三大计算 660 题第 50 到 60 题"
-                aria-label="计划标题"
-                disabled={submitting}
-              />
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => void submit()}
-                disabled={!draftTitle.trim() || !subject || submitting}
-              >
-                <Plus size={16} aria-hidden="true" />
-                添加计划
-              </button>
-            </div>
-            <p className="daily-plan-compose-hint">较长的计划可以拆成多条</p>
+            <label className="daily-plan-date-field">
+              <span>日期</span>
+              <span className="daily-plan-date-value">
+                <span className="daily-plan-date-display" aria-hidden="true">
+                  {dayLabel}<CalendarDays size={16} />
+                </span>
+                <input type="date" aria-label="计划日期" min={todayDate} max="9999-12-31" value={planDate} disabled={submitting} onChange={(event) => selectDate(event.target.value)} />
+              </span>
+            </label>
+            {!canCompose && <p className="daily-plan-compose-hint">选择今天或未来日期添加计划。</p>}
+            {canCompose && (
+              <>
+                <div className="daily-plan-compose-subject">
+                  <SubjectPicker
+                    value={subject || undefined}
+                    subjects={subjects}
+                    onChange={setSubject}
+                    onAddSubject={onAddSubject}
+                    disabled={submitting}
+                  />
+                </div>
+                <div className="daily-plan-compose-row">
+                  <input
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void submit();
+                      }
+                    }}
+                    maxLength={40}
+                    placeholder="例如：三大计算 660 题第 50 到 60 题"
+                    aria-label="计划标题"
+                    disabled={submitting}
+                  />
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void submit()}
+                    disabled={!draftTitle.trim() || !subject || submitting}
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    添加计划
+                  </button>
+                </div>
+                <p className="daily-plan-compose-hint">较长的计划可以拆成多条</p>
+              </>
+            )}
           </section>
 
-          {todayGroup && todayGroup.totalCount > 0 && (
-            <p className="daily-plan-today-summary">{todaySummary}</p>
+          <h2 className="daily-plan-section-title">{dayLabel}的计划</h2>
+          {!scheduled && selectedGroup && selectedGroup.totalCount > 0 && (
+            <p className="daily-plan-today-summary">{selectedSummary}</p>
           )}
 
-          {!todayGroup || todayGroup.totalCount === 0 ? (
+          {!selectedGroup || selectedGroup.totalCount === 0 ? (
             <div className="empty-state daily-plan-empty">
               <Layers size={26} aria-hidden="true" />
-              <h2>今天还没有计划。列一条，做完就能顺手记下来。</h2>
+              <h2>{dayLabel}还没有计划。{canCompose ? "列一条，做完就能顺手记下来。" : "可以回到今天制定新计划。"}</h2>
             </div>
           ) : (
-            <ul className="daily-plan-list" aria-label="今天的计划">
-              {todayGroup.views.map((planView) => (
+            <ul className="daily-plan-list" aria-label={`${dayLabel}的计划`}>
+              {selectedGroup.views.map((planView) => (
                 <PlanRow
                   key={planView.plan.id}
                   view={planView}
+                  scheduled={scheduled}
                   entering={planView.plan.id === justAddedPlanId}
                   opening={openingPlanIds.has(planView.plan.id)}
                   onEntered={() => setJustAddedPlanId(undefined)}
@@ -400,7 +445,7 @@ export const DailyPlanPage = ({
             </ul>
           )}
         </>
-      ) : groups.length === 0 ? (
+      ) : historyGroups.length === 0 ? (
         <div className="empty-state daily-plan-empty">
           <Layers size={26} aria-hidden="true" />
           <h2>还没有计划历史。从今天开始列计划，这里会留下记录。</h2>

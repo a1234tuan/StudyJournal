@@ -1,4 +1,5 @@
 import { restoreKnowledgeNavigation } from "../features/knowledgeLibrary/navigation";
+import { isISODate } from "./date";
 import {
   createInitialReviewLibraryState,
   createInitialTabMemory,
@@ -259,6 +260,7 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
       planView: isObject(value.today) && (PLAN_VIEW_VALUES as readonly unknown[]).includes(value.today.planView)
         ? value.today.planView as PlanView
         : "today",
+      planDate: isObject(value.today) && isISODate(value.today.planDate) ? value.today.planDate : undefined,
     },
     journal: {
       ...journalBase,

@@ -116,6 +116,7 @@ export type TabMemory = {
     planOpen?: boolean;
     /** Today's plans vs. the history view. Also part of the page key's identity. */
     planView?: PlanView;
+    planDate?: string;
   };
   journal: RecordTabState & {
     month: Date;
@@ -377,13 +378,13 @@ export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
       if (memory.today.planOpen) {
         return {
           ...memory,
-          today: { ...memory.today, planOpen: false, planView: "today" },
+          today: { ...memory.today, planOpen: false, planView: "today", planDate: undefined },
         };
       }
       // 5. Fallback: unchanged behaviour, plus the plan fields for completeness.
       return {
         ...memory,
-        today: { ...memory.today, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined, adaptiveTaskId: undefined, planOpen: false, planView: "today" },
+        today: { ...memory.today, recordId: undefined, highlightAssetId: undefined, recordEditing: undefined, referenceStack: [], restoreScrollY: undefined, adaptiveTaskId: undefined, planOpen: false, planView: "today", planDate: undefined },
       };
     case "journal":
       if (memory.journal.recordId) {
