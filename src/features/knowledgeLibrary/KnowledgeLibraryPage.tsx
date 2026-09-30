@@ -3,8 +3,8 @@ import { getDefaultKnowledgeLibrary } from "./defaultLibrary";
 import { knowledgeHash } from "./canonical";
 import { KnowledgeRecoveryPanel } from "./KnowledgeRecoveryPanel";
 import { liveQuery } from "dexie";
-import { ArrowLeft, BookOpen, ChevronRight, Download, GitBranch, List, MoreHorizontal, Plus, Search, X } from "lucide-react";
-import type { Asset, RecordBlock } from "../../types";
+import { ArrowLeft, BookOpen, ChevronRight, Download, GitBranch, List, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, X } from "lucide-react";
+import type { Asset, RecordBlock, SubjectConfig } from "../../types";
 import { db } from "../../db/database";
 import { usePageTransitionLayerState } from "../../components/PageTransition";
 import { prepareKnowledgeImport, resumeKnowledgeImport } from "./import";
@@ -18,16 +18,17 @@ import { knowledgeLabel, knowledgeChildren, type KnowledgeHit } from "./query";
 import type { KnowledgeNavigation } from "./navigation";
 import { KnowledgeMap } from "./KnowledgeMap";
 import { KnowledgeDetails } from "./KnowledgeDetails";
+import { KnowledgeRecordPane } from "./KnowledgeRecordPane";
 import { KnowledgeOutline, KnowledgeTitleInput, type KnowledgeTitleEditor } from "./KnowledgeOutline";
 import { KnowledgeResults } from "./KnowledgeResults";
 import { knowledgeUiError, type KnowledgeFailure } from "./uiError";
 import { orderBetween } from "./orderKey";
 import { exportKnowledgeOutline } from "../../services/knowledgeExportService";
 import "./knowledgeLibrary.css";
-interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void }
-interface Editing { command: KnowledgeCommand; unit: KnowledgeUnit; text: string; context: KnowledgeContext; label: string; isNew: boolean }
+interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; subjects?: readonly SubjectConfig[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void }
+interface Editing { command: KnowledgeCommand; unit: KnowledgeUnit; text: string; context: KnowledgeContext; label: string; isNew: boolean; afterId?: string }
 type Panel = "search" | "unorganized" | "manage" | "trash" | "conflicts" | "menu" | "node-menu";
-export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavigation, onBack, onOpenRecord }: Props) => {
+export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navigation, onNavigation, onBack, onOpenRecord }: Props) => {
   const layerState = usePageTransitionLayerState();
   const [libraries, setLibraries] = useState<KnowledgeLibrary[]>([]);
   const [migrations, setMigrations] = useState<KnowledgeLibraryMigration[]>([]);
@@ -73,6 +74,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
   const workspace = navigation.workspaceId ? state.entities[navigation.workspaceId] : undefined;
   const topics = useMemo(() => Object.values(state.entities).filter(entity => entity.kind === "workspace" && isKnowledgeVisible(state, entity)), [state]);
   const recordMap = useMemo(() => new Map(records.map(record => [record.id, record])), [records]);
+  const previewRecord = navigation.recordPreviewId ? recordMap.get(navigation.recordPreviewId) : undefined;
   const references = useMemo(() => Object.values(state.entities).filter(entity => entity.kind === "reference" && entity.nodeId === selected?.id && isKnowledgeVisible(state, entity)), [state, selected]);
   const conflicts = Object.values(state.groups).filter(group => group.unresolvedCount > 0);
   const candidates = Object.values(state.candidates).filter(candidate => candidate.consumedBy === null);
@@ -95,7 +97,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     setMessage(result);
   };
   useEffect(() => {
-    const changed = () => { setOwner(currentKnowledgeOwner()); setPanel(undefined); setPicker(false); setEditing(undefined); setTopicTitle(undefined); setNextAction(undefined); setMoveNode(undefined); setSelectedRecords([]); setMessage("账号已变化，请在当前账号下重新打开知识库。"); };
+    const changed = () => { setOwner(currentKnowledgeOwner()); setPanel(undefined); setPicker(false); setEditing(undefined); setTopicTitle(undefined); setNextAction(undefined); setMoveNode(undefined); setSelectedRecords([]); onNavigation({ recordPreviewId: undefined }); setMessage("账号已变化，请在当前账号下重新打开知识库。"); };
     window.addEventListener("knowledge-owner-changed", changed);
     return () => window.removeEventListener("knowledge-owner-changed", changed);
   }, []);
@@ -148,7 +150,13 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     if (topicTitle?.trim() && !window.confirm("放弃尚未创建的专题？")) return;
     setTopicTitle(undefined); setPanel(undefined); setPicker(false); setMoveNode(undefined); setSelectedRecords([]); setMessage(""); setFailure(undefined);
   };
-  const openPanel = (next: Panel) => { if (editing || busyRef.current) return; setDetailOpen(false); setPanel(next); setMessage(""); setFailure(undefined); setSelectedRecords([]); setTargetWorkspace(workspace?.id ?? topics[0]?.id ?? ""); setTargetNode(selected?.id ?? ""); };
+  const openPanel = (next: Panel) => { if (editing || busyRef.current) return; setDetailOpen(false); onNavigation({ recordPreviewId: undefined }); setPanel(next); setMessage(""); setFailure(undefined); setSelectedRecords([]); setTargetWorkspace(workspace?.id ?? topics[0]?.id ?? ""); setTargetNode(selected?.id ?? ""); };
+  const openRecordPreview = (record: RecordBlock, nodeId?: string) => {
+    if (record.deletedAt || editing || busyRef.current) return;
+    const reference = Object.values(state.entities).find(entity => entity.kind === "reference" && entity.recordId === record.id && entity.workspaceId === workspace?.id && isKnowledgeVisible(state, entity));
+    onNavigation({ recordPreviewId: record.id, detailsOpen: true, selectedNodeId: nodeId ?? selected?.id ?? reference?.nodeId });
+  };
+  const closeRecordPreview = () => onNavigation({ recordPreviewId: undefined, detailsOpen: true });
   const beginTopic = () => {
     if (editing || busyRef.current || recoveryProtected) return;
     topicForSelection.current = panel === "unorganized";
@@ -172,7 +180,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     } else { afterClose(() => onNavigation({ libraryId: result.libraryId, workspaceId: result.workspaceId, selectedNodeId: undefined, scrollTop: 0, collapsed: [] }, true)); }
   };
   const goBack = () => {
-    if (!modal && !editing && !busyRef.current && workspace) { onNavigation({ workspaceId: undefined, selectedNodeId: undefined, detailsOpen: false, scrollTop: 0 }, true); return; }
+    if (!modal && !editing && !busyRef.current && !detailOpen && !navigation.recordPreviewId && workspace) { onNavigation({ workspaceId: undefined, selectedNodeId: undefined, detailsOpen: false, scrollTop: 0 }, true); return; }
     const attempt = new Event("knowledge-back", { cancelable: true }); window.dispatchEvent(attempt);
     if (attempt.defaultPrevented) return;
     if (workspace) onNavigation({ workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true);
@@ -183,12 +191,13 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     const back = (event: Event) => {
       if (event.defaultPrevented) return;
       if (modal || editing || busyRef.current) { event.preventDefault(); dismiss(); }
+      else if (navigation.recordPreviewId) { event.preventDefault(); closeRecordPreview(); }
       else if (detailOpen) { event.preventDefault(); setDetailOpen(false); }
       else if (selected) { event.preventDefault(); onNavigation({ selectedNodeId: undefined }); }
       else if (workspace) { event.preventDefault(); onNavigation({ workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }); }
     };
     const keyboard = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
+      if (event.isComposing || event.defaultPrevented || document.querySelector(".image-lightbox")) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && !modal && !editing) { event.preventDefault(); openPanel("search"); }
       if (event.key === "Escape" && !modal) { const attempt = new Event("knowledge-back", { cancelable: true }); window.dispatchEvent(attempt); if (attempt.defaultPrevented) event.preventDefault(); }
     };
@@ -196,19 +205,23 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     const unload = (event: BeforeUnloadEvent) => { if (editing || topicTitle || busyRef.current) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("knowledge-back", back); window.addEventListener("keydown", keyboard); window.addEventListener("knowledge-navigation-leave", leave); window.addEventListener("beforeunload", unload);
     return () => { window.removeEventListener("knowledge-back", back); window.removeEventListener("keydown", keyboard); window.removeEventListener("knowledge-navigation-leave", leave); window.removeEventListener("beforeunload", unload); };
-  }, [modal, selected, editing, detailOpen, topicTitle, busy, workspace, layerState]);
+  }, [modal, selected, editing, detailOpen, navigation.recordPreviewId, topicTitle, busy, workspace, layerState]);
   useEffect(() => {
     if (!editing || editing.isNew) return;
     const timer = window.setTimeout(() => { void knowledgeRepository.saveDraft(editing.context, { ...editing.context, id: editing.command.entity.id + ":" + editing.unit, entityId: editing.command.entity.id, unit: editing.unit, text: editing.text, expectedRevision: editing.command.expected[editing.unit] ?? null }).catch(error => errorText(error, "草稿保存")); }, 400);
     return () => window.clearTimeout(timer);
   }, [editing]);
-  const beginCreate = (parent = ROOT_NODE) => {
-    if (!context || !workspace || busyRef.current || editing || recoveryProtected) return;
+  const beginCreate = (parent = ROOT_NODE, afterId?: string) => {
+    if (!context || !workspace || busyRef.current || editing || recoveryProtected || preservedSource || copyingTarget) return;
     const command = createKnowledgeEntity(scope, "node", "", workspace.id, parent);
-    const last = knowledgeChildren(state, workspace.id, parent).at(-1);
-    command.changes.position = { parentNodeId: parent, orderKey: orderBetween(last ? (valueOf(state, last, "position") as KnowledgePosition).orderKey : null, null, command.id) };
+    const siblings = knowledgeChildren(state, workspace.id, parent);
+    const index = afterId ? siblings.findIndex(node => node.id === afterId) : siblings.length - 1;
+    if (afterId && index < 0) return;
+    const previous = siblings[index];
+    const next = siblings[index + 1];
+    command.changes.position = { parentNodeId: parent, orderKey: orderBetween(previous ? (valueOf(state, previous, "position") as KnowledgePosition).orderKey : null, next ? (valueOf(state, next, "position") as KnowledgePosition).orderKey : null, command.id) };
     setPanel(undefined); setDetailOpen(false);
-    setEditing({ command, unit: "title", text: "", context, label: "新建节点", isNew: true });
+    setEditing({ command, unit: "title", text: "", context, label: "新建节点", isNew: true, afterId });
   };
   const beginEdit = async (entity: KnowledgeEntity, unit: "title" | "note" | "remark") => {
     if (!context) return;
@@ -225,7 +238,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     if (editing.command.entity.kind === "node") onNavigation({ selectedNodeId: editing.command.entity.id, collapsed: navigation.collapsed.filter(id => id !== (editing.command.changes.position as KnowledgePosition | undefined)?.parentNodeId) });
     setEditing(undefined);
   };
-  const titleEditor: KnowledgeTitleEditor | undefined = inlineEditing && editing ? { entityId: editing.command.entity.id, text: editing.text, isNew: editing.isNew, busy, onChange: text => setEditing({ ...editing, command: { ...editing.command, id: crypto.randomUUID() }, text }), onSave: () => void run(saveEditing), onCancel: dismiss } : undefined;
+  const titleEditor: KnowledgeTitleEditor | undefined = inlineEditing && editing ? { entityId: editing.command.entity.id, parentId: (editing.command.changes.position as KnowledgePosition | undefined)?.parentNodeId, afterId: editing.afterId, text: editing.text, isNew: editing.isNew, busy, onChange: text => setEditing({ ...editing, command: { ...editing.command, id: crypto.randomUUID() }, text }), onSave: () => void run(saveEditing), onCancel: dismiss } : undefined;
   const changeLifecycle = (entity: KnowledgeEntity, deleted: boolean) => run(async () => {
     if (!context) return;
     if (deleted && !window.confirm(entity.kind === "reference" ? "移除引用？原日志不删除，备注保留。" : "将此分支移入回收站？原日志不会删除。")) return;
@@ -330,6 +343,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
   return <main className={"page knowledge-library knowledge-shell" + (workspace ? " knowledge-editor" : "")} aria-busy={busy || loading}>
     {recoveryProtected && !preservedSource && !copyingTarget && <section className="knowledge-feedback" role="status"><p>此恢复副本正在保全待确认内容，只能查看。</p><button disabled={busy} onClick={() => void run(async () => { if (!library) return; const copy = await knowledgeRepository.createLibrary("可编辑保留副本", undefined, true); const target = await knowledgeRepository.open(copy.id); const sessionId = crypto.randomUUID(); await prepareKnowledgeImport(knowledgeRepository, library.id, target.context, sessionId); await resumeKnowledgeImport(knowledgeRepository, target.context, sessionId); afterClose(() => onNavigation({ libraryId: copy.id, recoveryView: true, workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); })}>另存可编辑副本</button></section>}
     <header className="knowledge-header">
+      <button className="knowledge-icon knowledge-sidebar-toggle" aria-label={navigation.sidebarCollapsed ? "展开左侧导航" : "收起左侧导航"} aria-expanded={!navigation.sidebarCollapsed} onClick={() => onNavigation({ sidebarCollapsed: !navigation.sidebarCollapsed })}>{navigation.sidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}</button>
       <button className="knowledge-icon" aria-label="返回" onClick={goBack}><ArrowLeft size={20} /></button>
       <h1>{workspace ? knowledgeLabel(state, workspace) : "知识库"}</h1>
       {workspace && <div className="knowledge-view-switch" role="group" aria-label="专题视图"><button disabled={Boolean(editing)} aria-pressed={navigation.view === "outline"} onClick={() => onNavigation({ view: "outline" })}><List size={16} />大纲</button><button disabled={Boolean(editing)} aria-pressed={navigation.view === "map"} onClick={() => onNavigation({ view: "map" })}><GitBranch size={16} />导图</button></div>}
@@ -340,8 +354,9 @@ export const KnowledgeLibraryPage = ({ records, assets = [], navigation, onNavig
     {syncFailure && <section className="knowledge-feedback" role="alert"><p>云提交校验失败，知识库同步已停止。本机内容和待同步操作仍保留。</p><p>最后可信序号：{syncFailure.cursor} · 失败类别：{syncFailure.code} · 连续失败：{syncFailure.attempts} 次</p><button disabled={busy} onClick={() => void run(async () => { const result = await synchronizeBoundKnowledge({ onProgress: setMessage }); setMessage(result.message); }, undefined, "重试知识同步")}>重新校验</button><button disabled={busy} onClick={() => void run(async () => { if (!context) return; const id = await knowledgeRepository.preserveSyncFailure(context); afterClose(() => onNavigation({ libraryId: id, recoveryView: true, workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); })}>保全并打开本机副本</button><p>可通过“备份与恢复”导出当前内容。持续失败需管理员从可信备份修复云端历史，应用不会跳过坏提交或新建替代云库。</p></section>}
     {loading ? <p role="status">正在读取…</p> : !workspace ? <section className="knowledge-home"><div className="knowledge-home-actions">{library && <button className="knowledge-library-switch" onClick={() => openPanel("manage")}><span>当前库：{library.title}</span><ChevronRight size={16} /></button>}{!!topics.length && <button className="primary-button" disabled={recoveryProtected} onClick={beginTopic}><Plus size={17} />新建专题</button>}</div>{!topics.length ? <div className="knowledge-empty"><BookOpen size={34} strokeWidth={1.4} /><h2>从一个专题开始</h2><button className="primary-button" disabled={recoveryProtected} onClick={beginTopic}>创建第一个专题</button></div> : <div className="knowledge-topics">{topics.map(topic => <button className="knowledge-topic" key={topic.id} onClick={() => onNavigation({ libraryId: library?.id, workspaceId: topic.id, selectedNodeId: undefined, scrollTop: 0, collapsed: [] }, true)}><BookOpen size={20} /><strong>{knowledgeLabel(state, topic)}</strong><ChevronRight size={17} /></button>)}</div>}</section> : <>
       <div className="knowledge-workspace">
-        {navigation.view === "outline" ? <KnowledgeOutline key={library?.id + ":" + workspace.id} records={recordMap} onOpenRecord={onOpenRecord} state={state} workspaceId={workspace.id} navigation={{ ...navigation, libraryId: library?.id }} editor={titleEditor} onSelect={id => { if (!editing) onNavigation({ selectedNodeId: id, detailsOpen: true }); }} onEdit={id => { if (!editing) void run(() => beginEdit(state.entities[id], "title")); }} onCreate={beginCreate} onOutdent={id => { const position = valueOf(state, state.entities[id], "position") as KnowledgePosition; if (position.parentNodeId === ROOT_NODE) return; const parent = state.entities[position.parentNodeId]; void run(() => move(id, (valueOf(state, parent, "position") as KnowledgePosition).parentNodeId)); }} onToggle={id => onNavigation({ collapsed: navigation.collapsed.includes(id) ? navigation.collapsed.filter(item => item !== id) : [...navigation.collapsed, id] })} onScrollPosition={scrollTop => onNavigation({ scrollTop, scrollLibraryId: library?.id, scrollWorkspaceId: workspace.id })} /> : <><KnowledgeMap key={workspace.id} onClear={() => { if (!editing) onNavigation({ selectedNodeId: undefined, detailsOpen: false }); }} state={state} workspaceId={workspace.id} navigation={navigation} organizing={!editing && !recoveryProtected} editor={titleEditor} onEdit={id => { setDetailOpen(false); void run(() => beginEdit(state.entities[id], "title")); }} onNavigation={onNavigation} onSelect={id => { if (!editing) onNavigation({ selectedNodeId: id, detailsOpen: true }); }} onToggle={id => onNavigation({ collapsed: navigation.collapsed.includes(id) ? navigation.collapsed.filter(item => item !== id) : [...navigation.collapsed, id] })} onMove={(id, parent, beforeId) => void run(() => move(id, parent, beforeId))} />{titleEditor?.isNew && <div className="knowledge-map-new"><KnowledgeTitleInput editor={titleEditor} label="新建节点" /></div>}</>}
-        {detailOpen && selected && !modal && !editing && <KnowledgeDetails state={state} node={selected} references={references} records={recordMap} onClose={() => setDetailOpen(false)} onAdd={openPicker} onOpen={onOpenRecord} onNote={() => void run(() => beginEdit(selected, "note"))} onRemark={reference => void run(() => beginEdit(reference, "remark"))} onRemove={reference => void changeLifecycle(reference, true)} />}
+        {navigation.view === "outline" ? <KnowledgeOutline key={library?.id + ":" + workspace.id} records={recordMap} onOpenRecord={openRecordPreview} state={state} workspaceId={workspace.id} navigation={{ ...navigation, libraryId: library?.id }} editor={titleEditor} onSelect={id => { if (!editing) onNavigation({ selectedNodeId: id, detailsOpen: true, recordPreviewId: undefined }); }} onEdit={id => { if (!editing) void run(() => beginEdit(state.entities[id], "title")); }} onCreate={beginCreate} onOutdent={id => { const position = valueOf(state, state.entities[id], "position") as KnowledgePosition; if (position.parentNodeId === ROOT_NODE) return; const parent = state.entities[position.parentNodeId]; void run(() => move(id, (valueOf(state, parent, "position") as KnowledgePosition).parentNodeId)); }} onToggle={id => onNavigation({ collapsed: navigation.collapsed.includes(id) ? navigation.collapsed.filter(item => item !== id) : [...navigation.collapsed, id] })} onScrollPosition={scrollTop => onNavigation({ scrollTop, scrollLibraryId: library?.id, scrollWorkspaceId: workspace.id })} /> : <><KnowledgeMap key={workspace.id} onClear={() => { if (!editing) onNavigation({ selectedNodeId: undefined, detailsOpen: false, recordPreviewId: undefined }); }} state={state} workspaceId={workspace.id} navigation={navigation} organizing={!editing && !busy && !recoveryProtected && !preservedSource && !copyingTarget} editor={titleEditor} onEdit={id => { setDetailOpen(false); void run(() => beginEdit(state.entities[id], "title")); }} onNavigation={onNavigation} onSelect={id => { if (!editing) onNavigation({ selectedNodeId: id, detailsOpen: true, recordPreviewId: undefined }); }} onCreate={beginCreate} onToggle={id => onNavigation({ collapsed: navigation.collapsed.includes(id) ? navigation.collapsed.filter(item => item !== id) : [...navigation.collapsed, id] })} onMove={(id, parent, beforeId) => void run(() => move(id, parent, beforeId))} /></>}
+         {navigation.recordPreviewId && !modal && !editing ? <KnowledgeRecordPane record={previewRecord?.deletedAt ? undefined : previewRecord} records={records} subjects={subjects} onClose={closeRecordPreview} width={navigation.recordPaneWidth ?? 420} scrollTop={navigation.recordPreviewScroll ?? 0} onWidthChange={recordPaneWidth => onNavigation({ recordPaneWidth })} onScrollPosition={recordPreviewScroll => onNavigation({ recordPreviewScroll })} onOpenFull={onOpenRecord} onOpenRecord={openRecordPreview} /> : null}
+         {detailOpen && selected && !modal && !editing && <KnowledgeDetails hidden={Boolean(navigation.recordPreviewId)} state={state} node={selected} references={references} records={recordMap} onClose={() => setDetailOpen(false)} onAdd={openPicker} onOpen={openRecordPreview} onNote={() => void run(() => beginEdit(selected, "note"))} onRemark={reference => void run(() => beginEdit(reference, "remark"))} onRemove={reference => void changeLifecycle(reference, true)} />}
       </div>
       <footer className="knowledge-contextbar">{selected ? <><span className="knowledge-selection-title">{knowledgeLabel(state, selected)}</span><button disabled={Boolean(editing)} onClick={() => beginCreate(selected.id)}><Plus size={16} />子节点</button>{!detailOpen && <button disabled={Boolean(editing)} onClick={openPicker}>添加日志</button>}<button className="knowledge-icon" disabled={Boolean(editing)} aria-label="更多节点操作" onClick={() => openPanel("node-menu")}><MoreHorizontal size={20} /></button></> : <button disabled={Boolean(editing)} onClick={() => beginCreate()}><Plus size={17} />添加节点</button>}<span className="knowledge-save-state" role="status">{busy ? "保存中…" : preservedSource ? "旧内容只读" : copyingTarget ? "正在整理…" : "已保存到本机"}</span></footer>
     </>}

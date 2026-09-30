@@ -7,7 +7,7 @@ const openKnowledge = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
   await page.getByRole("button", { name: "更多", exact: true }).last().click();
   await expect(active(page).locator(".more-list").getByRole("button", { name: "知识库", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "知识库", exact: true }).click();
+  await active(page).getByRole("button", { name: "知识库", exact: true }).click();
 };
 
 test("first use creates one library, edits inline, keeps browsing read-only and searches notes", async ({ page }) => {
@@ -161,12 +161,12 @@ for (const visual of ["reading", "modern"]) for (const theme of ["light", "dark"
     const geometry = await active(page).locator("main.knowledge-shell").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const workspace = element.querySelector(".knowledge-workspace")!.getBoundingClientRect();
-      return { ratio: workspace.height / bounds.height, top: workspace.top, width: document.documentElement.scrollWidth, viewport: window.innerWidth, headerButtons: element.querySelectorAll(".knowledge-header button").length };
+      return { ratio: workspace.height / bounds.height, top: workspace.top, width: document.documentElement.scrollWidth, viewport: window.innerWidth, headerButtons: Array.from(element.querySelectorAll(".knowledge-header button")).filter(button => button.getBoundingClientRect().width > 0).length };
     });
     expect(geometry.ratio).toBeGreaterThan(page.viewportSize()!.width > 920 ? 0.8 : 0.7);
     expect(geometry.top).toBeLessThan(120);
     expect(geometry.width).toBeLessThanOrEqual(geometry.viewport);
-    expect(geometry.headerButtons).toBeLessThanOrEqual(5);
+    expect(geometry.headerButtons).toBeLessThanOrEqual(page.viewportSize()!.width > 920 ? 6 : 5);
     await expect(active(page).getByText("先浏览，再整理", { exact: false })).toHaveCount(0);
     await expect(active(page).getByRole("button", { name: "启用并发现账号知识库" })).toHaveCount(0);
   });

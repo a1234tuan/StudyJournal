@@ -100,6 +100,8 @@ test("topic inputs keep the caret, target selectors receive pointer focus, and d
     await active(page).getByRole("button", { name: "添加节点", exact: true }).first().click();
     await active(page).getByRole("textbox", { name: "新建节点", exact: true }).fill(title);
     await active(page).getByRole("button", { name: "保存节点", exact: true }).click();
+    await expect(active(page).getByRole("textbox", { name: "新建节点", exact: true })).toHaveCount(0);
+    await expect(active(page).locator(".knowledge-save-state")).not.toHaveText("保存中…");
     await active(page).getByRole("button", { name: "返回", exact: true }).click();
     await expect(active(page).getByRole("heading", { name: "知识库", exact: true })).toBeVisible();
     await active(page).getByRole("button", { name: "交互专题", exact: true }).click();
@@ -245,6 +247,8 @@ test("resets outline position when changing topics and does not reuse a stale re
   await expect.poll(() => active(page).locator(".knowledge-outline").evaluate(element => element.scrollTop)).toBe(0);
   await capture(page, "topic-scroll-reset.png");
   await active(page).getByRole("button", { name: "来源日志", exact: true }).click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await active(page).getByRole("button", { name: "打开完整日志" }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
   await active(page).getByRole("button", { name: "更多操作", exact: true }).click();
   await active(page).getByRole("button", { name: "加入专题", exact: true }).click();

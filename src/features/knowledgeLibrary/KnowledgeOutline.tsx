@@ -7,7 +7,7 @@ import { flattenKnowledgeOutline } from "./presentation";
 import type { RecordBlock } from "../../types";
 import { knowledgeOutlineScroll, type KnowledgeNavigation } from "./navigation";
 
-export interface KnowledgeTitleEditor { entityId: string; text: string; isNew: boolean; busy: boolean; onChange: (text: string) => void; onSave: () => void; onCancel: () => void }
+export interface KnowledgeTitleEditor { entityId: string; parentId?: string; afterId?: string; text: string; isNew: boolean; busy: boolean; onChange: (text: string) => void; onSave: () => void; onCancel: () => void }
 export function KnowledgeTitleInput({ editor, label = "节点标题" }: { editor: KnowledgeTitleEditor; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); input.current?.select(); }, [editor.entityId]);
@@ -19,7 +19,7 @@ export function KnowledgeTitleInput({ editor, label = "节点标题" }: { editor
 }
 interface Props {
   state: KnowledgeState; workspaceId: string; navigation: KnowledgeNavigation; editor?: KnowledgeTitleEditor;
-  records: ReadonlyMap<string, RecordBlock>; onOpenRecord: (record: RecordBlock) => void;
+  records: ReadonlyMap<string, RecordBlock>; onOpenRecord: (record: RecordBlock, nodeId: string) => void;
   onSelect: (id: string) => void; onEdit: (id: string) => void; onCreate: (parentId: string) => void;
   onOutdent: (id: string) => void; onToggle: (id: string) => void; onScrollPosition: (position: number) => void;
 }
@@ -73,7 +73,7 @@ export function KnowledgeOutline({ state, workspaceId, navigation, editor, recor
       {rows.slice(start, end).map((row, index) => {
         const record = row.kind === "reference" ? records.get(state.entities[row.id].recordId) : undefined;
         return <div role="treeitem" aria-level={row.depth + 1} aria-selected={row.kind === "node" && navigation.selectedNodeId === row.id} aria-expanded={row.expandable ? !navigation.collapsed.includes(row.id) : undefined} key={row.id} data-outline-id={row.id} data-kind={row.kind} className={"knowledge-outline-row" + (row.kind === "node" && navigation.selectedNodeId === row.id ? " selected" : "")} style={{ position: "absolute", top: (start + index) * rowHeight, height: rowHeight, left: 0, right: 0, paddingLeft: 8 + Math.min(row.depth, 10) * 18 }}>
-          {row.kind === "reference" ? <button className="knowledge-outline-log" aria-label={record?.title || "原日志暂不可用"} title={record?.title} disabled={!record || Boolean(record.deletedAt)} onClick={() => { saveScroll.current(currentScroll.current); if (record) onOpenRecord(record); }}><FileText size={15} /><span>{record?.title || "原日志暂不可用"}</span><small>{!record ? "等待同步" : record.deletedAt ? "在回收站" : record.subject}</small><ChevronRight size={14} /></button> : <>
+          {row.kind === "reference" ? <button className="knowledge-outline-log" aria-label={record?.title || "原日志暂不可用"} title={record?.title} disabled={!record || Boolean(record.deletedAt)} onClick={() => { saveScroll.current(currentScroll.current); if (record) onOpenRecord(record, row.nodeId); }}><FileText size={15} /><span>{record?.title || "原日志暂不可用"}</span><small>{!record ? "等待同步" : record.deletedAt ? "在回收站" : record.subject}</small><ChevronRight size={14} /></button> : <>
             {row.expandable ? <button className="knowledge-collapse" aria-label={navigation.collapsed.includes(row.id) ? "展开分支" : "折叠分支"} onClick={() => onToggle(row.id)}>{navigation.collapsed.includes(row.id) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</button> : <span className="knowledge-outline-leaf" aria-hidden="true">·</span>}
             {editor?.entityId === row.id ? <KnowledgeTitleInput editor={editor} /> : <button className="knowledge-row-title" title={knowledgeLabel(state, state.entities[row.id])} onClick={event => { window.clearTimeout(clickTimer.current); saveScroll.current(currentScroll.current); if (event.detail === 0) onSelect(row.id); else clickTimer.current = window.setTimeout(() => onSelect(row.id), 220); }} onDoubleClick={() => { window.clearTimeout(clickTimer.current); onEdit(row.id); }}><span>{knowledgeLabel(state, state.entities[row.id])}</span>{row.count > 0 && <small>{row.count} 条日志</small>}</button>}
           </>}

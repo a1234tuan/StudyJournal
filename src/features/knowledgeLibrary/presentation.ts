@@ -4,7 +4,62 @@ import { knowledgeChildren, knowledgeLabel, layoutKnowledgeTree } from "./query"
 
 export interface MapNode { id: string; parentId: string; x: number; y: number; width: number; height: number; side: -1 | 0 | 1; branch: number; depth: number; count: number; hasChildren: boolean }
 export interface MapDrop { targetId: string; parentId: string; beforeId?: string; mode: "child" | "before" | "after" | "invalid" }
+export type MapDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+export function mapDropPreview(nodes: MapNode[], sourceId: string, drop: MapDrop) {
+  const source = nodes.find(node => node.id === sourceId);
+  const target = nodes.find(node => node.id === drop.targetId);
+  const parent = nodes.find(node => node.id === drop.parentId);
+  if (!source || !target || !parent) return undefined;
+  const side = target.side || source.side || 1;
+  const parents = new Map(nodes.map(node => [node.id, node.parentId]));
+  const descendsFrom = (id: string, ancestor: string) => {
+    const visited = new Set<string>();
+    while (id && !visited.has(id)) {
+      if (id === ancestor) return true;
+      visited.add(id); id = parents.get(id) ?? "";
+    }
+    return false;
+  };
+  const descendants = nodes.filter(node => node.id !== target.id && descendsFrom(node.id, target.id) && !descendsFrom(node.id, sourceId));
+  const childTop = descendants.length ? Math.max(...descendants.map(node => node.y + node.height)) + 20 : target.y + (target.height - source.height) / 2;
+  const slot: MapNode = { ...source, side, x: drop.mode === "child" || drop.mode === "invalid" ? side === 1 ? target.x + target.width + 64 : target.x - 64 - source.width : target.x, y: drop.mode === "before" ? target.y - source.height - 20 : drop.mode === "after" ? target.y + target.height + 20 : childTop };
+  return { slot, path: knowledgeMapPath(parent, slot), x: side === 1 ? slot.x : slot.x + slot.width, y: slot.y + slot.height / 2 };
+}
 export interface OutlineRow { id: string; nodeId: string; depth: number; kind: "node" | "reference"; count: number; expandable: boolean }
+
+export function mapNeighbor(nodes: MapNode[], selectedId: string | undefined, direction: MapDirection): string | undefined {
+  if (!selectedId) return undefined;
+  const source = nodes.find(node => node.id === selectedId);
+  if (!source) return undefined;
+  const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
+  const candidates = nodes
+    .filter(node => node.id !== ROOT_NODE && node.id !== selectedId)
+    .map(node => {
+      const center = { x: node.x + node.width / 2, y: node.y + node.height / 2 };
+      const dx = center.x - sourceCenter.x;
+      const dy = center.y - sourceCenter.y;
+      const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
+      const primary = horizontal ? Math.abs(dx) : Math.abs(dy);
+      const secondary = horizontal ? Math.abs(dy) : Math.abs(dx);
+      const forward = direction === "ArrowLeft" ? dx < 0 : direction === "ArrowRight" ? dx > 0 : direction === "ArrowUp" ? dy < 0 : dy > 0;
+      if (!forward) return undefined;
+      const sourceStart = horizontal ? source.y : source.x;
+      const sourceEnd = horizontal ? source.y + source.height : source.x + source.width;
+      const candidateStart = horizontal ? node.y : node.x;
+      const candidateEnd = horizontal ? node.y + node.height : node.x + node.width;
+      const aligned = candidateStart < sourceEnd && candidateEnd > sourceStart;
+      return { id: node.id, primary, secondary, aligned };
+    })
+    .filter((candidate): candidate is { id: string; primary: number; secondary: number; aligned: boolean } => Boolean(candidate));
+  const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
+  const relatives = horizontal ? candidates.filter(candidate => candidate.id === source.parentId || nodes.find(node => node.id === candidate.id)?.parentId === source.id) : [];
+  const choices = relatives.length ? relatives : candidates;
+  choices.sort((left, right) => {
+    if (left.aligned !== right.aligned) return left.aligned ? -1 : 1;
+    return left.primary - right.primary || left.secondary - right.secondary || left.id.localeCompare(right.id);
+  });
+  return choices[0]?.id;
+}
 export function knowledgeReferenceIndex(state: KnowledgeState) {
   const index = new Map<string, string[]>();
   for (const entity of Object.values(state.entities)) if (entity.kind === "reference" && isKnowledgeVisible(state, entity)) {
@@ -33,8 +88,17 @@ const dimensions = (title: string, count = 0, center = false) => {
   const height = Math.max(center ? 52 : 40, Math.ceil(textWidth / (width - reserve)) * 20 + 20);
   return { width, height };
 };
-export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}) {
-  const rows = layoutKnowledgeTree(state, workspaceId, collapsed);
+export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}, draft?: { id: string; parentId: string; afterId?: string }) {
+  const rows = layoutKnowledgeTree(state, workspaceId, draft ? new Set([...collapsed].filter(id => id !== draft.parentId)) : collapsed);
+  if (draft && !rows.some(row => row.id === draft.id)) {
+    const parent = rows.find(row => row.id === draft.parentId);
+    if (draft.parentId === ROOT_NODE || parent) {
+      const anchor = draft.afterId ? rows.findIndex(row => row.id === draft.afterId) : parent ? rows.indexOf(parent) : -1;
+      let insert = anchor < 0 ? rows.length : anchor + 1;
+      if (anchor >= 0) while (insert < rows.length && rows[insert].depth > rows[anchor].depth) insert += 1;
+      rows.splice(insert, 0, { id: draft.id, parentNodeId: draft.parentId, depth: parent ? parent.depth + 1 : 0, x: 0, y: 0 });
+    }
+  }
   const references = knowledgeReferenceIndex(state);
   const children = new Map<string, string[]>();
   const allParents = new Set(Object.values(state.entities).filter(entity => entity.kind === "node" && entity.workspaceId === workspaceId && isKnowledgeVisible(state, entity)).map(entity => (valueOf(state, entity, "position") as KnowledgePosition).parentNodeId));
@@ -45,7 +109,7 @@ export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, c
     const siblings = children.get(row.parentNodeId) ?? [];
     siblings.push(row.id); children.set(row.parentNodeId, siblings);
     const count = references.get(row.id)?.length ?? 0;
-    nodes.set(row.id, { id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...dimensions(knowledgeLabel(state, state.entities[row.id]), count), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
+    nodes.set(row.id, { id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...(row.id === draft?.id ? { width: 300, height: 48 } : dimensions(knowledgeLabel(state, state.entities[row.id]), count)), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
   }
   const spans = new Map<string, number>();
   for (const row of [...rows].reverse()) {
@@ -55,7 +119,8 @@ export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, c
   const sides: Record<string, number> = {};
   let leftHeight = 0; let rightHeight = 0;
   for (const id of children.get(ROOT_NODE) ?? []) {
-    const side = preferredSides[id] === -1 ? -1 : preferredSides[id] === 1 ? 1 : rightHeight <= leftHeight ? 1 : -1;
+    const preferred = id === draft?.id && draft.afterId ? sides[draft.afterId] : preferredSides[id];
+    const side = preferred === -1 ? -1 : preferred === 1 ? 1 : rightHeight <= leftHeight ? 1 : -1;
     sides[id] = side;
     if (side === -1) leftHeight += spans.get(id)! + 28; else rightHeight += spans.get(id)! + 28;
   }

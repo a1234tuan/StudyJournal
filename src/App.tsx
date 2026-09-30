@@ -290,6 +290,7 @@ export const App = () => {
   const knowledgeOriginsRef = useRef<Array<{ state: NavigationState; scrollY: number; owner: string }>>([]);
   const webNavigationSessionRef = useRef<string | null>(null);
   const webNavigationIndexRef = useRef(0);
+  const knowledgeHistoryReturnRef = useRef(false);
   const historyScrollRestoreRef = useRef(0);
   const newlyCreatedRecordIdsRef = useRef(new Set<string>());
   const app = useAppData();
@@ -831,9 +832,19 @@ export const App = () => {
       }
 
       const current = navigationStateRef.current;
+      if (knowledgeHistoryReturnRef.current) {
+        knowledgeHistoryReturnRef.current = false;
+        window.history.replaceState(createWebNavigationSnapshot(sessionId, current.activeTab, current.tabMemory, current.activeAiSessionId, window.scrollY, webNavigationIndexRef.current), "");
+        return;
+      }
       if (snapshot.navigationIndex !== webNavigationIndexRef.current && current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId) {
         const leave = new Event("knowledge-navigation-leave", { cancelable: true }); window.dispatchEvent(leave);
         if (leave.defaultPrevented) { window.history.go(webNavigationIndexRef.current - snapshot.navigationIndex); return; }
+      }
+      if (snapshot.navigationIndex < webNavigationIndexRef.current && current.activeTab === "more" && current.tabMemory.more.subRoute === "knowledge" && !current.tabMemory.more.recordId && current.tabMemory.more.knowledge?.recordPreviewId) {
+        const back = new Event("knowledge-back", { cancelable: true });
+        window.dispatchEvent(back);
+        if (back.defaultPrevented) { knowledgeHistoryReturnRef.current = true; window.history.go(webNavigationIndexRef.current - snapshot.navigationIndex); return; }
       }
       clearBackHint();
       const motion: NavigationMotionIntent = snapshot.navigationIndex > webNavigationIndexRef.current
@@ -1280,7 +1291,7 @@ export const App = () => {
 
     switch (tabMemory.more.subRoute) {
       case "knowledge":
-        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onNavigation={(patch, push = false) => {
+        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} subjects={app.subjects} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onNavigation={(patch, push = false) => {
           const current = navigationStateRef.current;
           commitNavigation({ ...current, tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, knowledge: patchKnowledgeNavigation(current.tabMemory.more.knowledge ?? initialKnowledgeNavigation(), patch) } } }, { history: push ? "push" : "none", motion: push ? "forward" : "none", scrollToTop: false });
         }} />;
@@ -2001,6 +2012,7 @@ export const App = () => {
     podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
     desktopReviewSessionActive ? "desktop-review-session" : "",
+    activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !currentRecord && tabMemory.more.knowledge?.sidebarCollapsed ? "knowledge-sidebar-collapsed" : "",
     activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()

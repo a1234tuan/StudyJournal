@@ -5,13 +5,13 @@ import { knowledgeLabel } from "./query";
 import { valueOf } from "./protocol";
 
 interface Props {
-  state: KnowledgeState; node: KnowledgeEntity; references: KnowledgeEntity[]; records: ReadonlyMap<string, RecordBlock>;
+  hidden?: boolean; state: KnowledgeState; node: KnowledgeEntity; references: KnowledgeEntity[]; records: ReadonlyMap<string, RecordBlock>;
   onClose: () => void; onAdd: () => void; onOpen: (record: RecordBlock) => void;
   onNote: () => void; onRemark: (reference: KnowledgeEntity) => void; onRemove: (reference: KnowledgeEntity) => void;
 }
-export function KnowledgeDetails({ state, node, references, records, onClose, onAdd, onOpen, onNote, onRemark, onRemove }: Props) {
+export function KnowledgeDetails({ hidden, state, node, references, records, onClose, onAdd, onOpen, onNote, onRemark, onRemove }: Props) {
   const note = String(valueOf(state, node, "note") || "");
-  return <aside className="knowledge-detail" aria-label="节点详情">
+  return <aside hidden={hidden} className="knowledge-detail" aria-label="节点详情">
     <div className="knowledge-panel-heading"><h2>{knowledgeLabel(state, node)}</h2><button className="knowledge-icon" aria-label="关闭节点详情" onClick={onClose}><X size={18} /></button></div>
     <div className="knowledge-detail-section-heading"><span>关联日志 · {references.length}</span><button onClick={onAdd}><Plus size={14} />添加日志</button></div>
     <div className="knowledge-reference-list">{references.map(reference => {

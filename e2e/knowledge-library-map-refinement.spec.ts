@@ -7,10 +7,10 @@ const capture = async (page: Page, filename: string) => {
   await expect(page.locator(".page-transition-layer-exiting, .page-transition-layer-entering")).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath(filename), animations: "disabled", scale: "css" });
 };
-const prepare = async (page: Page) => {
+const prepare = async (page: Page, rich = false) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
-  const ids = await page.evaluate(async () => {
+  const ids = await page.evaluate(async richContent => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity, editKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
     const { orderBetween } = await import("/src/features/knowledgeLibrary/orderKey.ts");
@@ -37,13 +37,13 @@ const prepare = async (page: Page) => {
     const labels = ["双端队列的实现与边界", "滑动窗口：从例题理解单调队列", "复杂度分析与复习要点"];
     for (let index = 0; index < labels.length; index += 1) {
       const recordId = "map-log-" + index;
-      await db.blocks.put({ id: recordId, type: "record", title: labels[index], subject: "算法", date: "2026-09-23", createdAt: "2026-09-23T00:00:00.000Z", updatedAt: "2026-09-23T00:00:00.000Z", order: index, contentHtml: "<p>保留原日志正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
+      await db.blocks.put({ id: recordId, type: "record", title: labels[index], subject: "算法", date: "2026-09-23", createdAt: "2026-09-23T00:00:00.000Z", updatedAt: "2026-09-23T00:00:00.000Z", order: index, contentHtml: richContent && index === 0 ? "<h2>阅读结构</h2><ul><li>重点条目</li></ul><pre><code>const queue = [];</code></pre>" + "<p>长文阅读位置与原始正文</p>".repeat(80) : "<p>保留原日志正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
       const reference = createKnowledgeEntity("map-ux", "reference", "", topic.entity.id, "@root", recordId, first);
       await repository.execute(opened.context, reference);
       if (index === 0) { const latest = await repository.open("map-ux"); await repository.execute(latest.context, editKnowledgeEntity("map-ux", latest.state, latest.state.entities[reference.entity.id], "remark", "注意队首与队尾的边界条件。")); }
     }
     return { roots, first, second, deep, labels };
-  });
+  }, rich);
   await page.reload();
   await page.getByRole("button", { name: "更多", exact: true }).last().click();
   await active(page).getByRole("button", { name: "知识库", exact: true }).click();
@@ -88,8 +88,13 @@ test("balanced map, compact circular controls, direct details and nested outline
   await capture(page, "node-details.png");
   await detail.getByLabel("引用操作：" + ids.labels[0]).click();
   await detail.getByRole("button", { name: ids.labels[0], exact: true }).click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toContainText(ids.labels[0]);
+  await expect(active(page).locator(".record-editor-page")).toHaveCount(0);
+  await active(page).getByRole("button", { name: "打开完整日志", exact: true }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
   await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await active(page).getByRole("button", { name: "返回节点说明", exact: true }).click();
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
   await active(page).getByRole("button", { name: "关闭节点详情" }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
@@ -104,7 +109,8 @@ test("balanced map, compact circular controls, direct details and nested outline
   await expect(active(page).locator(".knowledge-outline-log")).toHaveCount(0);
   await row.getByRole("button", { name: "展开分支" }).click();
   await active(page).locator(".knowledge-outline-log").filter({ hasText: ids.labels[1] }).click();
-  await expect(active(page).locator(".record-editor-page")).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toContainText(ids.labels[1]);
+  await expect(active(page).locator(".record-editor-page")).toHaveCount(0);
 });
 
 test("drags deep and later branches, reorders siblings, rejects descendants and cancels without writes", async ({ page }) => {
@@ -176,4 +182,177 @@ test("map colors and compact controls stay readable across themes", async ({ pag
     await capture(page, "details-" + visual + "-" + theme + ".png");
     await active(page).getByRole("button", { name: "关闭节点详情" }).click();
   }
+});
+
+test("map keyboard creates adjacent siblings and children, saves focus and ignores IME and repeats", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await page.keyboard.press("Enter");
+  const input = active(page).getByRole("textbox", { name: "新建节点", exact: true });
+  await expect(input).toBeFocused();
+  await input.fill("连续同级节点");
+  await input.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true })));
+  await expect(input).toBeVisible();
+  await input.press("Enter");
+  const sibling = active(page).getByRole("button", { name: "连续同级节点", exact: true });
+  await expect(sibling).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await input.fill("连续子节点"); await input.press("Enter");
+  const child = active(page).getByRole("button", { name: "连续子节点", exact: true });
+  await expect(child).toBeFocused();
+  const tree = await page.evaluate(async () => {
+    const { knowledgeRepository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    const { knowledgeChildren, knowledgeLabel } = await import("/src/features/knowledgeLibrary/query.ts");
+    const { valueOf } = await import("/src/features/knowledgeLibrary/protocol.ts");
+    const { state } = await knowledgeRepository.open("map-ux");
+    const sibling = Object.values(state.entities).find(entity => entity.kind === "node" && knowledgeLabel(state, entity) === "连续同级节点")!;
+    const position = valueOf(state, sibling, "position");
+    return { siblingId: sibling.id, siblings: knowledgeChildren(state, sibling.workspaceId, position.parentNodeId).map(entity => knowledgeLabel(state, entity)), children: knowledgeChildren(state, sibling.workspaceId, sibling.id).map(entity => knowledgeLabel(state, entity)) };
+  });
+  expect(tree.siblings).toEqual(["队列与栈", "连续同级节点", "链表"]);
+  expect(tree.children).toEqual(["连续子节点"]);
+  await child.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true, cancelable: true })));
+  await expect(input).toHaveCount(0);
+  await page.keyboard.press("Enter"); await expect(input).toBeFocused(); await input.press("Escape");
+  await expect(input).toHaveCount(0);
+  await child.dblclick();
+  const rename = active(page).getByRole("textbox", { name: "节点标题", exact: true });
+  await expect(rename).toBeFocused(); await rename.fill("改名后的节点"); await rename.press("Enter");
+  await expect(active(page).getByRole("button", { name: "改名后的节点", exact: true })).toBeFocused();
+});
+
+test("map arrow keys select visible nodes without writing and ignore the preview", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  const count = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
+  await page.keyboard.press("ArrowDown"); await expect(node(page, ids.second)).toHaveClass(/selected/);
+  await page.keyboard.press("ArrowUp"); await expect(node(page, ids.first)).toHaveClass(/selected/);
+  const side = await node(page, ids.first).getAttribute("data-side");
+  await page.keyboard.press(side === "-1" ? "ArrowLeft" : "ArrowRight"); await expect(node(page, ids.deep)).toHaveClass(/selected/);
+  await page.keyboard.press(side === "-1" ? "ArrowRight" : "ArrowLeft"); await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
+  await active(page).getByRole("button", { name: "返回节点说明" }).focus();
+  await page.keyboard.press("ArrowDown"); await expect(node(page, ids.first)).toHaveClass(/selected/);
+  expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count())).toBe(count);
+});
+
+test("drag previews describe child, before, after and invalid positions without writes before release", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "Mouse preview test; touch drag covered separately");
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  const count = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
+  for (const [sourceId, targetId, fraction, mode] of [[ids.second, ids.first, .5, "child"], [ids.second, ids.first, .1, "before"], [ids.second, ids.first, .9, "after"], [ids.roots[0], ids.first, .5, "invalid"]] as const) {
+    const source = (await node(page, sourceId).boundingBox())!;
+    const target = (await node(page, targetId).boundingBox())!;
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2); await page.mouse.down();
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height * fraction, { steps: 10 });
+    const preview = active(page).locator('.knowledge-map-drop-preview[data-drop-preview-mode="' + mode + '"]');
+    await expect(preview.locator("path")).toHaveAttribute("d", /^M /); await expect(preview.locator("rect")).toHaveCount(1);
+    expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count())).toBe(count);
+    await capture(page, "drop-preview-" + mode + ".png");
+    await page.keyboard.press("Escape"); await page.mouse.up(); await expect(preview).toHaveCount(0);
+  }
+});
+
+test("record dock returns one level, preserves full-page return and adapts its width", async ({ page }, info) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  const detail = active(page).getByRole("complementary", { name: "节点详情" });
+  await detail.locator(".knowledge-node-note summary").click();
+  await detail.getByRole("button", { name: ids.labels[0], exact: true }).click();
+  const pane = active(page).getByRole("complementary", { name: "日志浏览" });
+  await expect(pane).toContainText("保留原日志正文");
+  await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
+  await expect(detail).not.toBeVisible();
+  if (info.project.name === "desktop") {
+    expect((await pane.boundingBox())!.width).toBeCloseTo(420, 0);
+    const separator = pane.getByRole("separator"); await separator.focus(); await page.keyboard.press("End");
+    expect((await pane.boundingBox())!.width).toBeCloseTo(560, 0);
+    await page.keyboard.press("Home"); expect((await pane.boundingBox())!.width).toBeCloseTo(360, 0);
+  }
+  await capture(page, "record-dock.png");
+  await pane.getByRole("button", { name: "打开完整日志" }).click();
+  await expect(active(page).locator(".record-editor-page")).toBeVisible();
+  await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(pane).toContainText(ids.labels[0]);
+  await pane.getByRole("button", { name: "返回节点说明" }).click(); await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: ids.labels[1], exact: true }).click();
+  await page.keyboard.press("Escape"); await expect(detail).toBeVisible();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await detail.getByRole("button", { name: ids.labels[0], exact: true }).click();
+  await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(detail).toBeVisible(); await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
+});
+
+test("knowledge sidebar collapses without losing map or dock and is scoped to this page", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "Desktop sidebar only");
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
+  const viewport = active(page).locator(".knowledge-map-viewport");
+  const before = (await viewport.boundingBox())!.width;
+  await active(page).getByRole("button", { name: "收起左侧导航" }).click();
+  await expect(page.locator(".sidebar")).not.toBeVisible();
+  expect((await viewport.boundingBox())!.width).toBeGreaterThan(before + 180);
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await capture(page, "collapsed-sidebar-record-dock.png");
+  await active(page).getByRole("button", { name: "打开完整日志" }).click(); await expect(page.locator(".sidebar")).toBeVisible();
+  await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(page.locator(".sidebar")).not.toBeVisible();
+  await active(page).getByRole("button", { name: "展开左侧导航" }).click(); await expect(page.locator(".sidebar")).toBeVisible();
+});
+
+test("browser Back from full log restores preview and the next Back restores node details", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
+  await active(page).getByRole("button", { name: "打开完整日志" }).click();
+  await expect(active(page).locator(".record-editor-page")).toBeVisible();
+  await page.goBack();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await page.goBack();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toHaveCount(0);
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+});
+
+test("record dock remains readable at intermediate widths and preserves reading position", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "Desktop intermediate widths");
+  const ids = await prepare(page, true);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
+  const pane = active(page).getByRole("complementary", { name: "日志浏览" });
+  await expect(pane.getByRole("heading", { name: "阅读结构" })).toBeVisible();
+  await expect(pane.locator(".tiptap")).toHaveAttribute("contenteditable", "false");
+  for (const width of [1024, 940, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect.poll(async () => (await pane.boundingBox())!.width).toBeGreaterThanOrEqual(360);
+    const box = (await pane.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+  }
+  const body = pane.locator(".knowledge-record-pane-body");
+  await body.evaluate(element => { element.scrollTop = 500; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
+  await pane.getByRole("button", { name: "打开完整日志" }).click();
+  await expect(active(page).locator(".record-editor-page")).toBeVisible();
+  await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(500);
+  await expect(pane.locator(".tiptap")).toHaveAttribute("contenteditable", "false");
+  await pane.getByRole("button", { name: "返回节点说明" }).click();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
 });

@@ -22,7 +22,7 @@ const prepare = async (page: Page) => {
   });
   await page.reload();
   await page.getByRole("button", { name: "更多", exact: true }).last().click();
-  await page.getByRole("button", { name: /知识库/ }).click();
+  await active(page).getByRole("button", { name: "知识库", exact: true }).click();
   await active(page).getByRole("button", { name: /算法专题/ }).click();
   return ids;
 };
@@ -39,6 +39,8 @@ test("adds a log once, preserves remarks through remove and restore, and returns
   await page.getByRole("dialog").getByLabel("编辑引用备注", { exact: true }).fill("先看队列");
   await page.getByRole("dialog").getByRole("button", { name: "保存", exact: true }).click();
   await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "BFS 复习", exact: true }).click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await active(page).getByRole("button", { name: "打开完整日志" }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
   await expect(active(page).locator(".rich-editor")).toContainText("队列保存待访问节点");
   await expect(active(page).getByRole("button", { name: "加入专题", exact: true })).toHaveCount(0);
@@ -49,6 +51,8 @@ test("adds a log once, preserves remarks through remove and restore, and returns
   await page.screenshot({ path: test.info().outputPath("record-more.png"), animations: "disabled", scale: "css" });
   await active(page).getByRole("button", { name: "收起更多操作", exact: true }).click();
   await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await active(page).getByRole("button", { name: "返回节点说明" }).click();
   await expect(active(page).getByRole("heading", { name: "遍历方法", exact: true })).toBeVisible();
   await active(page).getByLabel("引用操作：BFS 复习").click();
   page.once("dialog", dialog => dialog.accept());

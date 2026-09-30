@@ -77,6 +77,11 @@ describe("knowledge presentation model", () => {
     expect(knowledgeMapDrop(state, "topic", nodes, "deep", { x: 10000, y: 10000 })).toBeUndefined();
   });
   it("renders a centered topic without inventing persisted nodes in an empty workspace", () => {
+    const sample = fixture();
+    const beforeDraft = JSON.stringify(sample.state);
+    const draft = layoutKnowledgeMap(sample.state, "topic", new Set(["alpha"]), {}, { id: "draft", parentId: "alpha" });
+    expect(draft.nodes.find(node => node.id === "draft")).toMatchObject({ parentId: "alpha", width: 300 });
+    expect(JSON.stringify(sample.state)).toBe(beforeDraft);
     const { state } = fixture(); for (const entity of Object.values(state.entities)) if (entity.kind === "node") state.revisions[entity.id + ":deleted"].value = true;
     const before = JSON.stringify(state); const result = layoutKnowledgeMap(state, "topic", new Set());
     expect(result.nodes.map(node => node.id)).toEqual([ROOT_NODE]); expect(JSON.stringify(state)).toBe(before);
