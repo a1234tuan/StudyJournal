@@ -2,10 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90000);
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
-const prepare = async (page: Page) => {
+const prepare = async (page: Page, datedRecords = false) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
-  const ids = await page.evaluate(async () => {
+  const ids = await page.evaluate(async includeDatedRecords => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
     const { storage } = await import("/src/services/storageAdapter.ts");
@@ -18,14 +18,33 @@ const prepare = async (page: Page) => {
     const other = createKnowledgeEntity("acceptance", "node", "练习", topic.entity.id);
     await repository.execute(opened.context, other);
     await storage.saveBlock({ id: "bfs-log", type: "record", title: "BFS 复习", subject: "读书笔记", date: "2026-09-22", createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z", order: 0, contentHtml: "<p>队列保存待访问节点</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
+    if (includeDatedRecords) {
+      for (const [id, title, date] of [["newest-log", "最新日志", "2026-09-30"], ["oldest-log", "更早日志", "2025-12-31"], ["previous-month-log", "上月日志", "2026-08-31"]]) {
+        await storage.saveBlock({ id, type: "record", title, subject: "读书笔记", date, createdAt: date + "T00:00:00.000Z", updatedAt: date + "T00:00:00.000Z", order: 0, contentHtml: "<p>日期排序验收</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
+      }
+    }
     return { topic: topic.entity.id, node: node.entity.id, other: other.entity.id };
-  });
+  }, datedRecords);
   await page.reload();
   await page.getByRole("button", { name: "更多", exact: true }).last().click();
   await active(page).getByRole("button", { name: "知识库", exact: true }).click();
   await active(page).getByRole("button", { name: /算法专题/ }).click();
   return ids;
 };
+
+test("node add-log picker lists newest dates first and retains order after search", async ({ page }) => {
+  await prepare(page, true);
+  await active(page).getByRole("button", { name: /遍历方法/ }).click();
+  await active(page).getByRole("button", { name: "添加日志", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const titles = dialog.locator(".knowledge-result-text strong");
+  await expect(titles).toHaveText(["最新日志", "BFS 复习", "上月日志", "更早日志"]);
+  await dialog.getByRole("textbox", { name: "查找要关联的日志" }).fill("日志");
+  await expect(titles).toHaveText(["最新日志", "上月日志", "更早日志"]);
+  await dialog.getByRole("checkbox", { name: "最新日志", exact: true }).check();
+  await dialog.getByRole("button", { name: "添加所选 1 条日志" }).click();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: "最新日志", exact: true })).toBeVisible();
+});
 
 test("adds a log once, preserves remarks through remove and restore, and returns from the log reader", async ({ page }) => {
   await prepare(page);

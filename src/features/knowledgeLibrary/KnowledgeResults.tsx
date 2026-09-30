@@ -52,7 +52,12 @@ export function KnowledgeResults({ state, records, assets, workspaceId, mode, se
     return { subjects: [...new Set(live.map(record => record.subject))].sort(), tags: [...new Set(live.flatMap(record => record.tags))].sort(), years: [...new Set(live.map(record => record.date.slice(0, 4)))].sort().reverse(), records: new Map(live.map(record => [record.id, record])) };
   }, [records]);
   const invalidDates = Boolean(from && to && from > to);
-  const hits = useMemo(() => invalidDates ? [] : searchKnowledge(state, records, { text: deferredQuery, workspaceId: all ? undefined : workspaceId, subject: subject || undefined, tag: tag || undefined, from: from || undefined, to: to || undefined, includeBody: body, includeHidden: hidden, unorganized: mode === "unorganized" }, assets).filter(hit => mode === "search" || hit.recordId), [state, records, assets, deferredQuery, all, workspaceId, subject, tag, from, to, body, hidden, mode, invalidDates]);
+  const hits = useMemo(() => {
+    if (invalidDates) return [];
+    const results = searchKnowledge(state, records, { text: deferredQuery, workspaceId: all ? undefined : workspaceId, subject: subject || undefined, tag: tag || undefined, from: from || undefined, to: to || undefined, includeBody: body, includeHidden: hidden, unorganized: mode === "unorganized" }, assets).filter(hit => mode === "search" || hit.recordId);
+    if (mode === "picker") results.sort((left, right) => (options.records.get(right.recordId ?? "")?.date ?? "").localeCompare(options.records.get(left.recordId ?? "")?.date ?? ""));
+    return results;
+  }, [state, records, assets, deferredQuery, all, workspaceId, subject, tag, from, to, body, hidden, mode, invalidDates, options.records]);
   const chips = [subject && { text: subject, clear: () => setSubject("") }, tag && { text: tag, clear: () => setTag("") }, (from || to) && { text: year || (from || "不限") + " 至 " + (to || "不限"), clear: () => { setFrom(""); setTo(""); setYear(""); } }].filter((chip): chip is { text: string; clear: () => void } => Boolean(chip));
   const resetKey = [deferredQuery, subject, tag, from, to, body, all, hidden].join("|");
   return <section className="knowledge-search" aria-label={mode === "picker" ? "选择日志" : "知识检索"}>
