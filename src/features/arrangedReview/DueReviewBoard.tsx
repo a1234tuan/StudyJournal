@@ -1,0 +1,22 @@
+import { liveQuery } from "dexie";
+import { db } from "../../db/database";
+import { getDefaultKnowledgeLibrary } from "../knowledgeLibrary/defaultLibrary";
+import { currentKnowledgeOwner } from "../knowledgeLibrary/context";
+import { knowledgeRepository } from "../knowledgeLibrary/runtime";
+import { reviewSelectionNodes, type ReviewSelectionNode } from "./selection";
+import { useEffect, useMemo, useState } from "react";
+import type { RecordBlock, RecordReviewState } from "../../types";
+import { isReviewDueOn } from "../../lib/reviewScheduler";
+import { todayISO } from "../../lib/date";
+import "./arrangedReview.css";
+export function DueReviewBoard({ records, due, onStart, onClose }: { records: readonly RecordBlock[]; due: readonly RecordReviewState[]; onStart: (ids: string[]) => void; onClose: () => void }) {
+  const [scope, setScope] = useState("");
+  const [nodes, setNodes] = useState<ReviewSelectionNode[]>([]);
+  useEffect(() => { const subscription = liveQuery(async () => { const library = await getDefaultKnowledgeLibrary(db, currentKnowledgeOwner()); return library ? reviewSelectionNodes((await knowledgeRepository.open(library.id)).state, records) : []; }).subscribe({ next: setNodes, error: () => setNodes([]) }); return () => subscription.unsubscribe(); }, [records]);
+  const scopeNode = nodes.find(node => node.id === scope);
+  const scopedIds = scope ? new Set(nodes.filter(node => node.id === scope || scopeNode?.descendants.includes(node.id) || node.workspaceId === scope).flatMap(node => node.items.map(item => item.recordId))) : undefined;
+  const [query, setQuery] = useState(""); const [subject, setSubject] = useState(""); const [selected, setSelected] = useState<string[]>([]);
+  const dueMap = useMemo(() => new Map(due.filter(item => isReviewDueOn(item, todayISO())).map(item => [item.recordId, item])), [due]);
+  const items = records.filter(record => dueMap.has(record.id) && (!scopedIds || scopedIds.has(record.id)) && (!subject || record.subject === subject) && (!query || [record.title, record.subject, ...(record.tags ?? [])].join(" ").includes(query))).sort((left, right) => (dueMap.get(left.id)?.nextReviewDate ?? "").localeCompare(dueMap.get(right.id)?.nextReviewDate ?? "") || left.id.localeCompare(right.id));
+  return <section className="arranged-workspace" aria-label="待复习看板"><header className="arranged-header"><button className="secondary-button" onClick={onClose}>返回复习</button><h1>待复习看板</h1><strong>{dueMap.size} 条</strong></header><div className="arranged-filter"><select aria-label="筛选知识库范围" value={scope} onChange={event => setScope(event.target.value)}><option value="">全部知识库范围</option>{[...new Set(nodes.map(node => node.workspaceId))].map(id => <optgroup key={id} label={nodes.find(node => node.workspaceId === id)?.items[0]?.source.split(" / ")[0] ?? "知识库专题"}><option value={id}>整个专题</option>{nodes.filter(node => node.workspaceId === id).map(node => <option key={node.id} value={node.id}>{"　".repeat(Math.min(node.depth, 4)) + node.title}</option>)}</optgroup>)}</select><input aria-label="搜索待复习日志" placeholder="搜索标题或标签" value={query} onChange={event => setQuery(event.target.value)} /><select aria-label="筛选科目" value={subject} onChange={event => setSubject(event.target.value)}><option value="">全部科目</option>{[...new Set(records.filter(record => dueMap.has(record.id)).map(record => record.subject))].map(value => <option key={value}>{value}</option>)}</select><button className="secondary-button" onClick={() => setSelected(current => [...new Set([...current, ...items.map(item => item.id)])])}>全选筛选结果</button></div><div className="arranged-summary"><strong>已选 {selected.length} 条</strong>{selected.some(id => !items.some(item => item.id === id)) && <span>另有 {selected.filter(id => !items.some(item => item.id === id)).length} 条不在当前筛选中</span>}<button onClick={() => setSelected([])}>清空</button><button className="primary-button" disabled={!selected.length} onClick={() => onStart(selected)}>开始所选复习</button></div><div className="arranged-list">{items.map(item => <div className="arranged-row" key={item.id}><input aria-label={"选择 " + item.title} type="checkbox" checked={selected.includes(item.id)} onChange={event => setSelected(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} /><button style={{ flex: 1, textAlign: "left", background: "none", border: 0, color: "inherit" }} onClick={() => onStart([item.id])}><strong>{item.title}</strong><small>{item.subject} · {dueMap.get(item.id)?.nextReviewDate}</small></button></div>)}</div></section>;
+}

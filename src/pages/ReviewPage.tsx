@@ -1,10 +1,16 @@
-﻿import {
+﻿import { pendingReviewNavigation } from "../features/reviewSession/navigationGuard";
+import { DueReviewBoard } from "../features/arrangedReview/DueReviewBoard";
+import { CardCoach } from "../features/arrangedReview/CardCoach";
+import { saveCardFeedback } from "../features/arrangedReview/cardFeedback";
+import { db } from "../db/database";
+import {
   ArrowLeft,
   BarChart3,
   Bot,
   ChevronDown,
   Edit3,
   Eye,
+  ListChecks,
   MessageSquare,
   Mic,
   MoreHorizontal,
@@ -60,7 +66,10 @@ import { ReviewAnnotationSurface } from "../features/reviewAnnotations/ReviewAnn
 import { reviewAnnotationRepository } from "../features/reviewAnnotations/repository";
 import { reviewOccurrenceKey } from "../features/reviewAnnotations/domain";
 
-interface ReviewPageProps {
+export interface ReviewPageProps {
+  onOpenCardTask?: (id: string) => void;
+  onAnalyzeCardFeedback?: (recordId: string, feedbackIds: readonly string[]) => Promise<unknown>;
+  standalone?: { roundId: string; title: string; recordId: string; readOnly: boolean; rating: RecordReviewRating | null; index: number; total: number; onUndo?: () => Promise<void>; onBack: () => void; onRate: (rating: RecordReviewRating) => Promise<void> };
   records: RecordBlock[];
   dueReviews: RecordReviewState[];
   reviewStates: RecordReviewState[];
@@ -269,6 +278,9 @@ const reviewDeckSummary = (records: readonly RecordBlock[], reviewMap: ReadonlyM
 });
 
 export const ReviewPage = ({
+  standalone,
+  onAnalyzeCardFeedback,
+  onOpenCardTask,
   records,
   dueReviews,
   reviewStates,
@@ -335,6 +347,10 @@ export const ReviewPage = ({
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [openActionRecordId, setOpenActionRecordId] = useState<string>();
   const [localCoachOpen, setLocalCoachOpen] = useState(false);
+  const [cardCoachOpen, setCardCoachOpen] = useState(false);
+  const [dueBoardOpen, setDueBoardOpen] = useState(false);
+  const [draftLoadedKey, setDraftLoadedKey] = useState("");
+  useEffect(() => { if (!cardCoachOpen && !dueBoardOpen) return; const close = (event: Event) => { event.preventDefault(); setCardCoachOpen(false); setDueBoardOpen(false); }; window.addEventListener("review-card-overlay-back", close); return () => window.removeEventListener("review-card-overlay-back", close); }, [cardCoachOpen, dueBoardOpen]);
   const coachOpen = controlledCoachOpen ?? localCoachOpen;
   const setCoachOpen = onCoachOpenChange ?? setLocalCoachOpen;
 
@@ -367,7 +383,17 @@ export const ReviewPage = ({
     () => normalizeReviewSessionProgress(reviewProgress),
   );
   const sessionDayRef = useRef(today);
-  const exitReviewSession = onExitReviewSession ?? (() => onModeChange("manage"));
+  const exitReviewSession = standalone?.onBack ?? onExitReviewSession ?? (() => onModeChange("manage"));
+  const openDueReviewBoard = () => {
+    void (async () => {
+      try {
+        await pendingReviewNavigation();
+        setDueBoardOpen(true);
+      } catch (error) {
+        setRatingError(formatUiError(error, "review-annotation"));
+      }
+    })();
+  };
 
   const updateSessionProgress = useCallback((next: ReviewSessionProgress | undefined) => {
     const normalized = normalizeReviewSessionProgress(next);
@@ -414,19 +440,19 @@ export const ReviewPage = ({
     [dueReviews, ratedRecordIds, today],
   );
   const queuedDueReviews = useMemo(
-    () => showAllDue ? availableDueReviews : availableDueReviews.filter((review) => dailyLimitIds.includes(review.recordId)),
-    [availableDueReviews, dailyLimitIds, showAllDue],
+    () => reviewRuntime.selectedQueueIds ? availableDueReviews.filter(review => reviewRuntime.selectedQueueIds!.includes(review.recordId)) : showAllDue ? availableDueReviews : availableDueReviews.filter((review) => dailyLimitIds.includes(review.recordId)),
+    [availableDueReviews, dailyLimitIds, showAllDue, reviewRuntime.selectedQueueIds],
   );
   const dueIds = useMemo(() => new Set(queuedDueReviews.map((review) => review.recordId)), [queuedDueReviews]);
   const recordMap = useMemo(() => new Map(records.map((record) => [record.id, record])), [records]);
   const effectiveQueue = useMemo(
-    () => queueIds.filter((id) => dueIds.has(id) && recordMap.has(id)),
-    [dueIds, queueIds, recordMap],
+    () => standalone ? [standalone.recordId] : queueIds.filter((id) => dueIds.has(id) && recordMap.has(id)),
+    [dueIds, queueIds, recordMap, standalone],
   );
   const currentId = currentRecordId && effectiveQueue.includes(currentRecordId) ? currentRecordId : effectiveQueue[0];
   const currentRecord = currentId ? recordMap.get(currentId) : undefined;
-  const currentReview = currentId ? queuedDueReviews.find((review) => review.recordId === currentId) : undefined;
-  const feedbackDraftKey = JSON.stringify([currentId, reviewOccurrenceKey(currentReview), currentRecord?.updatedAt]);
+  const currentReview = !standalone && currentId ? queuedDueReviews.find((review) => review.recordId === currentId) : undefined;
+  const feedbackDraftKey = JSON.stringify([standalone?.roundId, currentId, reviewOccurrenceKey(currentReview), currentRecord?.updatedAt]);
   const blockFeedbackDrafts = reviewRuntime.feedbackDrafts?.[feedbackDraftKey] ?? {};
   const updateFeedbackDrafts = useCallback((key: string, update: SetStateAction<Record<string, DecisionBlockFeedbackDraft>>) => {
     onReviewRuntimeChange((current) => {
@@ -436,6 +462,17 @@ export const ReviewPage = ({
     });
   }, [onReviewRuntimeChange]);
   const setBlockFeedbackDrafts = (update: SetStateAction<Record<string, DecisionBlockFeedbackDraft>>) => updateFeedbackDrafts(feedbackDraftKey, update);
+  const cardDraftId = standalone ? standalone.roundId + ":" + currentId : "ordinary:" + feedbackDraftKey;
+  useEffect(() => {
+    if (!currentRecord || !onAnalyzeCardFeedback) return;
+    let cancelled = false; setDraftLoadedKey("");
+    void db.arrangedReviewDrafts.get(cardDraftId).then(draft => { if (cancelled) return; if (draft?.contentRevision === currentRecord.updatedAt) updateFeedbackDrafts(feedbackDraftKey, draft.comments); setDraftLoadedKey(cardDraftId); }).catch(error => setRatingError(formatUiError(error, "review-feedback")));
+    return () => { cancelled = true; };
+  }, [cardDraftId, currentRecord?.updatedAt]);
+  useEffect(() => {
+    if (!currentRecord || !onAnalyzeCardFeedback || draftLoadedKey !== cardDraftId) return;
+    void db.arrangedReviewDrafts.put({ id: cardDraftId, contentRevision: currentRecord.updatedAt, comments: blockFeedbackDrafts, updatedAt: new Date().toISOString() }).catch(error => setRatingError(formatUiError(error, "review-feedback")));
+  }, [cardDraftId, draftLoadedKey, blockFeedbackDrafts, currentRecord?.updatedAt]);
   const currentReviewLogs = currentId ? reviewLogsByRecord[currentId] ?? EMPTY_REVIEW_LOGS : EMPTY_REVIEW_LOGS;
   const currentEvaluationLogs = useMemo(
     () => currentReviewLogs.filter(hasEvaluationText),
@@ -480,7 +517,7 @@ export const ReviewPage = ({
     : 0;
   const overdueCount = availableDueReviews.filter((review) => review.nextReviewDate && review.nextReviewDate < today).length;
   const todayCount = availableDueReviews.filter((review) => review.nextReviewDate === today).length;
-  const hiddenDueCount = showAllDue ? 0 : availableDueReviews.filter((review) => !dailyLimitIds.includes(review.recordId)).length;
+  const hiddenDueCount = reviewRuntime.selectedQueueIds ? availableDueReviews.filter(review => !reviewRuntime.selectedQueueIds!.includes(review.recordId)).length : showAllDue ? 0 : availableDueReviews.filter((review) => !dailyLimitIds.includes(review.recordId)).length;
   const queueReady = showAllDue || availableDueReviews.length === 0 || dailyLimitIds.length > 0;
   const ratingPreviews = useMemo(
     () => currentReview ? new Map(previewReviewRatings(currentReview, today).map((preview) => [preview.rating, preview])) : new Map(),
@@ -571,7 +608,7 @@ export const ReviewPage = ({
   }, [deckGroups, libraryState.scope, updateLibraryState]);
 
   useEffect(() => {
-    void onEnsureDay(today, dueReviews.length);
+    if (!standalone) void onEnsureDay(today, dueReviews.length);
   }, [onEnsureDay, today, dueReviews.length]);
 
   useEffect(() => {
@@ -589,7 +626,7 @@ export const ReviewPage = ({
   }, [dailyLimitIds, dueReviews, pendingUndoRestore, showAllDue, today]);
 
   useEffect(() => {
-    if (!queueReady || pendingUndoRestore) {
+    if (standalone || !queueReady || pendingUndoRestore) {
       return;
     }
     const nextQueue = effectiveQueue.length > 0 ? effectiveQueue : queuedDueReviews.map((review) => review.recordId).filter((id) => recordMap.has(id));
@@ -658,8 +695,15 @@ export const ReviewPage = ({
     }
   }, [dailyLimitIds, dueReviews, pendingUndoRestore, ratedRecordIds, showAllDue, today]);
 
+  const cardFeedbackInputs = (): RecordReviewDecisionBlockFeedbackInput[] => currentDecisionBlocks.flatMap(block => { const draft = blockFeedbackDrafts[block.decisionBlockId]; return draft?.comment.trim() ? [{ decisionBlockId: block.decisionBlockId, contentVersion: block.contentVersion, comment: draft.comment.trim(), includeInAnalysis: draft.includeInAnalysis, operationId: newId() }] : []; });
   const rate = async (rating: RecordReviewRating) => {
     if (!currentId || ratingRecordId || undoing || pendingUndoRestore) {
+      return;
+    }
+    if (standalone) {
+      if (standalone.readOnly) return;
+      setRatingRecordId(currentId); setRatingError("");
+      try { if (currentRecord && onAnalyzeCardFeedback) await saveCardFeedback(currentRecord, cardFeedbackInputs(), standalone.roundId, { id: standalone.roundId, title: standalone.title }); await standalone.onRate(rating); } catch (error) { setRatingError(formatUiError(error, "review-rating")); } finally { setRatingRecordId(null); }
       return;
     }
     const ratedId = currentId;
@@ -698,6 +742,7 @@ export const ReviewPage = ({
     onQueueChange(nextQueue);
     onCurrentRecordChange(nextQueue[0]);
     try {
+      if (currentRecord && onAnalyzeCardFeedback) { await saveCardFeedback(currentRecord, feedbackInputs, feedbackDraftKey); feedbackInputs.length = 0; }
       const token = feedbackInputs.length > 0
         ? await onRate(ratedId, rating, feedbackInputs)
         : await onRate(ratedId, rating);
@@ -819,7 +864,7 @@ export const ReviewPage = ({
       total: Math.max(activeSessionProgress.total, activeSessionProgress.completed + nextQueue.length),
       completed: activeSessionProgress.completed,
     });
-    setShowAllDue(true);
+    onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: undefined }));
     onQueueChange(nextQueue);
     onCurrentRecordChange(nextQueue[0]);
   };
@@ -845,6 +890,9 @@ export const ReviewPage = ({
     }
   };
 
+  if (dueBoardOpen && !standalone) return <DueReviewBoard records={records} due={dueReviews} onClose={() => setDueBoardOpen(false)} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} />;
+  if (cardCoachOpen && currentRecord) return <CardCoach record={currentRecord} inputs={cardFeedbackInputs()} scope={standalone?.roundId ?? feedbackDraftKey} origin={standalone ? { id: standalone.roundId, title: standalone.title } : undefined} snapshot={reviewCoachSnapshot} onAnalyze={onAnalyzeCardFeedback} onResume={onResumeDeepAnalysis} onRefresh={onRefresh} onOpenTask={onOpenCardTask ?? onOpenAdaptiveTask} onSwitchTask={onSwitchAdaptiveTask} onClose={() => setCardCoachOpen(false)} />;
+
   return (
     <main
       className={`page review-page primary-workspace-page ${!coachOpen && mode === "queue" && currentRecord ? "review-page-session-active" : ""}`}
@@ -858,7 +906,9 @@ export const ReviewPage = ({
         density="compact"
         className="review-page-header"
         actions={(
-          <div className="review-header-menu" ref={headerMenuRef}>
+          <div className="review-header-actions">
+            {!standalone && !coachOpen && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={17} /><span>待复习</span></button>}
+            <div className="review-header-menu" ref={headerMenuRef}>
             {!coachOpen && mode === "queue" && currentRecord && (
               <button type="button" className="secondary-button review-direct-edit" onClick={() => onEditRecord(currentRecord)}>
                 <Edit3 size={16} />编辑
@@ -937,6 +987,7 @@ export const ReviewPage = ({
                   </>
                 )}
             </MotionPresence>
+            </div>
           </div>
         )}
       />}
@@ -977,10 +1028,10 @@ export const ReviewPage = ({
       {!coachOpen && (mode === "queue" ? (
         !currentRecord ? (
           <section className="empty-state review-empty-state">
-            <h2>{hiddenDueCount > 0 ? "今日建议已完成" : "今天暂无待复习"}</h2>
+            <h2>{reviewRuntime.selectedQueueIds ? "所选复习已完成" : hiddenDueCount > 0 ? "今日建议已完成" : "今天暂无待复习"}</h2>
             <p>
               {hiddenDueCount > 0
-                ? `还有 ${hiddenDueCount} 条到期记录，已经超出今日建议量。`
+                ? reviewRuntime.selectedQueueIds ? `还有 ${hiddenDueCount} 条待复习。` : `还有 ${hiddenDueCount} 条到期记录，已经超出今日建议量。`
                 : ""}
             </p>
             <small>累计复习 {stats?.totalReviews ?? 0} 次</small>
@@ -999,11 +1050,11 @@ export const ReviewPage = ({
                 onClick={exitReviewSession}
               >
                 <ArrowLeft size={18} />
-                返回复习
+                {standalone ? "返回看板" : "返回复习"}
               </button>
               <div className="review-progress-meta">
-                <span>第 {currentIndex}/{reviewTotal} 条</span>
-                <strong>{currentReview?.nextReviewDate && currentReview.nextReviewDate < today ? "已过期" : "今日到期"}</strong>
+                <span>第 {standalone?.index ?? currentIndex}/{standalone?.total ?? reviewTotal} 条</span>
+                <strong>{standalone ? standalone.title : currentReview?.nextReviewDate && currentReview.nextReviewDate < today ? "已过期" : "今日到期"}</strong>
               </div>
               <div
                 className="review-progress-track"
@@ -1013,9 +1064,11 @@ export const ReviewPage = ({
                 aria-valuenow={currentIndex}
                 aria-label={`复习进度，第 ${currentIndex} 条，共 ${reviewTotal} 条`}
               >
-                <span style={{ width: `${progressPercent}%` }} />
+                <span style={{ width: `${standalone ? standalone.index / standalone.total * 100 : progressPercent}%` }} />
               </div>
-              <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
+              <div className="review-session-actions">
+                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={18} /><span>看板</span></button>}
+                <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
                 <button
                   type="button"
                   className="review-header-menu-trigger"
@@ -1037,6 +1090,7 @@ export const ReviewPage = ({
                   {onAskAiRecord && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onAskAiRecord(currentRecord); }}><Bot size={16} /><span>AI 问答</span></button>}
                   {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
                 </MotionPresence>
+                </div>
               </div>
             </section>
             <article className={`review-record-card ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
@@ -1044,13 +1098,13 @@ export const ReviewPage = ({
                 <p className="eyebrow">{currentRecord.date}</p>
                 <h1>{currentRecord.title}</h1>
                 <RecordTagChips subject={currentRecord.subject} tags={currentRecord.tags} className="review-record-tags" />
-                <span className="review-record-meta">{currentRecord.subject} · {reviewKindLabel(currentReview?.reviewKind)}</span>
+                <span className="review-record-meta">{currentRecord.subject} · {standalone ? "本轮复习" : reviewKindLabel(currentReview?.reviewKind)}</span>
               </header>
               <div className={`review-learning-layout ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
                 <ReviewAnnotationSurface
                   key={`${currentRecord.id}:${reviewOccurrenceKey(currentReview)}`}
                   recordId={currentRecord.id}
-                  occurrenceKey={reviewOccurrenceKey(currentReview)}
+                  occurrenceKey={standalone ? "arranged:" + standalone.roundId : reviewOccurrenceKey(currentReview)}
                   contentRevision={currentRecord.updatedAt}
                   open={annotationOpen}
                   onOpenChange={setAnnotationOpen}
@@ -1073,7 +1127,7 @@ export const ReviewPage = ({
                       <MessageSquare size={17} />
                       <div>
                         <strong>针对复习重点写下真实卡点</strong>
-                        <small>评论会和整卡评分一起保存</small>
+                        <small>{standalone?.readOnly ? "本轮已评价" : ""}</small>
                       </div>
                     </header>
                     {currentDecisionBlocks.map((block, index) => {
@@ -1097,7 +1151,7 @@ export const ReviewPage = ({
                                 [block.decisionBlockId]: { ...(current[block.decisionBlockId] ?? draft), comment },
                               }));
                             }}
-                            disabled={Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}
+                            disabled={Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore) || Boolean(onAnalyzeCardFeedback && draftLoadedKey !== cardDraftId)}
                             aria-label={`复习重点 ${index + 1} 本次评论`}
                             placeholder="具体哪里卡住、为什么容易错，或这次想验证什么？"
                           />
@@ -1105,6 +1159,7 @@ export const ReviewPage = ({
                             <input
                               type="checkbox"
                               checked={draft.includeInAnalysis}
+                              disabled={Boolean(ratingRecordId) || Boolean(onAnalyzeCardFeedback && draftLoadedKey !== cardDraftId)}
                               onChange={(event) => {
                                 const includeInAnalysis = event.currentTarget.checked;
                                 setBlockFeedbackDrafts((current) => ({
@@ -1309,8 +1364,10 @@ export const ReviewPage = ({
                   </div>
                 </details>
               )}
+              {onAnalyzeCardFeedback && currentDecisionBlocks.length > 0 && <section className="card-coach-panel"><button className="primary-button" disabled={draftLoadedKey !== cardDraftId} onClick={() => { void (async () => { try { await pendingReviewNavigation(); setCardCoachOpen(true); } catch (error) { setRatingError(formatUiError(error, "review-annotation")); } })(); }}>学习助教 · {currentBlockFeedback.length ? "查看分析" : "分析本卡"}</button></section>}
             </article>
             {(() => {
+              if (standalone?.readOnly) return <section className="arranged-actions"><strong>{standalone.rating ? "本轮评价：" + ratingLabel(standalone.rating) : "本轮已结束或评价待确认"}</strong>{standalone.onUndo && <button className="secondary-button" onClick={() => { if (window.confirm("撤销本次评分？已提交的助教反馈保留。")) void standalone.onUndo?.().catch(error => setRatingError(formatUiError(error, "review-feedback"))); }}>撤销本次评分</button>}</section>;
               const ratingControls = <section className={`review-viewport-dock review-bottom-controls ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
               <section className="review-rating-bar">
                 {ratingConfig.map((item) => {
@@ -1321,14 +1378,14 @@ export const ReviewPage = ({
                   const actualDays = preview?.nextReviewDate
                     ? Math.max(1, Math.round((new Date(preview.nextReviewDate).getTime() - new Date(today).getTime()) / 86_400_000))
                     : preview?.intervalDays;
-                  const intervalText = actualDays !== undefined ? intervalLabel(actualDays) : undefined;
+                  const intervalText = !standalone && actualDays !== undefined ? intervalLabel(actualDays) : undefined;
                   return (
                     <button
                       key={item.rating}
                       type="button"
                       className={item.className}
-                      disabled={Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}
-                      onClick={() => void rate(item.rating)}
+                      disabled={Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore) || Boolean(onAnalyzeCardFeedback && draftLoadedKey !== cardDraftId)}
+                      onClick={() => { if (!standalone?.readOnly) void rate(item.rating); }}
                       aria-label={intervalText ? `${item.label}，${intervalText}` : item.label}
                       title={intervalText ? `${item.label} · ${intervalText}` : item.label}
                     >

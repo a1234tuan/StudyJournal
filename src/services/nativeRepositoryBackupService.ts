@@ -226,6 +226,7 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
       // Same absent-vs-empty rule as the other import paths: a repository file
       // written before daily plans existed must not be read as "no plans".
       ...(payload.dailyPlans !== undefined ? { dailyPlans: payload.dailyPlans } : {}),
+      ...(payload.arrangedReviews !== undefined || payload.arrangedReviewEvents !== undefined ? { arrangedReviews: payload.arrangedReviews, arrangedReviewEvents: payload.arrangedReviewEvents } : {}),
       reviewCoach: payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },
     assets: parsed.assets ?? [],

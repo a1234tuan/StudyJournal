@@ -51,6 +51,7 @@ export const buildAnalysisPlanningBlocks = (input: {
   assets: readonly Asset[];
   reviewLogs?: readonly RecordReviewLog[];
   includeQueueItemIds?: ReadonlySet<string>;
+  onlyFeedbackIds?: ReadonlySet<string>;
 }): AnalysisPlanningBlock[] => {
   const records = new Map(input.records.filter((item) => !item.deletedAt).map((item) => [item.id, item]));
   const feedbackById = new Map(input.snapshot.decisionBlockFeedback.filter((item) => !item.deletedAt).map((item) => [item.id, item]));
@@ -63,7 +64,7 @@ export const buildAnalysisPlanningBlocks = (input: {
   }
   const queueByBlock = new Map<string, typeof input.snapshot.analysisQueueItems>();
   for (const queueItem of input.snapshot.analysisQueueItems.filter((item) =>
-    !item.deletedAt && (item.status === "eligible" || Boolean(input.includeQueueItemIds?.has(item.id))))) {
+    !item.deletedAt && (!input.onlyFeedbackIds || input.onlyFeedbackIds.has(item.feedbackId)) && (item.status === "eligible" || Boolean(input.includeQueueItemIds?.has(item.id))))) {
     const current = queueByBlock.get(queueItem.decisionBlockId) ?? [];
     current.push(queueItem);
     queueByBlock.set(queueItem.decisionBlockId, current);

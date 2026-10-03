@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90_000);
-const output = "output/knowledge-create-plan-reminder-2026-10-03";
+const output = "output/ui-ux-polish-2026-10-03/knowledge-and-reminder";
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const prepareKnowledge = async (page: Page) => {
   await page.goto("/");

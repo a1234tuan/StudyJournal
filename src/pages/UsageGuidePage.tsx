@@ -152,7 +152,8 @@ export const UsageGuidePage = () => (
           <div><h3>记忆卡</h3><p>适合定义、公式、易错点和短问答，使用 FSRS 安排按天复习。</p></div>
         </div>
         <p className="guide-rating-line"><strong>忘记了</strong><ArrowRight size={15} /><strong>模糊</strong><ArrowRight size={15} /><strong>良好</strong><ArrowRight size={15} /><strong>轻松</strong></p>
-        <p className="guide-muted">复习时可使用批注辅助思考；若日志含复习重点，还可以写下真实卡点。整卡评分只调整日志的复习时间，不直接判断某个重点已经掌握。</p>
+        <p className="guide-muted">普通复习可从待复习看板点选卡片；整卡评分只调整日志的复习时间，不直接判断某个重点已经掌握。</p>
+        <p className="guide-muted">在知识库点击“安排复习”，选择节点或日志。从“复习 → 已安排”打开清单，点条目复习、评分后打勾。这些独立评价不改变普通调度，未完成轮次可以随时继续。</p>
         <figure className="guide-figure guide-figure-wide">
           <img
             src="/guide/review-spacing.png"
@@ -170,7 +171,7 @@ export const UsageGuidePage = () => (
         <div className="guide-definition-grid">
           <div><span>它是什么</span><p>位于“复习 → 学习助教”的反馈与训练工作区。</p></div>
           <div><span>为什么有用</span><p>普通评分只表达回忆结果；真实卡点能帮助系统理解你究竟卡在哪里。</p></div>
-          <div><span>怎么使用</span><p>为复习重点写评论，确认 AI 整理的理解，再发起分析并完成生成的训练任务。</p></div>
+          <div><span>怎么使用</span><p>为复习重点写评论，点击卡片下方“学习助教 · 分析本卡”，查看分析并进入训练；普通评分不自动调用 AI。</p></div>
         </div>
         <p className="guide-callout"><BrainCircuit size={17} />AI 负责整理反馈和设计训练，用户仍需亲自作答并确认结果。</p>
         <figure className="guide-figure guide-figure-wide">

@@ -1,3 +1,4 @@
+import { validateArrangedReviews } from "../features/arrangedReview/domain";
 import { capturePortableKnowledge, restorePortableKnowledge, validateKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
 import { initialKnowledgeScope, knowledgeTables } from "../features/knowledgeLibrary/repository";
 import { currentKnowledgeOwner, knowledgeContextGeneration, assertKnowledgeOwner } from "../features/knowledgeLibrary/context";
@@ -2351,9 +2352,9 @@ export class DexieStorageAdapter implements StorageAdapter {
     const ownerGeneration = knowledgeContextGeneration();
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, db.arrangedReviews, db.arrangedReviewEvents, db.arrangedReviewDrafts, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
       async () => {
-        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
+        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, arrangedReviews, arrangedReviewEvents] = await Promise.all([
           db.entries.toArray(),
           db.blocks.toArray(),
           db.templates.toArray(),
@@ -2369,11 +2370,11 @@ export class DexieStorageAdapter implements StorageAdapter {
           getReviewCoachFormalSnapshot(db),
           // Raw table, soft-deleted rows included: tombstones have to travel or
           // deletions stop propagating to other devices.
-          db.dailyPlans.toArray(),
+          db.dailyPlans.toArray(), db.arrangedReviews.toArray(), db.arrangedReviewEvents.toArray(),
         ]);
         const knowledge = includeKnowledge ? await capturePortableKnowledge(db, owner) : undefined;
         assertKnowledgeOwner(owner, ownerGeneration);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, knowledge };
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, arrangedReviews, arrangedReviewEvents, knowledge };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2419,6 +2420,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         podcasts: normalizeSnapshotPodcasts(snapshot.podcasts),
         // Always written, even as an empty array, so every new snapshot carries
         // the field and restore can tell "old snapshot" from "plans cleared".
+        arrangedReviews: snapshot.arrangedReviews, arrangedReviewEvents: snapshot.arrangedReviewEvents,
         dailyPlans: snapshot.dailyPlans,
         reviewCoach: stripPrivateExportFields(snapshot.reviewCoach),
       },
@@ -2437,9 +2439,9 @@ export class DexieStorageAdapter implements StorageAdapter {
     const includeKnowledge = true;
     const snapshot = await db.transaction(
       "r",
-      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
+      [db.entries, db.blocks, db.templates, db.tags, db.studySessions, db.settings, db.assets, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.knowledgePodcasts, db.dailyPlans, db.arrangedReviews, db.arrangedReviewEvents, db.arrangedReviewDrafts, ...reviewCoachFormalTables(db), ...(includeKnowledge ? knowledgeTables(db) : [])],
       async () => {
-        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans] = await Promise.all([
+        const [entries, blocks, templates, tags, studySessions, settings, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, arrangedReviews, arrangedReviewEvents] = await Promise.all([
           db.entries.toArray(),
           db.blocks.toArray(),
           db.templates.toArray(),
@@ -2453,11 +2455,11 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.recordReviewDayStats.toArray(),
           db.knowledgePodcasts.toArray(),
           getReviewCoachFormalSnapshot(db),
-          db.dailyPlans.toArray(),
+          db.dailyPlans.toArray(), db.arrangedReviews.toArray(), db.arrangedReviewEvents.toArray(),
         ]);
         const knowledge = includeKnowledge ? await capturePortableKnowledge(db, owner) : undefined;
         assertKnowledgeOwner(owner, ownerGeneration);
-        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, knowledge };
+        return { entries, blocks, templates, tags, studySessions, settings: settings ?? DEFAULT_SETTINGS, assets, recordDrafts, recordReviews, recordReviewLogs, recordReviewDayStats, podcasts, reviewCoach, dailyPlans, arrangedReviews, arrangedReviewEvents, knowledge };
       },
     );
     const { blocks: cleanedBlocks, templates: cleanedTemplates, drafts: cleanedDrafts, backupAssets } =
@@ -2502,6 +2504,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         studySessions: snapshot.studySessions,
         settings: sanitizeSettingsForExport(ensureSettingsSubjects({ ...snapshot.settings, schemaVersion: 4 }, cleanedBlocks.filter((block): block is RecordBlock => block.type === "record"))),
         podcasts: normalizeSnapshotPodcasts(snapshot.podcasts),
+        arrangedReviews: snapshot.arrangedReviews, arrangedReviewEvents: snapshot.arrangedReviewEvents,
         dailyPlans: snapshot.dailyPlans,
         reviewCoach: stripPrivateExportFields(snapshot.reviewCoach),
       },
@@ -2549,6 +2552,11 @@ export class DexieStorageAdapter implements StorageAdapter {
      * every plan on this device as a side effect of restoring an old backup.
      * Absent therefore means "leave what is here alone".
      */
+    const hasArrangedReviews = snapshot.payload.arrangedReviews !== undefined || snapshot.payload.arrangedReviewEvents !== undefined;
+    if (hasArrangedReviews) {
+      if (!Array.isArray(snapshot.payload.arrangedReviews) || !Array.isArray(snapshot.payload.arrangedReviewEvents)) throw new Error("复习轮次备份不完整。");
+      validateArrangedReviews(snapshot.payload.arrangedReviews, snapshot.payload.arrangedReviewEvents);
+    }
     const hasDailyPlansField = Array.isArray(snapshot.payload.dailyPlans);
     assertSnapshotIntegrity(restoredBlocks, restoredTemplates, snapshot.assets, restoredDrafts);
     const restoredRecords = restoredBlocks.filter((block): block is RecordBlock => block.type === "record");
@@ -2576,7 +2584,7 @@ export class DexieStorageAdapter implements StorageAdapter {
         db.reviewAnnotationDrafts,
         db.voiceRecallSessions,
         db.voiceRecallTurns,
-        db.dailyPlans,
+        db.dailyPlans, db.arrangedReviews, db.arrangedReviewEvents, db.arrangedReviewDrafts,
         ...reviewCoachRestoreTables(db),
         ...(knowledge ? knowledgeTables(db) : []),
       ],
@@ -2625,6 +2633,7 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.assets.clear(),
           db.knowledgePodcasts.clear(),
           ...(hasDailyPlansField ? [db.dailyPlans.clear()] : []),
+          ...(hasArrangedReviews ? [db.arrangedReviews.clear(), db.arrangedReviewEvents.clear()] : []),
           ...(options.clearLocalAnnotationDrafts ? [db.reviewAnnotationDrafts.clear()] : []),
           ...(options.clearLocalVoiceRecallTransient ? [db.voiceRecallSessions.clear(), db.voiceRecallTurns.clear()] : []),
         ]);
@@ -2644,6 +2653,7 @@ export class DexieStorageAdapter implements StorageAdapter {
           db.knowledgePodcasts.bulkPut(podcastsToRestore),
           db.cloudSyncMutation.put({ id: "local", epoch: (currentEpoch?.epoch ?? 0) + 1 }),
           ...(hasDailyPlansField ? [db.dailyPlans.bulkPut(snapshot.payload.dailyPlans!)] : []),
+          ...(hasArrangedReviews ? [db.arrangedReviews.bulkPut(snapshot.payload.arrangedReviews!), db.arrangedReviewEvents.bulkPut(snapshot.payload.arrangedReviewEvents!)] : []),
         ]);
         // Last, so any failure here rolls the data replacement back as well.
         if (options.commitCloudState) await options.commitCloudState();
@@ -2685,6 +2695,11 @@ export class DexieStorageAdapter implements StorageAdapter {
     validateReviewCoachFormalSnapshot(restoredReviewCoach, new Set(restoredRecords.map((record) => record.id)));
     // Same absent-vs-empty rule as `restoreSnapshotData`: an old stream has no
     // `dailyPlans` key, and clearing on that basis would delete local plans.
+    const hasArrangedReviews = snapshot.payload.arrangedReviews !== undefined || snapshot.payload.arrangedReviewEvents !== undefined;
+    if (hasArrangedReviews) {
+      if (!Array.isArray(snapshot.payload.arrangedReviews) || !Array.isArray(snapshot.payload.arrangedReviewEvents)) throw new Error("复习轮次备份不完整。");
+      validateArrangedReviews(snapshot.payload.arrangedReviews, snapshot.payload.arrangedReviewEvents);
+    }
     const hasDailyPlansField = Array.isArray(snapshot.payload.dailyPlans);
     const sessionId = newId();
     const total = snapshot.assets.length;
@@ -2712,7 +2727,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       await markCloudSyncMutation();
       await db.transaction(
         "rw",
-        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, ...reviewCoachRestoreTables(db), ...(knowledge ? knowledgeTables(db) : [])],
+        [db.entries, db.blocks, db.templates, db.recordDrafts, db.recordReviews, db.recordReviewLogs, db.recordReviewDayStats, db.mistakes, db.tags, db.reviews, db.studySessions, db.settings, db.assets, db.knowledgePodcasts, db.restoreStagingAssets, db.reviewAnnotationDrafts, db.voiceRecallSessions, db.voiceRecallTurns, db.dailyPlans, db.arrangedReviews, db.arrangedReviewEvents, db.arrangedReviewDrafts, ...reviewCoachRestoreTables(db), ...(knowledge ? knowledgeTables(db) : [])],
         async () => {
           assertKnowledgeOwner(owner, ownerGeneration);
           if (knowledge) await restorePortableKnowledge(db, knowledge, owner, restoreSessionId);
@@ -2727,6 +2742,7 @@ export class DexieStorageAdapter implements StorageAdapter {
             // would make the "old stream" case invisible at a glance.
             await db.dailyPlans.clear();
           }
+          if (hasArrangedReviews) { await db.arrangedReviews.clear(); await db.arrangedReviewEvents.clear(); await db.arrangedReviews.bulkPut(snapshot.payload.arrangedReviews!); await db.arrangedReviewEvents.bulkPut(snapshot.payload.arrangedReviewEvents!); }
           await restoreReviewCoachFormalSnapshot(db, restoredReviewCoach);
           await Promise.all([
             db.entries.bulkPut(snapshot.payload.entries),

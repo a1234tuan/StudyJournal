@@ -34,6 +34,8 @@ export type DecisionBlockFeedbackSource = "review" | "manual" | "legacy-manual-l
 
 export interface DecisionBlockFeedback extends CoachBaseEntity, VersionedDecisionBlockRef {
   reviewLogId?: CoachEntityId;
+  originRoundId?: string;
+  originRoundTitle?: string;
   comment: string;
   includeInAnalysis: boolean;
   source: DecisionBlockFeedbackSource;

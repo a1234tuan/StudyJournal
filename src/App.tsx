@@ -1,3 +1,4 @@
+import { ReviewHub, loadReviewHubRoute, type ReviewHubRoute } from "./features/arrangedReview/ReviewHub";
 import { KnowledgeLibraryPage } from "./features/knowledgeLibrary/KnowledgeLibraryPage";
 import { DailyPlanReminder } from "./components/DailyPlanReminder";
 import { useDailyPlanReminder } from "./hooks/useDailyPlanReminder";
@@ -280,6 +281,7 @@ export const App = () => {
   const [backToast, setBackToast] = useState("");
   const [reviewToast, setReviewToast] = useState("");
   const [reviewCoachOpen, setReviewCoachOpen] = useState(false);
+  const [reviewHubRoute, setReviewHubRoute] = useState<ReviewHubRoute>(loadReviewHubRoute);
   const [reviewCoachSessionId, setReviewCoachSessionId] = useState<string | null>(null);
   const [reviewRuntime, setReviewRuntime] = useState(() => createReviewSessionRuntime(todayISO()));
   const [desktopMigrationOpen, setDesktopMigrationOpen] = useState(false);
@@ -942,6 +944,8 @@ export const App = () => {
 
     void CapacitorApp.addListener("backButton", () => {
       if (planReminder.open) { planReminder.dismiss(); return; }
+      const overlayBack = new Event("review-card-overlay-back", { cancelable: true }); window.dispatchEvent(overlayBack); if (overlayBack.defaultPrevented) return;
+      if (activeTab === "review" && reviewHubRoute.mode === "arranged" && !tabMemory.review.recordId && !tabMemory.review.voiceRecall && (reviewHubRoute.roundId || reviewHubRoute.recordId)) { const event = new Event("arranged-review-back", { cancelable: true }); window.dispatchEvent(event); if (event.defaultPrevented) return; }
       if (activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !tabMemory.more.recordId) {
         const event = new Event("knowledge-back", { cancelable: true });
         window.dispatchEvent(event);
@@ -1004,7 +1008,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, planReminder.open, planReminder.dismiss, popCurrentTabDepth, subjectPickerOpen, switchTab, tabMemory, updateNavigationState]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, planReminder.open, planReminder.dismiss, reviewHubRoute, popCurrentTabDepth, subjectPickerOpen, switchTab, tabMemory, updateNavigationState]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -1302,7 +1306,7 @@ export const App = () => {
 
     switch (tabMemory.more.subRoute) {
       case "knowledge":
-        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} subjects={app.subjects} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onCreateRecord={async subject => {
+        return <KnowledgeLibraryPage onOpenArrangedReview={id => { setReviewHubRoute({ mode: "arranged", roundId: id }); switchTab("review"); }} records={app.recordBlocks} assets={app.assets} subjects={app.subjects} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onCreateRecord={async subject => {
           const created = await app.createRecordBlock(todayISO(), subject);
           newlyCreatedRecordIdsRef.current.add(created.id);
           return created;
@@ -1875,7 +1879,7 @@ export const App = () => {
         ) : currentRecord ? (
           renderRecordPage(currentRecord, tabMemory.review.highlightAssetId)
         ) : (
-          <ReviewPage
+          <ReviewHub route={reviewHubRoute} onRoute={setReviewHubRoute}><ReviewPage
             records={app.blocks.filter((block): block is RecordBlock => block.type === "record" && !block.deletedAt)}
             dueReviews={app.dueRecordReviews}
             reviewStates={app.recordReviews}
@@ -1982,6 +1986,8 @@ export const App = () => {
             reviewCoachRecords={app.recordBlocks}
             reviewCoachProvider={getCurrentAiProvider(settings.ai)}
             onRunDeepAnalysis={app.runDeepAnalysis}
+            onAnalyzeCardFeedback={app.analyzeCardFeedback}
+            onOpenCardTask={id => { openAdaptiveTask(id); setReviewCoachOpen(false); }}
             onResumeDeepAnalysis={app.resumeDeepAnalysis}
             onSwitchAdaptiveTask={app.switchAdaptiveTask}
             onDeferAdaptiveTask={app.deferAdaptiveTask}
@@ -1991,7 +1997,7 @@ export const App = () => {
             onEnsureAdaptiveCurrentTask={app.ensureAdaptiveCurrentTask}
             coachOpen={reviewCoachOpen}
             onCoachOpenChange={handleReviewCoachOpenChange}
-          />
+          /></ReviewHub>
         );
       case "more":
         return renderMorePage();
@@ -2005,15 +2011,16 @@ export const App = () => {
     && tabMemory.more.podcastScreen === "scope";
   const reviewScopePickerActive = activeTab === "review"
     && tabMemory.review.voiceRecall?.screen === "scope";
+  const arrangedCardActive = activeTab === "review" && reviewHubRoute.mode === "arranged" && Boolean(reviewHubRoute.recordId);
   const immersiveTaskActive = Boolean(
+    arrangedCardActive ||
     (currentRecord && currentRecordState.recordEditing)
-    || (activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
+    || (activeTab === "review" && reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
     || (activeTab === "review" && Boolean(tabMemory.review.voiceRecall)),
   );
   const desktopReviewSessionActive = activeTab === "review"
-    && tabMemory.review.mode === "queue"
-    && Boolean(tabMemory.review.currentRecordId)
+    && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && Boolean(tabMemory.review.currentRecordId)))
     && !currentRecord
     && !tabMemory.review.voiceRecall
     && !reviewCoachOpen
@@ -2027,8 +2034,9 @@ export const App = () => {
     podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
     desktopReviewSessionActive ? "desktop-review-session" : "",
+    arrangedCardActive ? "arranged-review-card-active" : "",
     activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !currentRecord && tabMemory.more.knowledge?.sidebarCollapsed ? "knowledge-sidebar-collapsed" : "",
-    activeTab === "review" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId ? "review-session-active" : "",
+    activeTab === "review" && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)) ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()
     && getTabDepth(activeTab, tabMemory) > 0

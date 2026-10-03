@@ -256,6 +256,7 @@ export const importNativeStreamableBackupAndRestore = async (
         // written before daily plans existed still means "leave local plans
         // alone" instead of "this device has none". See backup.ts `zipToSnapshot`.
         ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
+        ...(data.arrangedReviews !== undefined || data.arrangedReviewEvents !== undefined ? { arrangedReviews: data.arrangedReviews, arrangedReviewEvents: data.arrangedReviewEvents } : {}),
       },
       assets: data.assets ?? [],
       recordDrafts: data.recordDrafts ?? [],

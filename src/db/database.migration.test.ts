@@ -2,7 +2,7 @@ import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { KNOWLEDGE_SCHEMA_VERSION } from "../features/knowledgeLibrary/schema";
+import { DATABASE_SCHEMA_VERSION as KNOWLEDGE_SCHEMA_VERSION } from "./database";
 import {
   openLearningCoachMigrationFixture,
   schema11MigrationFixture,

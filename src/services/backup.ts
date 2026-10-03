@@ -368,6 +368,7 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
        * keeps the distinction intact end to end.
        */
       ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
+      ...(data.arrangedReviews !== undefined || data.arrangedReviewEvents !== undefined ? { arrangedReviews: data.arrangedReviews, arrangedReviewEvents: data.arrangedReviewEvents } : {}),
       reviewCoach: data.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },
     assets,

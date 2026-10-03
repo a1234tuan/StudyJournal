@@ -28,7 +28,10 @@ test("keeps unsubmitted feedback and its analysis choice across sidebar navigati
   await openReview(page);
   const feedback = page.getByRole("textbox", { name: "复习重点 1 本次评论" });
   await feedback.fill("未评分的评论不能因为切换导航丢失");
-  await page.getByRole("checkbox", { name: "加入待分析", exact: true }).uncheck();
+  const analysisChoice = page.getByRole("checkbox", { name: "加入待分析", exact: true });
+  await expect(analysisChoice).toBeChecked();
+  await analysisChoice.click();
+  await expect(analysisChoice).not.toBeChecked();
   const progress = await page.locator(".review-progress-meta").innerText();
   await nav(page, "日志").click();
   await expect(page.locator(".review-record-card")).toHaveCount(0);

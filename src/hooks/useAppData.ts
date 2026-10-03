@@ -503,16 +503,11 @@ export const useAppData = () => {
       const result = feedback && feedback.length > 0
         ? await storage.rateRecordReview(recordId, rating, undefined, undefined, feedback)
         : await storage.rateRecordReview(recordId, rating);
-      const feedbackIds = result?.undoToken.decisionBlockFeedbackIds ?? [];
-      feedbackIds.forEach((feedbackId) => localInterpretationFeedbackIdsRef.current.add(feedbackId));
       await refresh();
-      if (result) {
-        await markAutoBackupDirty("record-review-rate");
-        if (feedbackIds.length > 0) void runFeedbackInterpretations(feedbackIds).catch(() => undefined);
-      }
+      if (result) await markAutoBackupDirty("record-review-rate");
       return result;
     },
-    [refresh, runFeedbackInterpretations],
+    [refresh],
   );
 
   const analysisPlanningBlocks = useMemo(() => buildAnalysisPlanningBlocks({
@@ -601,6 +596,24 @@ export const useAppData = () => {
     return executeDeepAnalysis(freshBlocks, allowCrossBlockSupport, newId());
   }), [assets, executeDeepAnalysis, recordBlocks, recordReviewLogs, refresh, runExclusiveDeepAnalysis]);
 
+  const analyzeCardFeedback = useCallback((recordId: string, feedbackIds: readonly string[]) => {
+    if (deepAnalysisInFlightRef.current) return Promise.reject(new Error("已有分析正在进行，请稍后重试。"));
+    return runExclusiveDeepAnalysis(async () => {
+    if (typeof document !== "undefined" && (!navigator.onLine || document.visibilityState !== "visible")) throw new ActionableError("请保持应用在前台并联网后分析。");
+    const currentSettings = await storage.getSettings();
+    const provider = getCurrentAiProvider(currentSettings.ai);
+    if (!provider || !(await storage.getAiSecret?.(provider.id))?.apiKey?.trim()) throw new ActionableError("请先在设置中配置 AI 供应商和 API Key。");
+    await runFeedbackInterpretations(feedbackIds, true);
+    const snapshot = await reviewCoachRepository.getFormalSnapshot();
+    const allowed = new Set(feedbackIds);
+    if (snapshot.decisionBlockFeedback.some(item => allowed.has(item.id) && item.recordId !== recordId)) throw new Error("分析范围不匹配。");
+    const openBlocks = new Set(snapshot.adaptiveReviewTasks.filter(task => !task.deletedAt && ["waiting", "current", "in-progress", "deferred"].includes(task.status)).map(task => task.decisionBlockId + ":" + task.contentVersion));
+    const freshRecords = await storage.listBlocks();
+    const blocks = buildAnalysisPlanningBlocks({ snapshot, records: freshRecords.filter((record): record is RecordBlock => record.type === "record" && !record.deletedAt), assets, onlyFeedbackIds: allowed }).filter(block => block.recordId === recordId && !openBlocks.has(block.decisionBlockId + ":" + block.contentVersion));
+    if (blocks.length) await executeDeepAnalysis(blocks, false, newId());
+    await refresh();
+  }); }, [assets, executeDeepAnalysis, refresh, runExclusiveDeepAnalysis, runFeedbackInterpretations]);
+
   const resumeDeepAnalysis = useCallback((batchId: string) => runExclusiveDeepAnalysis(async () => {
     const freshSnapshot = await reviewCoachRepository.getFormalSnapshot();
     const batch = freshSnapshot.analysisBatches.find((item) => item.id === batchId && ["confirmed", "running"].includes(item.status));
@@ -613,6 +626,7 @@ export const useAppData = () => {
       assets,
       reviewLogs: recordReviewLogs,
       includeQueueItemIds: queueIds,
+      onlyFeedbackIds: new Set(batch.inputRefs.map(item => item.feedbackId)),
     }).filter((item) => blockIds.has(item.decisionBlockId));
     return executeDeepAnalysis(
       planningBlocks,
@@ -1313,6 +1327,7 @@ export const useAppData = () => {
     confirmFeedbackInterpretation,
     retryFeedbackInterpretation,
     runDeepAnalysis,
+    analyzeCardFeedback,
     resumeDeepAnalysis,
     switchAdaptiveTask,
     deferAdaptiveTask,

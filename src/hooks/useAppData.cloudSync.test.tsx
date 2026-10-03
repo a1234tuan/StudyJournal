@@ -98,6 +98,26 @@ beforeEach(() => {
 });
 
 describe("useAppData cloud sync write boundaries", () => {
+  it("keeps an existing open task and never deep-plans a replacement from card feedback", async () => {
+    snapshot.decisionBlockFeedback = [{ ...coachTestFeedback, includeInAnalysis: true }];
+    mocks.buildAnalysisPlanningBlocks.mockReturnValue([{ decisionBlockId: coachTestTask.decisionBlockId, contentVersion: coachTestTask.contentVersion, recordId: coachTestTask.recordId }]);
+    const { result } = renderHook(() => useAppData());
+    await waitFor(() => expect(result.current.initialized).toBe(true));
+    await act(async () => { await result.current.analyzeCardFeedback(coachTestTask.recordId, [coachTestFeedback.id]); });
+    expect(mocks.buildAnalysisPlanningBlocks).toHaveBeenCalledWith(expect.objectContaining({ onlyFeedbackIds: new Set([coachTestFeedback.id]) }));
+    expect(mocks.analyzeFeedback).not.toHaveBeenCalled();
+    expect(mocks.switchCurrentTask).not.toHaveBeenCalled();
+  });
+  it("limits card deep planning to matching records", async () => {
+    snapshot.adaptiveReviewTasks = [];
+    snapshot.decisionBlockFeedback = [{ ...coachTestFeedback, includeInAnalysis: true }];
+    mocks.buildAnalysisPlanningBlocks.mockReturnValue([{ decisionBlockId: coachTestBlock.id, contentVersion: 1, recordId: coachTestTask.recordId }, { decisionBlockId: "unrelated", contentVersion: 1, recordId: "another-record" }]);
+    const { result } = renderHook(() => useAppData());
+    await waitFor(() => expect(result.current.initialized).toBe(true));
+    await act(async () => { await result.current.analyzeCardFeedback(coachTestTask.recordId, [coachTestFeedback.id]); });
+    expect(mocks.analyzeFeedback).toHaveBeenCalledWith(expect.objectContaining({ blocks: [expect.objectContaining({ recordId: coachTestTask.recordId })], allowCrossBlockSupport: false }));
+  });
+
   it("does not automatically interpret feedback received on startup, refresh or reconnect", async () => {
     snapshot.decisionBlockFeedback = [{ ...coachTestFeedback, includeInAnalysis: true }];
     snapshot.analysisQueueItems = [{ ...coachTestQueueItem, status: "eligible", consumedAt: undefined, batchId: undefined }];
@@ -110,7 +130,7 @@ describe("useAppData cloud sync write boundaries", () => {
     expect(mocks.processFeedbackInterpretationQueue).toHaveBeenCalledTimes(1);
   });
 
-  it("automatically interprets newly submitted local feedback and resumes it after reconnect", async () => {
+  it("keeps newly submitted feedback pending until an explicit analysis action", async () => {
     const { result } = renderHook(() => useAppData());
     await waitFor(() => expect(result.current.initialized).toBe(true));
     mocks.listBlocks.mockResolvedValue([{ id: coachTestTask.recordId, type: "record", contentHtml: '<record-decision-block data-decision-block-id="decision-block-1" data-content-version="1"><p>test material</p></record-decision-block>', assets: [], formulas: [], tags: [] }]);
@@ -126,7 +146,9 @@ describe("useAppData cloud sync write boundaries", () => {
     expect(mocks.processFeedbackInterpretationQueue).not.toHaveBeenCalled();
     online.mockReturnValue(true);
     await act(async () => { window.dispatchEvent(new Event("online")); });
-    await waitFor(() => expect(mocks.processFeedbackInterpretationQueue).toHaveBeenCalledTimes(1));
+    expect(mocks.processFeedbackInterpretationQueue).not.toHaveBeenCalled();
+    await act(async () => { await result.current.retryFeedbackInterpretation(coachTestFeedback.id); });
+    expect(mocks.processFeedbackInterpretationQueue).toHaveBeenCalledTimes(1);
     online.mockRestore();
   });
   it("refreshes due verifications without selecting a task on startup or remount", async () => {

@@ -23,7 +23,7 @@ it("MIG-09: schema26 upgrade adds local bookkeeping without rewriting existing c
   await legacy.table("blocks").put({ id: "keep-log", title: "不改日志" });
   legacy.close();
   const database = new StudyJournalDatabase(name); databases.push(database); await database.open();
-  expect(database.verno).toBe(27);
+  expect(database.verno).toBe(28);
   expect(await database.knowledgeLibraries.get("local")).toEqual(library);
   expect((await database.knowledgeCommands.toArray())[0].command).toEqual(command);
   expect(await database.blocks.get("keep-log")).toMatchObject({ title: "不改日志" });

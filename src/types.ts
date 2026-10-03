@@ -856,6 +856,8 @@ export interface BackupPayload {
    * Our own writers always emit it (even as `[]`).
    */
   dailyPlans?: DailyPlan[];
+  arrangedReviews?: import("./features/arrangedReview/domain").ArrangedReview[];
+  arrangedReviewEvents?: import("./features/arrangedReview/domain").ArrangedReviewEvent[];
   reviewCoach?: ReviewCoachFormalSnapshot;
   /**
    * Per-asset byte declarations for a newly written complete backup.
@@ -909,6 +911,8 @@ export type CloudSyncEntityType =
   | "review-state"
   | "review-day-stat"
   | "daily-plan"
+  | "arranged-review"
+  | "arranged-review-event"
   | "decision-block"
   | "decision-block-archive"
   | "decision-block-feedback"

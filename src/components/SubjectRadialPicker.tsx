@@ -48,7 +48,8 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
     if (!open) return;
     setFocusedIndex((current) => clampIndex(current, activeSubjects.length));
     setDragX(0);
-    setAllOpen(workspace && (window.matchMedia?.("(min-width: 921px)").matches ?? false));
+    const compactViewport = window.matchMedia?.("(max-width: 600px)").matches ?? false;
+    setAllOpen((workspace && !compactViewport) || (compactViewport && activeSubjects.length <= SLOT_COUNT));
     setError("");
   }, [activeSubjects.length, open, workspace]);
 
@@ -116,7 +117,7 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
   return (
     <MotionPresence present={open} variant="popover" className={"subject-orbit-overlay" + (workspace ? " subject-orbit-workspace" : "")} role="presentation">
       <button type="button" className="subject-orbit-backdrop" onClick={onClose} aria-label="关闭学科选择" />
-      <section className={`subject-orbit-dialog${allOpen ? " show-all" : ""}`} role="dialog" aria-modal="true" aria-labelledby="subject-orbit-title">
+      <section className={`subject-orbit-dialog${allOpen ? " show-all" : ""}${allOpen && activeSubjects.length <= SLOT_COUNT ? " compact-all" : ""}`} role="dialog" aria-modal="true" aria-labelledby="subject-orbit-title">
         {activeSubjects.length === 0 ? (
           <div className="subject-orbit-empty">
             <h2 id="subject-orbit-title">暂无可用学科</h2>

@@ -1,0 +1,40 @@
+import Dexie from "dexie";
+import { indexedDB, IDBKeyRange } from "fake-indexeddb";
+import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../../db/defaults";
+import type { RecordBlock } from "../../types";
+vi.mock("../../services/autoBackupService", () => ({ markAutoBackupDirty: vi.fn(), setAutoBackupSuspended: vi.fn() }));
+Dexie.dependencies.indexedDB = indexedDB; Dexie.dependencies.IDBKeyRange = IDBKeyRange;
+const { db } = await import("../../db/database");
+const { storage } = await import("../../services/storageAdapter");
+const { ArrangedReviewRepository } = await import("./repository");
+const { exportCloudSync, materializeCloudSyncSnapshot, mergeCloudSyncEntities } = await import("../../services/cloudSyncModel");
+const { arrangedItemStatus } = await import("./domain");
+const { snapshotToZip, zipToSnapshot } = await import("../../services/backup");
+const stamp = "2026-10-03T00:00:00.000Z";
+const record: RecordBlock = { id: "backup-record", type: "record", date: "2026-10-03", subject: "数学", title: "备份复习", contentHtml: "<p>内容</p>", assets: [], formulas: [], tags: [], mistakeRefs: [], order: 0, createdAt: stamp, updatedAt: stamp };
+beforeEach(async () => { await db.open(); await db.settings.put(DEFAULT_SETTINGS); await db.blocks.put(record); const repository = new ArrangedReviewRepository(db); const round = await repository.create("备份", [{ recordId: record.id, title: record.title, source: "节点", contentRevision: stamp }], "round"); await repository.rate(round.id, record.id, "good", stamp, [], "score"); });
+afterEach(async () => { await db.delete(); });
+describe("arranged review backup and restore", () => {
+  it("distinguishes an explicit empty restore from an incomplete new-format payload", async () => { const snapshot = await storage.createSnapshot(); delete snapshot.payload.arrangedReviews; await expect(storage.restoreSnapshot(snapshot)).rejects.toThrow("复习轮次备份不完整"); expect(await db.arrangedReviews.count()).toBe(1); snapshot.payload.arrangedReviews = []; snapshot.payload.arrangedReviewEvents = []; await storage.restoreSnapshot(snapshot); expect(await db.arrangedReviews.count()).toBe(0); expect(await db.arrangedReviewEvents.count()).toBe(0); });
+  it("applies merged device scores without clearing local drafts or normal schedule", async () => {
+    const snapshot = await storage.createSnapshot();
+    const original = snapshot.payload.arrangedReviewEvents![0];
+    const deviceA = await exportCloudSync(snapshot);
+    const deviceB = await exportCloudSync({ ...snapshot, payload: { ...snapshot.payload, arrangedReviewEvents: [{ ...original, id: "device-b-score", rating: "forgot" }] } });
+    const merged = materializeCloudSyncSnapshot(mergeCloudSyncEntities(deviceA.entities, deviceB.entities), [], new Map());
+    await db.arrangedReviewDrafts.put({ id: "round:" + record.id, contentRevision: stamp, comments: {}, updatedAt: stamp });
+    await storage.restoreCloudSyncSnapshot(merged);
+    const events = await db.arrangedReviewEvents.toArray();
+    expect(arrangedItemStatus(events, "round", record.id).conflict).toBe(true);
+    expect(await db.arrangedReviewDrafts.count()).toBe(1);
+    expect(await db.recordReviewLogs.count()).toBe(0);
+    await new ArrangedReviewRepository(db).rate("round", record.id, "good", stamp, events.map(event => event.id));
+    expect(arrangedItemStatus(await db.arrangedReviewEvents.toArray(), "round", record.id).rating).toBe("good");
+  });
+
+  it("exports ordinary and streamable snapshots with the same formal review facts", async () => { const snapshot = await storage.createSnapshot(); const stream = await storage.createStreamableSnapshot(); expect(snapshot.payload.arrangedReviews).toHaveLength(1); expect(snapshot.payload.arrangedReviewEvents).toHaveLength(1); expect(stream.payload.arrangedReviews).toEqual(snapshot.payload.arrangedReviews); expect(stream.payload.arrangedReviewEvents).toEqual(snapshot.payload.arrangedReviewEvents); });
+  it("round trips the zip and restores review facts", async () => { const snapshot = await storage.createSnapshot(); const archive = await snapshotToZip(snapshot); const restored = await zipToSnapshot(new File([archive], "review.zip", { type: "application/zip" })); expect(restored.payload.arrangedReviews).toEqual(snapshot.payload.arrangedReviews); expect(restored.payload.arrangedReviewEvents).toEqual(snapshot.payload.arrangedReviewEvents); await db.arrangedReviews.clear(); await db.arrangedReviewEvents.clear(); await storage.restoreSnapshot(restored); expect(await db.arrangedReviews.count()).toBe(1); expect(await db.arrangedReviewEvents.count()).toBe(1); });
+  it("preserves existing rounds when restoring a legacy snapshot without the fields", async () => { const snapshot = await storage.createSnapshot(); delete snapshot.payload.arrangedReviews; delete snapshot.payload.arrangedReviewEvents; await storage.restoreSnapshot(snapshot); expect(await db.arrangedReviews.count()).toBe(1); expect(await db.arrangedReviewEvents.count()).toBe(1); });
+  it("rejects invalid round dependencies before overwriting local records", async () => { const snapshot = await storage.createSnapshot(); snapshot.payload.arrangedReviewEvents![0].parents = ["missing"]; await expect(storage.restoreSnapshot(snapshot)).rejects.toThrow(); expect(await db.arrangedReviews.count()).toBe(1); expect((await db.blocks.get(record.id) as RecordBlock)?.title).toBe(record.title); });
+});

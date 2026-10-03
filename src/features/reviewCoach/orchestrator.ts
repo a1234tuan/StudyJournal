@@ -126,6 +126,8 @@ export class ReviewCoachBudgetExhaustedError extends Error {
 }
 
 export interface RecordDecisionBlockFeedbackInput {
+  originRoundId?: string;
+  originRoundTitle?: string;
   decisionBlockId: string;
   recordId: string;
   contentVersion: number;
@@ -322,6 +324,7 @@ export class ReviewCoachOrchestrator {
       recordId: input.recordId,
       contentVersion: input.contentVersion,
       reviewLogId: input.reviewLogId,
+      ...(input.originRoundId ? { originRoundId: input.originRoundId, originRoundTitle: input.originRoundTitle } : {}),
       comment,
       includeInAnalysis: input.includeInAnalysis,
       source: input.source ?? "review",

@@ -2,7 +2,7 @@ import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { KNOWLEDGE_SCHEMA_VERSION } from "../knowledgeLibrary/schema";
+import { DATABASE_SCHEMA_VERSION as KNOWLEDGE_SCHEMA_VERSION } from "../../db/database";
 import { StudyJournalDatabase } from "../../db/database";
 import { REVIEW_COACH_SCHEMA_VERSION } from "../../db/reviewCoachSchema";
 import { getReviewCoachFormalSnapshot, reviewCoachFormalTables, reviewCoachRestoreTables } from "./repository";

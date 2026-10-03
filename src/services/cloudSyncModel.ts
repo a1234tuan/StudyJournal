@@ -316,6 +316,8 @@ export const exportCloudSync = async (snapshot: StorageSnapshot): Promise<CloudS
     // Plans carry `deletedAt` through the ordinary entity path, exactly like
     // blocks: the tombstone is what lets a deletion reach the other devices.
     mapEntities("daily-plan", snapshot.payload.dailyPlans ?? []),
+    mapEntities("arranged-review", snapshot.payload.arrangedReviews ?? []),
+    mapEntities("arranged-review-event", snapshot.payload.arrangedReviewEvents ?? []),
     mapEntities("draft", snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []),
     mapEntities("tag", snapshot.payload.tags),
     mapEntities("study-session", snapshot.payload.studySessions),
@@ -459,6 +461,8 @@ export const materializeCloudSyncSnapshot = (
       studySessions: values<StudySession>(entities, "study-session"),
       settings,
       dailyPlans: values<DailyPlan>(entities, "daily-plan"),
+      arrangedReviews: values<import("../features/arrangedReview/domain").ArrangedReview>(entities, "arranged-review"),
+      arrangedReviewEvents: values<import("../features/arrangedReview/domain").ArrangedReviewEvent>(entities, "arranged-review-event"),
       reviewCoach,
     },
     assets: assetValues,

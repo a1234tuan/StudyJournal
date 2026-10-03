@@ -23,6 +23,7 @@ export interface ReviewSessionRuntimeState {
   undoHistory: ReviewUndoEntry[];
   feedbackDrafts?: Record<string, Record<string, DecisionBlockFeedbackDraft>>;
   showAllDue?: boolean;
+  selectedQueueIds?: string[];
 }
 
 export const createReviewSessionRuntime = (day: string): ReviewSessionRuntimeState => ({

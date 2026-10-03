@@ -60,7 +60,7 @@ export function KnowledgeResults({ state, records, assets, workspaceId, mode, se
   }, [state, records, assets, deferredQuery, all, workspaceId, subject, tag, from, to, body, hidden, mode, invalidDates, options.records]);
   const chips = [subject && { text: subject, clear: () => setSubject("") }, tag && { text: tag, clear: () => setTag("") }, (from || to) && { text: year || (from || "不限") + " 至 " + (to || "不限"), clear: () => { setFrom(""); setTo(""); setYear(""); } }].filter((chip): chip is { text: string; clear: () => void } => Boolean(chip));
   const resetKey = [deferredQuery, subject, tag, from, to, body, all, hidden].join("|");
-  return <section className="knowledge-search" aria-label={mode === "picker" ? "选择日志" : "知识检索"}>
+  return <section className={"knowledge-search" + (!hits.length ? " knowledge-search-empty" : "")} aria-label={mode === "picker" ? "选择日志" : "知识检索"}>
     <div className="knowledge-search-bar"><Search size={18} aria-hidden="true" /><input autoFocus aria-label={mode === "picker" ? "查找要关联的日志" : "检索知识库"} placeholder={mode === "search" ? "搜索专题、节点或日志" : "搜索日志"} value={query} onChange={event => setQuery(event.target.value)} /><button type="button" className="subtle-button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}><SlidersHorizontal size={17} />筛选{chips.length ? " · " + chips.length : ""}</button></div>
     {filtersOpen && <div className="knowledge-filters">
       <label>学科<select aria-label="按学科筛选" value={subject} onChange={event => setSubject(event.target.value)}><option value="">全部学科</option>{options.subjects.map(item => <option key={item}>{item}</option>)}</select></label>

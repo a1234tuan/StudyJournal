@@ -76,6 +76,9 @@ export interface RestoreStagingAsset {
 }
 
 export class StudyJournalDatabase extends Dexie {
+  arrangedReviews!: Table<import("../features/arrangedReview/domain").ArrangedReview, string>;
+  arrangedReviewEvents!: Table<import("../features/arrangedReview/domain").ArrangedReviewEvent, string>;
+  arrangedReviewDrafts!: Table<import("../features/arrangedReview/domain").ArrangedReviewDraft, string>;
   knowledgeSyncBindings!: Table<KnowledgeSyncBinding, string>;
   knowledgeLibraryMigrations!: Table<KnowledgeLibraryMigration, [string, string]>;
   knowledgeImportSessions!: Table<KnowledgeImportProgress, [string, string]>;
@@ -373,7 +376,9 @@ export class StudyJournalDatabase extends Dexie {
     this.version(25).stores(KNOWLEDGE_SCHEMA_25_STORES);
     this.version(26).stores(KNOWLEDGE_SCHEMA_26_STORES).upgrade(migrateKnowledgeImports);
     this.version(27).stores(KNOWLEDGE_SCHEMA_27_STORES);
+    this.version(28).stores({ arrangedReviews: "id, updatedAt", arrangedReviewEvents: "id, roundId, [roundId+recordId]", arrangedReviewDrafts: "id" });
   }
 }
 
+export const DATABASE_SCHEMA_VERSION = 28;
 export const db = new StudyJournalDatabase();

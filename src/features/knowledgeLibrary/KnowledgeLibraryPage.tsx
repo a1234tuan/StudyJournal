@@ -1,3 +1,5 @@
+import { ReviewSelection } from "../arrangedReview/ReviewSelection";
+import { arrangedReviewRepository } from "../arrangedReview/repository";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getDefaultKnowledgeLibrary } from "./defaultLibrary";
@@ -12,7 +14,7 @@ import { SubjectRadialPicker } from "../../components/SubjectRadialPicker";
 import { createKnowledgeRecordAttempt } from "./createRecord";
 import { prepareKnowledgeImport, resumeKnowledgeImport } from "./import";
 import { knowledgeRepository, synchronizeBoundKnowledge } from "./runtime";
-import { currentKnowledgeOwner, knowledgeContextGeneration } from "./context";
+import { assertKnowledgeOwner, currentKnowledgeOwner, knowledgeContextGeneration } from "./context";
 import type { StoredKnowledgeCommand } from "./schema";
 import { createKnowledgeEntity, editKnowledgeEntity } from "./commands";
 import { emptyKnowledgeState, ROOT_NODE, type KnowledgeCommand, type KnowledgeContext, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeLibraryMigration, type KnowledgePosition, type KnowledgeState, type KnowledgeSyncFailure, type KnowledgeUnit } from "./domain";
@@ -28,10 +30,10 @@ import { knowledgeUiError, type KnowledgeFailure } from "./uiError";
 import { orderBetween } from "./orderKey";
 import { exportKnowledgeOutline } from "../../services/knowledgeExportService";
 import "./knowledgeLibrary.css";
-interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; subjects?: readonly SubjectConfig[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void; onCreateRecord: (subject: string) => Promise<RecordBlock>; onOpenNewRecord: (record: RecordBlock) => void; onManageSubjects: () => void }
+interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; subjects?: readonly SubjectConfig[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void; onCreateRecord: (subject: string) => Promise<RecordBlock>; onOpenNewRecord: (record: RecordBlock) => void; onManageSubjects: () => void; onOpenArrangedReview?: (id: string) => void }
 interface Editing { command: KnowledgeCommand; unit: KnowledgeUnit; text: string; context: KnowledgeContext; label: string; isNew: boolean; afterId?: string }
 type Panel = "search" | "unorganized" | "manage" | "trash" | "conflicts" | "menu" | "node-menu";
-export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navigation, onNavigation, onBack, onOpenRecord, onCreateRecord, onOpenNewRecord, onManageSubjects }: Props) => {
+export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navigation, onNavigation, onBack, onOpenRecord, onCreateRecord, onOpenNewRecord, onManageSubjects, onOpenArrangedReview }: Props) => {
   const layerState = usePageTransitionLayerState();
   const [libraries, setLibraries] = useState<KnowledgeLibrary[]>([]);
   const [migrations, setMigrations] = useState<KnowledgeLibraryMigration[]>([]);
@@ -49,6 +51,8 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
   const [failure, setFailure] = useState<KnowledgeFailure>();
   const [editing, setEditing] = useState<Editing>();
   const [picker, setPicker] = useState(false);
+  const [arranging, setArranging] = useState(false);
+  useEffect(() => { if (!arranging) return; const close = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); setArranging(false); }; window.addEventListener("knowledge-back", close, true); window.addEventListener("knowledge-owner-changed", close); return () => { window.removeEventListener("knowledge-back", close, true); window.removeEventListener("knowledge-owner-changed", close); }; }, [arranging]);
   const [recordAttempt, setRecordAttempt] = useState<ReturnType<typeof createKnowledgeRecordAttempt>>();
   const recordAttemptRef = useRef<ReturnType<typeof createKnowledgeRecordAttempt>>();
   const [moveNode, setMoveNode] = useState<string>();
@@ -382,8 +386,9 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
       <button className="knowledge-icon" aria-label="返回" onClick={goBack}><ArrowLeft size={20} /></button>
       <h1>{workspace ? knowledgeLabel(state, workspace) : "知识库"}</h1>
       {workspace && <div className="knowledge-view-switch" role="group" aria-label="专题视图"><button disabled={Boolean(editing)} aria-pressed={navigation.view === "outline"} onClick={() => onNavigation({ view: "outline" })}><List size={16} />大纲</button><button disabled={Boolean(editing)} aria-pressed={navigation.view === "map"} onClick={() => onNavigation({ view: "map" })}><GitBranch size={16} />导图</button></div>}
-      <div className="knowledge-header-actions"><button className="knowledge-icon" disabled={Boolean(editing)} aria-label="查找" onClick={() => openPanel("search")}><Search size={20} /></button><button className="knowledge-icon" disabled={Boolean(editing)} aria-label="更多知识库操作" onClick={() => openPanel("menu")}><MoreHorizontal size={22} /></button></div>
+      <div className="knowledge-header-actions">{onOpenArrangedReview && <button className="secondary-button" disabled={Boolean(editing) || loading || busy} onClick={() => setArranging(true)}>安排复习</button>}<button className="knowledge-icon" disabled={Boolean(editing)} aria-label="查找" onClick={() => openPanel("search")}><Search size={20} /></button><button className="knowledge-icon" disabled={Boolean(editing)} aria-label="更多知识库操作" onClick={() => openPanel("menu")}><MoreHorizontal size={22} /></button></div>
     </header>
+    {arranging && createPortal(<div className="arranged-modal-backdrop"><ReviewSelection state={state} records={records} initialNodeId={selected?.id} initialWorkspaceId={workspace?.id} onClose={() => setArranging(false)} onCreate={async (title, items, operationId) => { const owner = currentKnowledgeOwner(); const generation = knowledgeContextGeneration(); const round = await arrangedReviewRepository.create(title, items, operationId, () => assertKnowledgeOwner(owner, generation)); setArranging(false); onOpenArrangedReview?.(round.id); }} /></div>, document.body)}
     {!modal && feedback}
     {(preservedSource || copyingTarget) && <section className="knowledge-feedback" role="status"><p>{copyingTarget ? "正在整理知识库，本机原内容保留。若整理中断，点击云同步即可继续。" : "这里是纳入同步前保留的旧内容，只能查看。日常编辑请返回知识库。"}</p>{preservedSource && <button onClick={() => onNavigation({ libraryId: undefined, recoveryView: false, workspaceId: undefined, selectedNodeId: undefined }, true)}>返回同步中的知识库</button>}</section>}
     {syncFailure && <section className="knowledge-feedback" role="alert"><p>云提交校验失败，知识库同步已停止。本机内容和待同步操作仍保留。</p><p>最后可信序号：{syncFailure.cursor} · 失败类别：{syncFailure.code} · 连续失败：{syncFailure.attempts} 次</p><button disabled={busy} onClick={() => void run(async () => { const result = await synchronizeBoundKnowledge({ onProgress: setMessage }); setMessage(result.message); }, undefined, "重试知识同步")}>重新校验</button><button disabled={busy} onClick={() => void run(async () => { if (!context) return; const id = await knowledgeRepository.preserveSyncFailure(context); afterClose(() => onNavigation({ libraryId: id, recoveryView: true, workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); })}>保全并打开本机副本</button><p>可通过“备份与恢复”导出当前内容。持续失败需管理员从可信备份修复云端历史，应用不会跳过坏提交或新建替代云库。</p></section>}

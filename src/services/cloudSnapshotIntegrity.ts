@@ -36,6 +36,8 @@ const RUNTIME_ENTITY_TYPES = [
   "review-state",
   "review-day-stat",
   "daily-plan",
+  "arranged-review",
+  "arranged-review-event",
   "decision-block",
   "decision-block-archive",
   "decision-block-feedback",
