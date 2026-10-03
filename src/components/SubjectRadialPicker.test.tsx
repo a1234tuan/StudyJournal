@@ -28,6 +28,21 @@ const renderPicker = (onSelect = vi.fn(async () => undefined), items = subjects)
 };
 
 describe("SubjectRadialPicker", () => {
+  it("does not capture a simple pointer press before it becomes a drag", () => {
+    renderPicker();
+    const track = screen.getByRole("group", { name: "沿圆弧滑动选择学科" });
+    const capture = vi.fn();
+    track.setPointerCapture = capture;
+    fireEvent.pointerDown(track, { pointerId: 1, clientX: 120 });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("shows a readable retry error in the workspace subject list", async () => {
+    render(<SubjectRadialPicker workspace open subjects={subjects} onClose={vi.fn()} onManageSubjects={vi.fn()} onSelect={vi.fn().mockRejectedValue(new Error("reference failed"))} errorMessage={() => "日志已创建，但尚未关联。重试不会重复创建。"} />);
+    fireEvent.click(screen.getByRole("button", { name: "创建数学日志" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("日志已创建，但尚未关联");
+    expect(screen.getByRole("alert").closest(".subject-orbit-all")).not.toBeNull();
+  });
   it("opens without creating and requires a focused-subject confirmation", async () => {
     const onSelect = vi.fn(async () => undefined);
     renderPicker(onSelect);

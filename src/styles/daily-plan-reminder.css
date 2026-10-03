@@ -1,0 +1,36 @@
+.daily-plan-reminder { box-sizing: border-box; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin: auto; padding: 30px 32px 22px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 22px; background: var(--color-surface); color: var(--color-text); text-align: center; box-shadow: var(--shadow-floating); }
+.daily-plan-reminder[open] { animation: daily-plan-reminder-enter 200ms ease-out; }
+.daily-plan-reminder::backdrop { background: color-mix(in srgb, #101c19 42%, transparent); backdrop-filter: blur(4px); }
+.daily-plan-reminder-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: var(--color-muted); background: transparent; cursor: pointer; }
+.daily-plan-reminder-close:hover { background: var(--color-surface-muted); }
+.daily-plan-reminder-date { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 3px; font-size: .74rem; color: var(--color-muted); letter-spacing: .04em; }
+.daily-plan-reminder-date > span { width: 5px; height: 5px; border-radius: 50%; background: var(--color-primary); }
+.daily-plan-reminder-art { position: relative; width: 244px; max-width: 100%; height: 184px; margin: 19px auto 8px; }
+.daily-plan-reminder-orbit { position: absolute; width: 164px; height: 164px; border-radius: 50%; background: var(--color-primary-soft); top: 9px; left: 36px; }
+.daily-plan-reminder-paper { position: absolute; top: 16px; left: 44px; width: 118px; height: 142px; padding: 16px 16px 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-raised); transform: rotate(-8deg); box-shadow: 0 7px 0 color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.daily-plan-reminder-binding { position: absolute; inset: -7px 22px auto; display: flex; justify-content: space-between; }
+.daily-plan-reminder-binding i { width: 5px; height: 14px; background: var(--color-primary); border-radius: 4px; }
+.daily-plan-reminder-paper-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--color-border); color: var(--color-primary); }
+.daily-plan-reminder-paper-heading span { font-size: 8px; letter-spacing: .1em; font-weight: 600; }
+.daily-plan-reminder-paper-heading strong { font-size: 27px; line-height: 1; font-weight: 500; }
+.daily-plan-reminder-line { display: flex; align-items: center; gap: 9px; margin: 10px 0; }
+.daily-plan-reminder-line > span { display: grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-primary); }
+.daily-plan-reminder-line > i { height: 3px; width: 58px; border-radius: 2px; background: var(--color-surface-muted); }
+.daily-plan-reminder-line:last-child > i { width: 38px; }
+.daily-plan-reminder-note { position: absolute; right: 8px; bottom: 15px; padding: 14px 12px; border-radius: 4px 13px 13px 13px; background: var(--color-accent-soft); color: var(--color-accent-strong); transform: rotate(7deg); font-size: 12px; line-height: 1.8; letter-spacing: .1em; text-align: left; }
+.daily-plan-reminder-eyebrow { margin: 0 0 9px; color: var(--color-primary); font-size: .72rem; letter-spacing: .15em; }
+.daily-plan-reminder h2 { margin: 0; font-size: clamp(20px, 5.3vw, 24px); font-weight: 650; line-height: 1.5; letter-spacing: -.03em; }
+#daily-plan-reminder-description { max-width: 25em; margin: 12px auto 24px; color: var(--color-muted); font-size: .86rem; line-height: 1.85; text-wrap: balance; }
+#daily-plan-reminder-description strong { color: var(--color-text); }
+.daily-plan-reminder-actions { display: grid; gap: 7px; }
+.daily-plan-reminder-actions .primary-button { width: 100%; min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 12px; border-radius: 10px; }
+.daily-plan-reminder-later { padding: 10px; min-height: 44px; border: 0; background: transparent; color: var(--color-muted); font: inherit; font-size: .86rem; cursor: pointer; border-radius: 8px; }
+.daily-plan-reminder-later:hover { background: var(--color-surface-muted); }
+.daily-plan-reminder button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.daily-plan-reminder-footnote { margin: 10px 0 0; color: var(--color-muted); font-size: .65rem; line-height: 1.6; }
+:root[data-theme="dark"] .daily-plan-reminder-actions .primary-button { background: var(--color-primary); color: var(--color-bg); }
+@media (prefers-color-scheme: dark) { :root[data-theme="system"] .daily-plan-reminder-actions .primary-button { background: var(--color-primary); color: var(--color-bg); } }
+@keyframes daily-plan-reminder-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 420px) { .daily-plan-reminder { padding: 28px 24px 20px; } }
+@media (max-height: 650px) { .daily-plan-reminder-art { height: 158px; margin-top: 8px; transform: scale(.88); margin-bottom: -6px; } .daily-plan-reminder { padding-top: 22px; } }
+@media (prefers-reduced-motion: reduce) { .daily-plan-reminder[open] { animation: none; } }

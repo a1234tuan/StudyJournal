@@ -11,6 +11,8 @@ interface SubjectRadialPickerProps {
   onClose: () => void;
   onSelect: (subject: Subject) => Promise<void>;
   onManageSubjects: () => void;
+  errorMessage?: (error: unknown) => string;
+  workspace?: boolean;
 }
 
 const SLOT_COUNT = 5;
@@ -29,7 +31,7 @@ const shortLabel = (name: string, distance: number) => {
   return characters.length > limit ? `${characters.slice(0, limit).join("")}…` : name;
 };
 
-export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManageSubjects }: SubjectRadialPickerProps) => {
+export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManageSubjects, errorMessage, workspace = false }: SubjectRadialPickerProps) => {
   const activeSubjects = useMemo(
     () => subjects.filter((subject) => !subject.archivedAt).sort((a, b) => a.order - b.order),
     [subjects],
@@ -46,9 +48,9 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
     if (!open) return;
     setFocusedIndex((current) => clampIndex(current, activeSubjects.length));
     setDragX(0);
-    setAllOpen(false);
+    setAllOpen(workspace && (window.matchMedia?.("(min-width: 921px)").matches ?? false));
     setError("");
-  }, [activeSubjects.length, open]);
+  }, [activeSubjects.length, open, workspace]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -75,7 +77,8 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
     try {
       await onSelect(subject);
     } catch (caught) {
-      setError(formatUiError(caught, "generic"));
+      setError(errorMessage ? errorMessage(caught) : formatUiError(caught, "generic"));
+      if (workspace) setAllOpen(true);
     } finally {
       setBusy(false);
     }
@@ -85,13 +88,15 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
     if (busy || activeSubjects.length <= 1) return;
     dragStartRef.current = event.clientX;
     movedRef.current = false;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (dragStartRef.current === null) return;
     const nextDragX = Math.max(-108, Math.min(108, event.clientX - dragStartRef.current));
-    if (Math.abs(nextDragX) > 6) movedRef.current = true;
+    if (Math.abs(nextDragX) > 6) {
+      movedRef.current = true;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
     setDragX(nextDragX);
   };
 
@@ -109,7 +114,7 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
   const focusedSubject = activeSubjects[focusedIndex];
 
   return (
-    <MotionPresence present={open} variant="popover" className="subject-orbit-overlay" role="presentation">
+    <MotionPresence present={open} variant="popover" className={"subject-orbit-overlay" + (workspace ? " subject-orbit-workspace" : "")} role="presentation">
       <button type="button" className="subject-orbit-backdrop" onClick={onClose} aria-label="关闭学科选择" />
       <section className={`subject-orbit-dialog${allOpen ? " show-all" : ""}`} role="dialog" aria-modal="true" aria-labelledby="subject-orbit-title">
         {activeSubjects.length === 0 ? (
@@ -125,9 +130,10 @@ export const SubjectRadialPicker = ({ open, subjects, onClose, onSelect, onManag
               <div><p className="eyebrow">全部学科</p><h2 id="subject-orbit-title">选择后创建日志</h2></div>
               <button type="button" className="icon-button" onClick={onClose} aria-label="关闭学科选择"><X size={19} /></button>
             </header>
+            {error && <p className="subject-orbit-error" role="alert">{error}</p>}
             <div className="subject-orbit-all-list" role="list">
               {activeSubjects.map((subject) => (
-                <button key={subject.id} type="button" onClick={() => void choose(subject.name)} disabled={busy} title={subject.name}>
+                <button key={subject.id} type="button" onClick={() => void choose(subject.name)} disabled={busy} title={subject.name} aria-label={workspace ? "创建" + subject.name + "日志" : undefined}>
                   <span aria-hidden="true">{Array.from(subject.name)[0]}</span><strong>{subject.name}</strong><Plus size={17} />
                 </button>
               ))}

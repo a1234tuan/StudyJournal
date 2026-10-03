@@ -151,6 +151,8 @@
   color: var(--color-danger) !important;
   font-weight: 650;
 }
+:root[data-theme="dark"] .subject-orbit-workspace .subject-orbit-item.focused { color: var(--color-bg); }
+@media (prefers-color-scheme: dark) { :root[data-theme="system"] .subject-orbit-workspace .subject-orbit-item.focused { color: var(--color-bg); } }
 
 .bottom-nav-create svg { transition: transform 180ms ease; }
 .bottom-nav-create[aria-expanded="true"] svg { transform: rotate(45deg); }
@@ -190,6 +192,8 @@
 }
 
 .subject-orbit-all { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+.subject-orbit-all:has(.subject-orbit-error) { grid-template-rows: auto auto minmax(0, 1fr); }
+.subject-orbit-all > .subject-orbit-error { margin: 0; font-size: .8rem; line-height: 1.65; }
 .subject-orbit-all header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .subject-orbit-all header p, .subject-orbit-all header h2 { margin: 0; }
 .subject-orbit-all header h2 { font-size: 1.05rem; }
@@ -207,6 +211,11 @@
 
 @media (min-width: 921px) {
   .subject-orbit-overlay { display: none; }
+  .subject-orbit-overlay.subject-orbit-workspace { display: grid; }
+  .subject-orbit-workspace .subject-orbit-dialog { top: 50%; bottom: auto; transform: translate(-50%, -50%); }
+  .subject-orbit-workspace .subject-orbit-dialog.show-all { border-radius: 16px; height: auto; max-height: calc(100dvh - 64px); }
+  .subject-orbit-workspace .subject-orbit-all { height: auto; }
+  .subject-orbit-workspace .subject-orbit-all-list { max-height: min(340px, calc(100dvh - 260px)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

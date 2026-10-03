@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getDefaultKnowledgeLibrary } from "./defaultLibrary";
 import { knowledgeHash } from "./canonical";
 import { KnowledgeRecoveryPanel } from "./KnowledgeRecoveryPanel";
 import { liveQuery } from "dexie";
-import { ArrowLeft, BookOpen, ChevronRight, Download, GitBranch, List, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, Download, FilePlus2, GitBranch, List, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, X } from "lucide-react";
 import type { Asset, RecordBlock, SubjectConfig } from "../../types";
 import { db } from "../../db/database";
 import { usePageTransitionLayerState } from "../../components/PageTransition";
+import { SubjectRadialPicker } from "../../components/SubjectRadialPicker";
+import { createKnowledgeRecordAttempt } from "./createRecord";
 import { prepareKnowledgeImport, resumeKnowledgeImport } from "./import";
 import { knowledgeRepository, synchronizeBoundKnowledge } from "./runtime";
 import { currentKnowledgeOwner, knowledgeContextGeneration } from "./context";
@@ -25,10 +28,10 @@ import { knowledgeUiError, type KnowledgeFailure } from "./uiError";
 import { orderBetween } from "./orderKey";
 import { exportKnowledgeOutline } from "../../services/knowledgeExportService";
 import "./knowledgeLibrary.css";
-interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; subjects?: readonly SubjectConfig[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void }
+interface Props { records: readonly RecordBlock[]; assets?: readonly Asset[]; subjects?: readonly SubjectConfig[]; navigation: KnowledgeNavigation; onNavigation: (patch: Partial<KnowledgeNavigation>, push?: boolean) => void; onBack: () => void; onOpenRecord: (record: RecordBlock) => void; onCreateRecord: (subject: string) => Promise<RecordBlock>; onOpenNewRecord: (record: RecordBlock) => void; onManageSubjects: () => void }
 interface Editing { command: KnowledgeCommand; unit: KnowledgeUnit; text: string; context: KnowledgeContext; label: string; isNew: boolean; afterId?: string }
 type Panel = "search" | "unorganized" | "manage" | "trash" | "conflicts" | "menu" | "node-menu";
-export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navigation, onNavigation, onBack, onOpenRecord }: Props) => {
+export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navigation, onNavigation, onBack, onOpenRecord, onCreateRecord, onOpenNewRecord, onManageSubjects }: Props) => {
   const layerState = usePageTransitionLayerState();
   const [libraries, setLibraries] = useState<KnowledgeLibrary[]>([]);
   const [migrations, setMigrations] = useState<KnowledgeLibraryMigration[]>([]);
@@ -46,6 +49,8 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
   const [failure, setFailure] = useState<KnowledgeFailure>();
   const [editing, setEditing] = useState<Editing>();
   const [picker, setPicker] = useState(false);
+  const [recordAttempt, setRecordAttempt] = useState<ReturnType<typeof createKnowledgeRecordAttempt>>();
+  const recordAttemptRef = useRef<ReturnType<typeof createKnowledgeRecordAttempt>>();
   const [moveNode, setMoveNode] = useState<string>();
   const [moveTarget, setMoveTarget] = useState(ROOT_NODE);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
@@ -81,7 +86,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
   const inlineEditing = Boolean(editing && editing.unit === "title" && editing.command.entity.kind === "node");
   const modal = Boolean((editing && !inlineEditing) || picker || moveNode || panel || topicTitle !== undefined);
   const afterClose = (action: () => void) => { setPanel(undefined); setPicker(false); setMoveNode(undefined); setTopicTitle(undefined); setNextAction(() => action); };
-  useEffect(() => { if (nextAction && !modal && !editing && !busy && layerState !== "exiting") { setNextAction(undefined); nextAction(); } }, [nextAction, modal, editing, busy, layerState]);
+  useEffect(() => { if (nextAction && !modal && !recordAttempt && !editing && !busy && layerState !== "exiting") { setNextAction(undefined); nextAction(); } }, [nextAction, modal, recordAttempt, editing, busy, layerState]);
   const errorText = (error: unknown, stage?: string) => { const next = knowledgeUiError(error, stage); setFailure(next); return next.message; };
   const run = async (task: () => Promise<void>, success?: string, stage?: string) => {
     if (busyRef.current) return;
@@ -143,6 +148,10 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
   }, [creatingTopic]);
   const dismiss = () => {
     if (busyRef.current) return;
+    if (recordAttempt) {
+      if (recordAttempt.record) setMessage("日志已创建但尚未关联，可在日志列表中找到，或重新选择后添加。");
+      recordAttemptRef.current = undefined; setRecordAttempt(undefined); setDetailOpen(true); return;
+    }
     if (editing) {
       if (editing.isNew) { if (editing.text.trim() && !window.confirm("放弃尚未保存的新节点？")) return; setEditing(undefined); }
       else { void run(async () => { await knowledgeRepository.saveDraft(editing.context, { ...editing.context, id: editing.command.entity.id + ":" + editing.unit, entityId: editing.command.entity.id, unit: editing.unit, text: editing.text, expectedRevision: editing.command.expected[editing.unit] ?? null }); setEditing(undefined); }); return; }
@@ -190,7 +199,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
     if (layerState === "exiting") return;
     const back = (event: Event) => {
       if (event.defaultPrevented) return;
-      if (modal || editing || busyRef.current) { event.preventDefault(); dismiss(); }
+      if (modal || recordAttempt || editing || busyRef.current) { event.preventDefault(); dismiss(); }
       else if (navigation.recordPreviewId) { event.preventDefault(); closeRecordPreview(); }
       else if (detailOpen) { event.preventDefault(); setDetailOpen(false); }
       else if (selected) { event.preventDefault(); onNavigation({ selectedNodeId: undefined }); }
@@ -201,11 +210,11 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && !modal && !editing) { event.preventDefault(); openPanel("search"); }
       if (event.key === "Escape" && !modal) { const attempt = new Event("knowledge-back", { cancelable: true }); window.dispatchEvent(attempt); if (attempt.defaultPrevented) event.preventDefault(); }
     };
-    const leave = (event: Event) => { if (editing || modal || busyRef.current) { event.preventDefault(); if (!busyRef.current) dismiss(); } };
+    const leave = (event: Event) => { if (editing || modal || recordAttempt || busyRef.current) { event.preventDefault(); if (!busyRef.current) dismiss(); } };
     const unload = (event: BeforeUnloadEvent) => { if (editing || topicTitle || busyRef.current) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("knowledge-back", back); window.addEventListener("keydown", keyboard); window.addEventListener("knowledge-navigation-leave", leave); window.addEventListener("beforeunload", unload);
     return () => { window.removeEventListener("knowledge-back", back); window.removeEventListener("keydown", keyboard); window.removeEventListener("knowledge-navigation-leave", leave); window.removeEventListener("beforeunload", unload); };
-  }, [modal, selected, editing, detailOpen, navigation.recordPreviewId, topicTitle, busy, workspace, layerState]);
+  }, [modal, recordAttempt, selected, editing, detailOpen, navigation.recordPreviewId, topicTitle, busy, workspace, layerState]);
   useEffect(() => {
     if (!editing || editing.isNew) return;
     const timer = window.setTimeout(() => { void knowledgeRepository.saveDraft(editing.context, { ...editing.context, id: editing.command.entity.id + ":" + editing.unit, entityId: editing.command.entity.id, unit: editing.unit, text: editing.text, expectedRevision: editing.command.expected[editing.unit] ?? null }).catch(error => errorText(error, "草稿保存")); }, 400);
@@ -290,6 +299,32 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
     onNavigation({ collapsed: navigation.collapsed.filter(nodeId => nodeId !== parentNodeId) });
   };
   const openPicker = () => { setDetailOpen(false); setPanel(undefined); setSelectedRecords(navigation.addRecordId ? [navigation.addRecordId] : []); setPicker(true); };
+  const beginNewRecord = () => {
+    if (!context || !selected || selected.kind !== "node" || busyRef.current || recoveryProtected || preservedSource || copyingTarget) return;
+    const attempt = createKnowledgeRecordAttempt(knowledgeRepository, { context: { ...context }, workspaceId: selected.workspaceId, nodeId: selected.id }, onCreateRecord);
+    afterClose(() => { recordAttemptRef.current = attempt; setRecordAttempt(attempt); });
+  };
+  const createAndLinkRecord = async (subject: string) => {
+    const attempt = recordAttemptRef.current;
+    if (!attempt || busyRef.current) return;
+    busyRef.current = true; setBusy(true);
+    try {
+      const record = await attempt.create(subject);
+      if (recordAttemptRef.current !== attempt) return;
+      recordAttemptRef.current = undefined; setRecordAttempt(undefined);
+      onNavigation({ detailsOpen: true, recordPreviewId: undefined, addRecordId: undefined });
+      setNextAction(() => () => onOpenNewRecord(record));
+    } catch (error) {
+      const failure = knowledgeUiError(error);
+      const detail = failure.category === "unknown" ? "暂时无法保存，请重试。（诊断编号 " + failure.diagnosticId + "）" : failure.message;
+      throw new Error(attempt.record ? "日志已创建，但尚未关联。点击科目重试，不会重复创建。" + (failure.category === "unknown" ? "（诊断编号 " + failure.diagnosticId + "）" : detail) : detail);
+    } finally { busyRef.current = false; setBusy(false); }
+  };
+  useEffect(() => {
+    const changed = () => { recordAttemptRef.current = undefined; setRecordAttempt(undefined); };
+    window.addEventListener("knowledge-owner-changed", changed);
+    return () => window.removeEventListener("knowledge-owner-changed", changed);
+  }, []);
   const addReferences = async () => {
     if (!context) return;
     let destination = picker ? selected : state.entities[targetNode];
@@ -365,6 +400,13 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
       {modal && feedback}
       {topicForm}
       {editingForm}
+      {picker && <div className="knowledge-create-record">
+        <p>将添加到：<strong>{workspace && knowledgeLabel(state, workspace)} / {selected && knowledgeLabel(state, selected)}</strong></p>
+        <button type="button" disabled={busy || !selected || recoveryProtected || preservedSource || copyingTarget} onClick={beginNewRecord}>
+          <span className="knowledge-create-record-icon"><FilePlus2 size={24} /></span><span><strong>新建空白日志</strong><small>创建后自动关联到此节点</small></span><ChevronRight size={18} />
+        </button>
+        <span className="knowledge-create-record-divider">或选择已有日志</span>
+      </div>}
       {(panel === "search" || panel === "unorganized" || picker) && <KnowledgeResults key={picker ? "picker" : panel} state={state} records={records} assets={assets} workspaceId={workspace?.id} mode={picker ? "picker" : panel === "unorganized" ? "unorganized" : "search"} selected={selectedRecords} onSelected={setSelectedRecords} onOpen={openHit} footer={resultFooter} />}
       {moveNode && <><label>移动到<select value={moveTarget} onChange={event => setMoveTarget(event.target.value)}><option value={ROOT_NODE}>专题根分支</option>{Object.values(state.entities).filter(entity => entity.kind === "node" && entity.workspaceId === workspace?.id && entity.id !== moveNode && isKnowledgeVisible(state, entity)).map(entity => <option key={entity.id} value={entity.id}>{knowledgeLabel(state, entity)}</option>)}</select></label><div className="knowledge-dialog-actions"><button className="primary-button" disabled={busy} onClick={() => void run(() => move(moveNode, moveTarget))}>确认移动</button></div></>}
        {panel === "menu" && <div className="knowledge-menu">{workspace && <><button onClick={() => { afterClose(() => onNavigation({ workspaceId: undefined, selectedNodeId: undefined, scrollTop: 0 }, true)); }}>全部专题</button><button onClick={() => void run(() => beginEdit(workspace, "title"))}>重命名专题</button><button onClick={() => void run(() => beginEdit(workspace, "note"))}>专题说明</button></>}<button disabled={busy || !library || recoveryProtected || preservedSource || copyingTarget} onClick={() => void run(exportCurrentKnowledge, undefined, "导出知识库") }><Download size={16} />导出知识库</button><button onClick={() => openPanel("unorganized")}>未加入专题的日志</button><button onClick={() => openPanel("manage")}>知识库管理</button><button onClick={() => openPanel("trash")}>回收站与归档</button>{!!(conflicts.length + blockedCommands.length) && <button onClick={() => openPanel("conflicts")}>需要处理 · {conflicts.length + blockedCommands.length}</button>}{workspace && <details><summary>归档与删除</summary><button onClick={() => void run(async () => { if (context && window.confirm("归档此专题？可从归档列表恢复。")) { await knowledgeRepository.execute(context, editKnowledgeEntity(scope, state, workspace, "archived", true)); setPanel(undefined); onNavigation({ workspaceId: undefined, selectedNodeId: undefined }); } })}>归档专题</button><button onClick={() => void changeLifecycle(workspace, true)}>删除专题</button></details>}</div>}
@@ -379,5 +421,6 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
       {panel === "trash" && <section className="knowledge-panel knowledge-trash-panel"><p>{library?.cloudLibraryId ? "删除、恢复和归档状态会随全局云同步保留，因此账号同步库不支持单方面永久清空。" : "清空仅删除已删除条目及其下级节点和引用，不删除归档专题或原日志。"}</p><div className="knowledge-toolbar"><strong>已删除 · {trashEntities.length}</strong><button className="danger" type="button" disabled={busy || !trashEntities.length || Boolean(library?.cloudLibraryId)} onClick={purgeTrash}>清空本机回收站</button></div>{!trashEntities.length ? <p className="knowledge-muted">回收站为空。</p> : trashEntities.map(entity => <div className="knowledge-trash-row" key={entity.id}><span>{knowledgeLabel(state, entity)}</span><button disabled={busy} onClick={() => void changeLifecycle(entity, false)}>恢复条目</button></div>)}{!!archivedEntities.length && <><h3>已归档 · {archivedEntities.length}</h3>{archivedEntities.map(entity => <div className="knowledge-trash-row" key={entity.id}><span>{knowledgeLabel(state, entity)}</span><button disabled={busy} onClick={() => void run(async () => { if (context) await knowledgeRepository.execute(context, editKnowledgeEntity(scope, state, entity, "archived", false)); })}>取消归档</button></div>)}</>}</section>}
       {panel === "conflicts" && <><section className="knowledge-panel"><h2>待处理版本</h2><p>每批最多选择同一字段的四个候选；未选版本不会被处理。结构冲突本批保留当前位置，另行显式移动。</p>{candidates.slice(candidatePage * 20, candidatePage * 20 + 20).map(candidate => { const revision = state.revisions[candidate.revisionId]; return <label className="knowledge-candidate" key={candidate.id}><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={event => { if (event.target.checked) { if (selectedCandidates.length >= 4 || (selectedCandidates.length && state.candidates[selectedCandidates[0]]?.groupId !== candidate.groupId)) { setMessage("每批请选择同一字段的最多四份候选。"); return; } if (!selectedCandidates.length && context) { const group = state.groups[candidate.groupId]; const current = state.revisions[group.currentRevisionId]; const command = editKnowledgeEntity(scope, state, state.entities[current.entityId], current.unit, revisionValue(state, current.id)!); command.operation = "resolve"; command.resolution = { unit: current.unit, setToken: group.setToken, generation: group.generation, candidates: [] }; setResolutionBaseline({ command, context }); setResolutionText(String(revisionValue(state, current.id) ?? "")); } setSelectedCandidates([...selectedCandidates, candidate.id]); } else setSelectedCandidates(selectedCandidates.filter(id => id !== candidate.id)); }} /><span>{knowledgeLabel(state, state.entities[revision.entityId])} · {revision.unit}{revision.unit === "position" && !state.entities[(revisionValue(state, revision.id) as KnowledgePosition).parentNodeId] && (revisionValue(state, revision.id) as KnowledgePosition).parentNodeId !== ROOT_NODE && <small>原候选目标已清理；可保留当前位置，再显式移动。</small>}<pre>{typeof revision.value === "string" ? revision.value : JSON.stringify(revision.value)}</pre></span></label>; })}<textarea aria-label="冲突合并结果" placeholder="填写本批合并后的文字；可以保留原文或合并说明" value={resolutionText} onChange={event => setResolutionText(event.target.value)} /><div className="knowledge-toolbar"><button className="primary-button" disabled={busy || !selectedCandidates.length} onClick={() => void run(resolveSelected, "本批已处理；未选候选仍保留")}>处理所选候选</button><button disabled={candidatePage === 0} onClick={() => setCandidatePage(candidatePage - 1)}>上一页</button><button disabled={(candidatePage + 1) * 20 >= candidates.length} onClick={() => setCandidatePage(candidatePage + 1)}>下一页</button><span>剩余 {candidates.length} 份候选</span></div></section>{!!blockedCommands.length && <section className="knowledge-panel"><h2>需要重新确认的本机操作</h2><p>同步基线已变化。这些操作未覆盖云端，原始意图与版本保留；其他条目仍可同步。</p>{blockedCommands.map(entry => <article key={entry.id}><p>{entry.command.operation} · {knowledgeLabel(state, state.entities[entry.command.entity.id])}</p><pre>{JSON.stringify(entry.command.changes)}</pre><button disabled={busy} onClick={() => { const entity = state.entities[entry.command.entity.id]; if (entity) { onNavigation({ workspaceId: entity.workspaceId, selectedNodeId: entity.kind === "node" ? entity.id : entity.nodeId || undefined }, true); setPanel("trash"); setMessage("请基于当前内容重新确认恢复或冲突处理。旧意图保留，未自动重试。"); } }}>查看当前内容</button>{entry.recoveryLibraryId && libraries.some(item => item.id === entry.recoveryLibraryId) && <button disabled={busy} onClick={() => afterClose(() => onNavigation({ libraryId: entry.recoveryLibraryId, recoveryView: true, workspaceId: undefined, selectedNodeId: undefined }, true))}>打开完整保留副本</button>}<button disabled={busy || !context || !libraries.some(item => item.id === entry.recoveryLibraryId)} onClick={() => void run(async () => { if (context && window.confirm("确认不再自动重试此旧操作？完整本机内容仍在保留副本中，可另存回账号库。")) await knowledgeRepository.acknowledgeBlocked(context, entry.id, entry.hash); })}>确认保留副本并结束旧操作</button>{!libraries.some(item => item.id === entry.recoveryLibraryId) && <><p role="alert">保留副本已缺失，未采纳内容无法保证恢复。请先检查备份。</p><button disabled={busy || !context} onClick={() => void run(async () => { if (context && window.confirm("保留副本已缺失。放弃此旧操作后，不保证能够恢复其未采纳内容。仍要逐条放弃吗？")) await knowledgeRepository.abandonMissingRecovery(context, entry.id, entry.hash); })}>放弃此待确认操作</button></>}</article>)}</section>}</>}
     </dialog>
+    {createPortal(<SubjectRadialPicker workspace open={Boolean(recordAttempt)} subjects={subjects} onClose={dismiss} onSelect={createAndLinkRecord} onManageSubjects={() => { recordAttemptRef.current = undefined; setRecordAttempt(undefined); afterClose(onManageSubjects); }} errorMessage={error => error instanceof Error ? error.message : "创建失败，请重试。"} />, document.body)}
   </main>;
 };

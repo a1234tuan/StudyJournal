@@ -1,4 +1,8 @@
 import { KnowledgeLibraryPage } from "./features/knowledgeLibrary/KnowledgeLibraryPage";
+import { DailyPlanReminder } from "./components/DailyPlanReminder";
+import { useDailyPlanReminder } from "./hooks/useDailyPlanReminder";
+import { useCloudSyncStore } from "./services/cloudSyncStore";
+import { useRestoreInProgress } from "./services/restoreLockService";
 import { currentKnowledgeOwner } from "./features/knowledgeLibrary/context";
 import { initialKnowledgeNavigation, patchKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
 import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
@@ -300,6 +304,12 @@ export const App = () => {
   // stable callbacks instead of the freshly-built `app` object literal.
   const { reclaimPlanRecords: reclaimPlanRecordsFromApp, initialized: appInitialized } = app;
   const keyboardVisible = useKeyboardVisible();
+  const restoreLocked = useRestoreInProgress();
+  const cloudStatus = useCloudSyncStore();
+  const planReminder = useDailyPlanReminder(app.initialized && Boolean(app.settings)
+    && activeTab === "today" && getTabDepth(activeTab, tabMemory) === 0 && !tabMemory.today.adaptiveTaskId
+    && !desktopMigrationOpen && !subjectPickerOpen && !reviewCoachOpen && !keyboardVisible
+    && !restoreLocked && !cloudStatus.busy && !cloudStatus.conflict);
 
   const handleReviewCoachOpenChange = useCallback((open: boolean) => {
     setReviewCoachOpen(open);
@@ -897,7 +907,7 @@ export const App = () => {
   }, [app.initialized, app.refresh]);
 
   useEffect(() => {
-    if (!app.initialized || app.dueRecordReviews.length === 0) {
+    if (!app.initialized || app.dueRecordReviews.length === 0 || !planReminder.checked || planReminder.open) {
       return;
     }
     const key = "study-journal-review-toast-date";
@@ -909,7 +919,7 @@ export const App = () => {
     setReviewToast(`今天有 ${app.dueRecordReviews.length} 条笔记待复习`);
     const timer = window.setTimeout(() => setReviewToast(""), 4200);
     return () => window.clearTimeout(timer);
-  }, [app.dueRecordReviews.length, app.initialized]);
+  }, [app.dueRecordReviews.length, app.initialized, planReminder.checked, planReminder.open]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) {
@@ -931,6 +941,7 @@ export const App = () => {
     };
 
     void CapacitorApp.addListener("backButton", () => {
+      if (planReminder.open) { planReminder.dismiss(); return; }
       if (activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !tabMemory.more.recordId) {
         const event = new Event("knowledge-back", { cancelable: true });
         window.dispatchEvent(event);
@@ -993,7 +1004,7 @@ export const App = () => {
         void remove();
       }
     };
-  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, popCurrentTabDepth, subjectPickerOpen, switchTab, tabMemory, updateNavigationState]);
+  }, [activeTab, clearBackHint, closeAdaptiveTask, leaveReviewSession, planReminder.open, planReminder.dismiss, popCurrentTabDepth, subjectPickerOpen, switchTab, tabMemory, updateNavigationState]);
 
   const favoriteRecords = useMemo(
     () => getFavoriteRecords(app.blocks.filter((block): block is RecordBlock => block.type === "record")),
@@ -1291,7 +1302,11 @@ export const App = () => {
 
     switch (tabMemory.more.subRoute) {
       case "knowledge":
-        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} subjects={app.subjects} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onNavigation={(patch, push = false) => {
+        return <KnowledgeLibraryPage records={app.recordBlocks} assets={app.assets} subjects={app.subjects} navigation={tabMemory.more.knowledge ?? initialKnowledgeNavigation()} onBack={popCurrentTabDepth} onOpenRecord={record => openRecordInTab(record, "more")} onCreateRecord={async subject => {
+          const created = await app.createRecordBlock(todayISO(), subject);
+          newlyCreatedRecordIdsRef.current.add(created.id);
+          return created;
+        }} onOpenNewRecord={record => openRecordInTab(record, "more", undefined, true)} onManageSubjects={() => switchTab("categories")} onNavigation={(patch, push = false) => {
           const current = navigationStateRef.current;
           commitNavigation({ ...current, tabMemory: { ...current.tabMemory, more: { ...current.tabMemory.more, knowledge: patchKnowledgeNavigation(current.tabMemory.more.knowledge ?? initialKnowledgeNavigation(), patch) } } }, { history: push ? "push" : "none", motion: push ? "forward" : "none", scrollToTop: false });
         }} />;
@@ -2120,6 +2135,7 @@ export const App = () => {
             </div>
           </section>
       </MotionPresence>
+      <DailyPlanReminder open={planReminder.open} date={planReminder.date} planCount={app.dailyPlans.filter(plan => plan.date === planReminder.date && !plan.deletedAt).length} onDismiss={planReminder.dismiss} onOpenPlan={openDailyPlan} />
       <CloudSyncConflictDialog onRestored={app.refresh} />
       <CloudSyncStatusToast />
       <SubjectRadialPicker
