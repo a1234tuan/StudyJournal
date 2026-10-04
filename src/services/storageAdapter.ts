@@ -1191,9 +1191,16 @@ export class DexieStorageAdapter implements StorageAdapter {
     return saved;
   }
 
-  async deleteRecordDraft(recordId: string): Promise<void> {
-    await markCloudSyncMutation();
-    await db.recordDrafts.delete(recordId);
+  async deleteRecordDraft(recordId: string, guard?: { expectedRecord: RecordBlock; expectedDraft?: RecordDraft }): Promise<void> {
+    await db.transaction("rw", [db.blocks, db.recordDrafts, db.cloudSyncMutation], async () => {
+      if (guard) {
+        const current = await db.blocks.get(recordId);
+        const draft = await db.recordDrafts.get(recordId);
+        if (!current || !deepEqualIgnoring(current, guard.expectedRecord, []) || !deepEqualIgnoring({ draft }, { draft: guard.expectedDraft }, [])) throw new StaleRecordError();
+      }
+      await db.recordDrafts.delete(recordId);
+      await bumpCloudSyncMutationInTransaction();
+    });
   }
 
   async listRecordReviews(): Promise<RecordReviewState[]> {

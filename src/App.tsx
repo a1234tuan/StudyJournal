@@ -1,5 +1,6 @@
 import { ReviewHub, loadReviewHubRoute, type ReviewHubRoute } from "./features/arrangedReview/ReviewHub";
 import { KnowledgeLibraryPage } from "./features/knowledgeLibrary/KnowledgeLibraryPage";
+import { CommittedWriteError } from "./lib/committedWrite";
 import { DailyPlanReminder } from "./components/DailyPlanReminder";
 import { useDailyPlanReminder } from "./hooks/useDailyPlanReminder";
 import { useCloudSyncStore } from "./services/cloudSyncStore";
@@ -1255,8 +1256,14 @@ export const App = () => {
       onEditingChange={setCurrentRecordEditing}
       onBack={closeRecordInCurrentTab}
       onSave={async (nextRecord, options) => {
-        await app.saveBlock(nextRecord, options);
-        newlyCreatedRecordIdsRef.current.delete(nextRecord.id);
+        try {
+          const saved = await app.saveBlock(nextRecord, options);
+          newlyCreatedRecordIdsRef.current.delete(nextRecord.id);
+          return saved.type === "record" ? saved : undefined;
+        } catch (error) {
+          if (error instanceof CommittedWriteError) newlyCreatedRecordIdsRef.current.delete(nextRecord.id);
+          throw error;
+        }
       }}
       onDelete={async (recordId) => {
         await app.deleteBlock(recordId);

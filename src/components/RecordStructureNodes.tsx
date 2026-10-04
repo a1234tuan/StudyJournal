@@ -400,6 +400,7 @@ const ComparisonTableNodeView = (props: NodeViewProps) => {
   const markdownCells = props.node.attrs.format === "markdown";
   const editable = props.editor.isEditable;
   const [editingCell, setEditingCell] = useState<ComparisonEditingCell>();
+  const cellPointer = useRef<{ x: number; y: number; moved: boolean }>();
   const [editingValue, setEditingValue] = useState("");
   const [editingColumnWidths, setEditingColumnWidths] = useState<number[]>();
   const update = (next: ComparisonTableData) => commitData(props.updateAttributes, next);
@@ -518,7 +519,14 @@ const ComparisonTableNodeView = (props: NodeViewProps) => {
         contentEditable={false}
         tabIndex={editable ? 0 : undefined}
         aria-label={editable ? `${label}，点击编辑` : label}
-        onClick={(event) => startEditing(cell, value, event.currentTarget)}
+        onPointerDown={event => { cellPointer.current = { x: event.clientX, y: event.clientY, moved: false }; }}
+        onPointerMove={event => { const pointer = cellPointer.current; if (pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer.moved = true; }}
+        onMouseDown={() => {
+          if (props.editor.state.selection.toJSON().type !== "node") return;
+          const position = props.getPos();
+          if (typeof position === "number") props.editor.view.dispatch(props.editor.state.tr.setSelection(TextSelection.near(props.editor.state.doc.resolve(position + props.node.nodeSize))));
+        }}
+        onClick={(event) => { if (!cellPointer.current?.moved) startEditing(cell, value, event.currentTarget); cellPointer.current = undefined; }}
         onKeyDown={(event) => {
           if (!editable || event.key !== "Enter") {
             return;
@@ -534,6 +542,7 @@ const ComparisonTableNodeView = (props: NodeViewProps) => {
           <button
             type="button"
             className="comparison-column-delete"
+            onMouseDown={event => event.preventDefault()}
             aria-label={`删除${value || "当前"}列`}
             title="删除列"
             onClick={(event) => {
@@ -591,7 +600,7 @@ const ComparisonTableNodeView = (props: NodeViewProps) => {
         </table>
       </div>
       {editable && (
-        <div className="comparison-row-actions" contentEditable={false}>
+        <div className="comparison-row-actions" contentEditable={false} onMouseDown={event => { if ((event.target as Element).closest("button")) event.preventDefault(); }}>
           {data.rows.map((row, rowIndex) => (
             <span key={row.id}>
               <strong>第 {rowIndex + 1} 行</strong>
@@ -870,7 +879,15 @@ export const RecordComparisonTableNode = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ComparisonTableNodeView);
+    return ReactNodeViewRenderer(ComparisonTableNodeView, {
+      stopEvent: ({ event }) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return false;
+        if (["copy", "cut", "paste", "drop"].includes(event.type) || event.type.startsWith("drag")) return false;
+        if (event.type === "mousedown" && target.closest(".comparison-grid-cell")) return true;
+        return Boolean(target.closest("input, textarea, button, select, a"));
+      },
+    });
   },
 });
 

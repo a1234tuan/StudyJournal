@@ -13,7 +13,8 @@ import { TemplateInsertMenu } from "../components/TemplateInsertMenu";
 import { deepEqualIgnoring, newId } from "../lib/entity";
 import { isoDateTimeToLocalDate, nowISO } from "../lib/date";
 import { isDesktopPlatform, isNativePlatform } from "../lib/platform";
-import { formatUiError } from "../lib/uiError";
+import { formatUiError, StaleRecordError, getUiDiagnostics } from "../lib/uiError";
+import { CommittedWriteError, createCommittedWriteRetry, finishCommittedWrite } from "../lib/committedWrite";
 import { pickNativeGalleryImageFile } from "../lib/nativeImagePicker";
 import { normalizeRecordContent, syncRecordRefsFromContent } from "../lib/recordContent";
 import { getSubjectRecordTags, normalizeRecordTag, normalizeRecordTags, recordTagKey } from "../lib/recordTags";
@@ -61,7 +62,7 @@ interface RecordEditorPageProps {
   restoreScrollY?: number;
   onGetDraft: (recordId: string) => Promise<RecordDraft | undefined>;
   onSaveDraft: (draft: RecordDraft) => Promise<RecordDraft>;
-  onDeleteDraft: (recordId: string) => Promise<void>;
+  onDeleteDraft: (recordId: string, guard?: { expectedRecord: RecordBlock; expectedDraft?: RecordDraft }) => Promise<void>;
   reviewState?: RecordReviewState;
   reviewLogs?: RecordReviewLog[];
   onAddToReview?: (recordId: string) => Promise<void> | void;
@@ -163,6 +164,8 @@ const structureBlockNode = (kind: StructureBlockKind): Record<string, unknown> =
   }
 };
 
+type DraftWriteResult = { status: "saved" | "unchanged" | "blocked" } | { status: "failed"; error: unknown };
+
 const hasDraftChanges = (draft: RecordBlock, record: RecordBlock) =>
   draft.title !== record.title ||
   draft.subject !== record.subject ||
@@ -220,6 +223,8 @@ export const RecordEditorPage = ({
   const [draft, setDraft] = useState<RecordBlock>(() => cloneRecord(record));
   const [saving, setSaving] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [committedPreview, setCommittedPreview] = useState<RecordBlock>();
+  const previewRecord = committedPreview?.id === record.id && committedPreview.updatedAt > record.updatedAt ? committedPreview : record;
   const [draftLoading, setDraftLoading] = useState(true);
   const interactionLocked = restoreLocked || draftLoading;
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
@@ -241,6 +246,11 @@ export const RecordEditorPage = ({
   const committingRef = useRef(false);
   const ignoreEditorChangesRef = useRef(false);
   const remoteRecordChangedRef = useRef(false);
+  const persistedDraftRef = useRef<RecordDraft>();
+  const [conflictRecord, setConflictRecord] = useState<RecordBlock>();
+  const [conflictConfirmed, setConflictConfirmed] = useState(false);
+  const [followUp, setFollowUp] = useState<{ retry: () => Promise<void> }>();
+  const [retryingFollowUp, setRetryingFollowUp] = useState(false);
   const pendingAssetTasksRef = useRef<Set<Promise<void>>>(new Set());
   const leavingRef = useRef(false);
   const stoppingRecordingRef = useRef<Promise<void> | null>(null);
@@ -321,51 +331,46 @@ export const RecordEditorPage = ({
   );
 
   const flushDraft = useCallback(
-    async (nextDraft = draftRef.current, options: { force?: boolean } = {}) => {
+    async (nextDraft = draftRef.current, options: { force?: boolean } = {}): Promise<DraftWriteResult> => {
       const baseRecord = formalRecordRef.current;
-      const decisionBlockOptions = draftDecisionBlockOptions(
-        pendingDecisionBlockRemovalsRef.current,
-        restoredDecisionBlocksRef.current,
-      );
-      const hasDecisionBlockIntent = Boolean(
-        decisionBlockOptions.decisionBlockRemovals?.length || decisionBlockOptions.restoredDecisionBlocks?.length,
-      );
-      if (restoreLocked || draftLoadingRef.current || (!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
-        return false;
-      }
-
-      const task = draftSaveQueueRef.current.then(async () => {
-        if ((!options.force && committingRef.current) || (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasDecisionBlockIntent)) {
-          return false;
-        }
+      const sequence = draftLoadSequenceRef.current;
+      const decisionBlockOptions = draftDecisionBlockOptions(pendingDecisionBlockRemovalsRef.current, restoredDecisionBlocksRef.current);
+      const hasIntent = Boolean(decisionBlockOptions.decisionBlockRemovals?.length || decisionBlockOptions.restoredDecisionBlocks?.length);
+      if (restoreLocked || draftLoadingRef.current || (!options.force && committingRef.current)) return { status: "blocked" };
+      if (!hasDraftChanges(nextDraft, cloneRecord(baseRecord)) && !hasIntent) return { status: "unchanged" };
+      const task = draftSaveQueueRef.current.then(async (): Promise<DraftWriteResult> => {
+        if (sequence !== draftLoadSequenceRef.current || (!options.force && committingRef.current)) return { status: "blocked" };
         setDraftSaveStatus("saving");
         try {
-          await onSaveDraft({
-            id: baseRecord.id,
-            recordId: baseRecord.id,
-            baseUpdatedAt: baseRecord.updatedAt,
-            draft: cloneRecord(nextDraft),
-            ...decisionBlockOptions,
-            updatedAt: nowISO(),
-          });
-          setDraftSaveStatus("saved");
-          setDraftSaveError(null);
-          return true;
+          const saved = await onSaveDraft({ id: baseRecord.id, recordId: baseRecord.id, baseUpdatedAt: baseRecord.updatedAt, draft: cloneRecord(nextDraft), ...decisionBlockOptions, updatedAt: nowISO() });
+          if (sequence === draftLoadSequenceRef.current) {
+            persistedDraftRef.current = saved;
+            setDraftSaveStatus("saved");
+            setDraftSaveError(null);
+          }
+          return { status: "saved" };
         } catch (error) {
-          // Keep the queue chain alive for later retries, but surface a diagnosable
-          // message instead of silently swallowing the failure.
-          setDraftSaveStatus("error");
-          setDraftSaveError(formatUiError(error, "record-draft-save"));
-          throw error;
+          if (error instanceof CommittedWriteError) {
+            if (sequence === draftLoadSequenceRef.current) {
+              persistedDraftRef.current = error.value as RecordDraft;
+              setDraftSaveStatus("saved");
+              setDraftSaveError(null);
+              setFollowUp(previous => ({ retry: createCommittedWriteRetry([...(previous ? [previous.retry] : []), error.retry]) }));
+            }
+            return { status: "saved" };
+          }
+          if (sequence === draftLoadSequenceRef.current) {
+            setDraftSaveStatus("error");
+            setDraftSaveError(formatUiError(error, "record-draft-save"));
+          }
+          return { status: "failed", error };
         }
       });
-
       draftSaveQueueRef.current = task.then(() => undefined, () => undefined);
       return task;
     },
     [onSaveDraft, restoreLocked],
   );
-
   /**
    * Fire-and-forget wrapper around `flushDraft` that reports when the flush is
    * in flight.
@@ -386,7 +391,7 @@ export const RecordEditorPage = ({
       const recordId = record.id;
       onDraftFlushPendingChange?.(recordId, true);
       return flushDraft(nextDraft, options)
-        .catch(() => false)
+        .catch((error): DraftWriteResult => ({ status: "failed", error }))
         .finally(() => onDraftFlushPendingChange?.(recordId, false));
     },
     [flushDraft, onDraftFlushPendingChange, record.id],
@@ -506,6 +511,12 @@ export const RecordEditorPage = ({
     ignoreEditorChangesRef.current = true;
     recordIdRef.current = loadingRecordId;
     setDraftRestored(false);
+    setSaveError(null);
+    setDraftSaveError(null);
+    setDraftSaveStatus("idle");
+    persistedDraftRef.current = undefined;
+    setConflictRecord(undefined);
+    setConflictConfirmed(false);
     setMoreActionsOpen(false);
     setTagInput("");
     setEditingTagIndex(null);
@@ -524,6 +535,8 @@ export const RecordEditorPage = ({
         return;
       }
       if (!loadStartedDuringCommit && !committingRef.current && storedDraft && storedDraft.updatedAt > loadingRecord.updatedAt) {
+        persistedDraftRef.current = storedDraft;
+        setDraftSaveStatus("saved");
         const restored = cloneRecord(storedDraft.draft);
         formalRecordRef.current = { ...structuredClone(loadingRecord), updatedAt: storedDraft.baseUpdatedAt };
         remoteRecordChangedRef.current = storedDraft.baseUpdatedAt !== loadingRecord.updatedAt;
@@ -819,7 +832,7 @@ export const RecordEditorPage = ({
     void stopRecordingIntoDraft();
   }, [stopRecordingIntoDraft]);
 
-  const save = async () => {
+  const save = async (reviewedRecord?: RecordBlock) => {
     if (saving || interactionLocked) {
       return;
     }
@@ -828,28 +841,36 @@ export const RecordEditorPage = ({
     committingRef.current = true;
     ignoreEditorChangesRef.current = true;
     let draftToSave: RecordBlock | null = null;
+    let committed: RecordBlock | undefined;
+    const sequence = draftLoadSequenceRef.current;
     try {
       cancelScheduledDraftSave();
       editorRef.current?.commands.cancelMarkdownPasteConversion?.();
       await waitForPendingAssets();
       await waitForDraftSaves();
 
-      if (remoteRecordChangedRef.current || latestRecordRef.current.updatedAt !== formalRecordRef.current.updatedAt || hasDraftChanges(latestRecordRef.current, formalRecordRef.current)) {
-        committingRef.current = false;
-        ignoreEditorChangesRef.current = false;
-        const draftSaved = await flushDraftDetached(draftRef.current, { force: true });
-        setSaveError(draftSaved
-          ? "正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。"
-          : formatUiError(undefined, "record-draft-save"));
+      if (reviewedRecord && !deepEqualIgnoring(reviewedRecord, latestRecordRef.current, [])) {
+        setConflictRecord(structuredClone(latestRecordRef.current));
+        setConflictConfirmed(false);
+        setSaveError("核对期间正式内容再次变化，请重新核对。");
         return;
       }
-
+      if (!reviewedRecord && (remoteRecordChangedRef.current || latestRecordRef.current.updatedAt !== formalRecordRef.current.updatedAt || hasDraftChanges(latestRecordRef.current, formalRecordRef.current))) {
+        committingRef.current = false;
+        ignoreEditorChangesRef.current = false;
+        await flushDraftDetached(draftRef.current, { force: true });
+        setConflictRecord(structuredClone(latestRecordRef.current));
+        setConflictConfirmed(false);
+        setSaveError("正式内容已更新，本机草稿仍保留。请先核对最新内容，避免覆盖其他设备的修改。");
+        return;
+      }
       const editor = editorRef.current;
       draftToSave = syncEditableRecord({
         ...applyTagInput(draftRef.current),
-        favorite: formalRecordRef.current.favorite,
+        favorite: (reviewedRecord ?? formalRecordRef.current).favorite,
         contentHtml: editor && !editor.isDestroyed ? editor.getHTML() : draftRef.current.contentHtml,
       });
+      if (reviewedRecord) draftToSave = { ...reviewedRecord, title: draftToSave.title, subject: draftToSave.subject, tags: draftToSave.tags, contentHtml: draftToSave.contentHtml, assets: draftToSave.assets, formulas: draftToSave.formulas, mistakeRefs: [] };
       draftRef.current = draftToSave;
       setDraft(draftToSave);
       setTagInput("");
@@ -862,51 +883,115 @@ export const RecordEditorPage = ({
         shouldJoinReview = isNewRecord || window.confirm("这条日志新增了复习重点，是否把整条日志加入间隔复习？");
       }
 
-      await onSave(draftToSave, {
-        expectedRecord: formalRecordRef.current,
-        decisionBlockRemovals: Array.from(pendingDecisionBlockRemovalsRef.current.values()),
-        restoredDecisionBlocks: Array.from(restoredDecisionBlocksRef.current, ([decisionBlockId, contentHtml]) => ({ decisionBlockId, contentHtml })),
-      });
+      let saved: RecordBlock | void;
+      const followUps = [
+        async () => { if (shouldJoinReview) await onAddToReview?.(record.id); },
+        refreshDecisionBlockArchives,
+        waitForDraftSaves,
+        async () => { if (!saved) await onDeleteDraft(record.id); },
+      ];
+      try {
+        saved = await onSave(draftToSave, {
+          expectedRecord: reviewedRecord ?? formalRecordRef.current,
+          decisionBlockRemovals: Array.from(pendingDecisionBlockRemovalsRef.current.values()),
+          restoredDecisionBlocks: Array.from(restoredDecisionBlocksRef.current, ([decisionBlockId, contentHtml]) => ({ decisionBlockId, contentHtml })),
+        });
+      } catch (error) {
+        if (!(error instanceof CommittedWriteError)) throw error;
+        saved = error.value as RecordBlock;
+        throw new CommittedWriteError(saved, createCommittedWriteRetry([error.retry, ...followUps]));
+      }
+      committed = saved ?? draftToSave;
       pendingDecisionBlockRemovalsRef.current.clear();
       restoredDecisionBlocksRef.current.clear();
-      if (shouldJoinReview) await onAddToReview?.(record.id);
-      await refreshDecisionBlockArchives();
-      await waitForDraftSaves();
-      await onDeleteDraft(record.id);
+      await finishCommittedWrite(committed, followUps);
       setDraftRestored(false);
       initialEditingRef.current = false;
       setEditing(false);
     } catch (error) {
-      committingRef.current = false;
-      ignoreEditorChangesRef.current = false;
-      const fallbackDraft = draftToSave ?? draftRef.current;
-      draftRef.current = fallbackDraft;
-      setDraft(fallbackDraft);
-      const draftSaved = await flushDraftDetached(fallbackDraft, { force: true });
-      setSaveError(formatUiError(error, draftSaved ? "record-save" : "record-draft-save"));
+      if (error instanceof CommittedWriteError) {
+        committed = error.value as RecordBlock;
+        setFollowUp(previous => ({ retry: createCommittedWriteRetry([...(previous ? [previous.retry] : []), error.retry]) }));
+      } else if (committed) {
+        setSaveError("正式内容已保存，后续操作未完成。请检查复习状态或重新打开页面；无需再次保存正文。");
+      } else if (sequence === draftLoadSequenceRef.current) {
+        committingRef.current = false;
+        ignoreEditorChangesRef.current = false;
+        const fallbackDraft = draftToSave ?? draftRef.current;
+        draftRef.current = fallbackDraft;
+        setDraft(fallbackDraft);
+        const result = await flushDraftDetached(fallbackDraft, { force: true });
+        if (error instanceof StaleRecordError) {
+          setConflictRecord(structuredClone(latestRecordRef.current));
+          setConflictConfirmed(false);
+        }
+        setSaveError(result.status === "failed" ? formatUiError(error, "record-draft-save") : error instanceof StaleRecordError ? formatUiError(error, "record-save") : result.status === "saved" ? formatUiError(error, "record-save") : "正式保存未完成，当前编辑内容仍在本页。请保留内容后重试。");
+      }
     } finally {
-      committingRef.current = false;
-      setSaving(false);
+      if (sequence === draftLoadSequenceRef.current) {
+        if (committed) {
+          formalRecordRef.current = structuredClone(committed);
+          setCommittedPreview(committed);
+          remoteRecordChangedRef.current = false;
+          persistedDraftRef.current = undefined;
+          pendingDecisionBlockRemovalsRef.current.clear();
+          restoredDecisionBlocksRef.current.clear();
+          setConflictRecord(undefined);
+          setDraftSaveError(null);
+          setDraftSaveStatus("idle");
+          setDraftRestored(false);
+          initialEditingRef.current = false;
+          setEditing(false);
+        }
+        committingRef.current = false;
+        ignoreEditorChangesRef.current = false;
+        setSaving(false);
+      }
     }
   };
 
-  const discardDraft = async () => {
-    if (interactionLocked) {
-      return;
-    }
+  const discardDraft = async (reviewedRecord?: RecordBlock) => {
+    if (interactionLocked || saving) return;
+    const latest = reviewedRecord ?? latestRecordRef.current;
+    if (hasDraftChanges(draftRef.current, cloneRecord(latest)) && !window.confirm("采用最新正式内容会丢弃当前编辑内容。请先下载内容副本。确定继续吗？")) return;
+    setSaving(true);
     cancelScheduledDraftSave();
-    await waitForDraftSaves();
-    await onDeleteDraft(record.id);
-    const clean = cloneRecord(record);
-    formalRecordRef.current = structuredClone(record);
-    remoteRecordChangedRef.current = false;
-    pendingDecisionBlockRemovalsRef.current.clear();
-    restoredDecisionBlocksRef.current.clear();
-    setDraft(clean);
-    draftRef.current = clean;
-    setDraftRestored(false);
-    setSaveError(null);
-    setEditing(false);
+    try {
+      await waitForDraftSaves();
+      try {
+        await onDeleteDraft(record.id, { expectedRecord: latest, expectedDraft: persistedDraftRef.current });
+      } catch (error) {
+        if (!(error instanceof CommittedWriteError)) throw error;
+        setFollowUp(previous => ({ retry: createCommittedWriteRetry([...(previous ? [previous.retry] : []), error.retry]) }));
+      }
+      const clean = cloneRecord(latest);
+      formalRecordRef.current = structuredClone(latest);
+      remoteRecordChangedRef.current = false;
+      persistedDraftRef.current = undefined;
+      pendingDecisionBlockRemovalsRef.current.clear();
+      restoredDecisionBlocksRef.current.clear();
+      setDraft(clean);
+      draftRef.current = clean;
+      setDraftRestored(false);
+      setConflictRecord(undefined);
+      setSaveError(null);
+      setDraftSaveError(null);
+      setDraftSaveStatus("idle");
+      setEditing(false);
+    } catch (error) {
+      setSaveError(error instanceof StaleRecordError ? "记录或草稿再次变化，未丢弃任何内容。请重新打开并核对版本。" : "草稿清理未完成，当前内容仍保留。请重试。");
+    } finally { setSaving(false); }
+  };
+
+  const downloadEditingCopy = () => {
+    const current = { ...applyTagInput(draftRef.current), contentHtml: editorRef.current?.getHTML() ?? draftRef.current.contentHtml };
+    const blob = new Blob([JSON.stringify({ format: "studyjournal-editing-copy-v1", note: "当前编辑内容副本，资源仅含引用，不是完整备份", record: current, formal: conflictRecord ?? formalRecordRef.current, ...draftDecisionBlockOptions(pendingDecisionBlockRemovalsRef.current, restoredDecisionBlocksRef.current), diagnostics: getUiDiagnostics() }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "studyjournal-editing-copy.json";
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const remove = async () => {
@@ -958,7 +1043,7 @@ export const RecordEditorPage = ({
           返回
         </button>
         <span className={`record-save-indicator ${draftSaveStatus === "error" || saveError ? "error" : ""}`} role="status">
-          {saving ? "正在保存正式内容..." : !editing ? "正式内容已保存" : draftSaveStatus === "saving" || draftSaveStatus === "pending" ? "正在保存本机草稿..." : draftSaveStatus === "error" ? "本机草稿保存失败" : "草稿已存于本机"}
+          {saving ? "正在保存正式内容..." : !editing ? "正式内容已保存" : draftSaveStatus === "saving" || draftSaveStatus === "pending" ? "正在保存本机草稿..." : draftSaveStatus === "error" ? "本机草稿保存失败" : conflictRecord ? "需要核对记录版本" : draftSaveStatus === "saved" ? "草稿已存于本机" : "当前内容尚未提交"}
         </span>
         {editing ? (
           <div className="record-action-row">
@@ -1230,8 +1315,21 @@ export const RecordEditorPage = ({
         )}
       </section>
 
+      {followUp && <section className="record-save-notice" role="status"><strong>内容已写入本机，后续刷新或备份准备未完成。</strong><p>请重试后再关闭页面，无需重复保存正文。</p><button type="button" disabled={retryingFollowUp} onClick={() => { setRetryingFollowUp(true); void followUp.retry().then(() => setFollowUp(current => current === followUp ? undefined : current)).catch(() => undefined).finally(() => setRetryingFollowUp(false)); }}>重试后续处理</button></section>}
+      {!editing && saveError && <p role="status" className="status-message">{saveError}</p>}
       {editing ? (
         <>
+          {conflictRecord && <section className="record-version-conflict" aria-label="核对记录版本">
+            <header><h2>核对记录版本</h2><p>两份内容都还在。请先核对正文、标签和复习重点，再决定采用哪一份。</p></header>
+            <div className="record-version-columns">
+              <article><h3>最新正式内容</h3><strong>{conflictRecord.title}</strong><p>{conflictRecord.subject} · {conflictRecord.tags.join("、")}</p><RichTextEditor value={normalizeRecordContent(conflictRecord)} onChange={() => undefined} readOnly referenceRecords={referenceRecords} referenceSubjects={subjects} /></article>
+              <article><h3>当前编辑内容</h3><strong>{draft.title}</strong><p>{draft.subject} · {draft.tags.join("、")}</p><RichTextEditor value={draft.contentHtml} onChange={() => undefined} readOnly referenceRecords={referenceRecords} referenceSubjects={subjects} /></article>
+            </div>
+            <label><input type="checkbox" checked={conflictConfirmed} onChange={event => setConflictConfirmed(event.target.checked)} />已核对两份内容及复习重点的删除、恢复变更，确认采用当前编辑内容</label>
+            <div className="record-conflict-actions"><button type="button" onClick={downloadEditingCopy}>下载当前内容副本</button><button type="button" disabled={saving} onClick={() => void discardDraft(conflictRecord)}>采用最新正式内容</button><button type="button" className="primary-button" disabled={!conflictConfirmed || saving || interactionLocked} onClick={() => void save(conflictRecord)}>确认保存当前编辑内容</button><button type="button" onClick={() => { setConflictRecord(undefined); setConflictConfirmed(false); }}>继续编辑草稿</button></div>
+            <small>内容副本不包含附件字节，不替代完整备份。核对过程中正式内容再次变化时，会重新要求确认。</small>
+          </section>}
+          {draftSaveError && <button type="button" onClick={downloadEditingCopy}>下载当前内容副本与诊断</button>}
           {draftRestored && <p className="status-message draft-status">已恢复未保存草稿，点击保存后才会写入正式记录。</p>}
           {saveError && <p className="status-message draft-status">{saveError}</p>}
           {draftSaveError && <p className="status-message draft-status">{draftSaveError}</p>}
@@ -1380,14 +1478,14 @@ export const RecordEditorPage = ({
       ) : (
         <article className="record-view-page">
           <header className="record-view-header">
-            <p className="eyebrow">{record.date}</p>
-            <h1>{record.title}</h1>
-            <span>{record.subject}</span>
+            <p className="eyebrow">{previewRecord.date}</p>
+            <h1>{previewRecord.title}</h1>
+            <span>{previewRecord.subject}</span>
             {planOrigin && <PlanOriginTag origin={planOrigin} />}
-            <RecordTagChips subject={record.subject} tags={record.tags} />
+            <RecordTagChips subject={previewRecord.subject} tags={previewRecord.tags} />
           </header>
           <RichTextEditor
-            value={normalizeRecordContent(record)}
+            value={normalizeRecordContent(previewRecord)}
             onChange={() => undefined}
             placeholder=""
             readOnly

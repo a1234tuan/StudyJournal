@@ -105,6 +105,20 @@ const readStoredTable = (page: Page) => page.evaluate(async () => {
   return JSON.parse(document.querySelector("record-comparison-table")!.getAttribute("data-json")!);
 });
 
+test("cell clicks do not select the whole table node", async ({ page }) => {
+  await openTable(page, fixture());
+  await table(page).locator("tbody td").first().click();
+  await expect(live(page).locator(".node-recordComparisonTable.ProseMirror-selectednode")).toHaveCount(0);
+  await startEditing(page);
+  await table(page).locator("tbody td").first().click();
+  await expect(live(page).locator(".node-recordComparisonTable.ProseMirror-selectednode")).toHaveCount(0);
+  const input = table(page).locator("textarea");
+  expect(await input.evaluate(element => element.selectionStart === element.selectionEnd)).toBe(true);
+  await input.fill("最后一次输入");
+  await saveRecord(page);
+  expect((await readStoredTable(page)).rows[0].cells.concept).toBe("最后一次输入");
+});
+
 test("uneven rows share borders and intrinsic column widths, with one sticky-first-column scroller", async ({ page }, testInfo) => {
   await openTable(page, fixture());
   await assertAligned(page);

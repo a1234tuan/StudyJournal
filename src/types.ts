@@ -1109,7 +1109,7 @@ export interface StorageAdapter {
   getRecordDraft(recordId: EntityId): Promise<RecordDraft | undefined>;
   listRecordDrafts(): Promise<RecordDraft[]>;
   saveRecordDraft(draft: RecordDraft): Promise<RecordDraft>;
-  deleteRecordDraft(recordId: EntityId): Promise<void>;
+  deleteRecordDraft(recordId: EntityId, guard?: { expectedRecord: RecordBlock; expectedDraft?: RecordDraft }): Promise<void>;
   listRecordReviews(): Promise<RecordReviewState[]>;
   getRecordReview(recordId: EntityId): Promise<RecordReviewState | undefined>;
   listDueRecordReviews(date: ISODate): Promise<RecordReviewState[]>;

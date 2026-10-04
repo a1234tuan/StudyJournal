@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaleRecordError } from "../lib/uiError";
+import { CommittedWriteError } from "../lib/committedWrite";
 
 import type { Asset, RecordBlock, RecordDraft, RecordReviewLog, RecordReviewState, SubjectConfig } from "../types";
 
@@ -229,6 +230,72 @@ afterEach(() => {
 });
 
 describe("RecordEditorPage", () => {
+  it("keeps formal success visible when a post-commit refresh fails", async () => {
+    const saved = { ...record, title: "已提交的新标题", updatedAt: "2026-06-24T00:00:00.000Z" };
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockRejectedValue(new CommittedWriteError(saved, retry));
+    const rendered = renderEditor({ onSave });
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("textbox", { name: "记录标题" }), { target: { value: saved.title } });
+    fireEvent.click(rendered.saveButton());
+    await screen.findByText("内容已写入本机，后续刷新或备份准备未完成。");
+    expect(screen.getByRole("heading", { name: saved.title })).toBeInTheDocument();
+    expect(screen.queryByText(/本机草稿保存失败/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试后续处理" }));
+    await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it("continues editor follow-ups after retrying a committed storage refresh", async () => {
+    const saved = { ...record, updatedAt: "2026-06-24T00:00:00.000Z" };
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const onSave = vi.fn().mockRejectedValue(new CommittedWriteError(saved, retry));
+    const onAddToReview = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const rendered = renderEditor({ onSave, onAddToReview, reviewState: undefined });
+    await waitFor(() => expect(rendered.onGetDraft).toHaveBeenCalled());
+    act(() => {
+      richEditorMock.html = '<record-decision-block data-decision-block-id="new-block" data-content-version="1"><p>重点</p></record-decision-block><p></p>';
+      richEditorMock.props.onChange(richEditorMock.html);
+    });
+    fireEvent.click(rendered.saveButton());
+    await screen.findByText("内容已写入本机，后续刷新或备份准备未完成。");
+    expect(onAddToReview).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重试后续处理" }));
+    await waitFor(() => expect(onAddToReview).toHaveBeenCalledWith(record.id));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(rendered.onDeleteDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not report an unchanged stale draft as a failed write", async () => {
+    const current = { ...record, updatedAt: "2026-06-22T00:00:00.000Z" };
+    const stored = { id: record.id, recordId: record.id, baseUpdatedAt: record.updatedAt, draft: record, updatedAt: "2026-06-23T00:00:00.000Z" };
+    const rendered = renderEditor({ record: current, onGetDraft: vi.fn().mockResolvedValue(stored) });
+    await screen.findByText("已恢复未保存草稿，点击保存后才会写入正式记录。");
+    fireEvent.click(rendered.saveButton());
+    await waitFor(() => expect(screen.getByRole("region", { name: "核对记录版本" })).toBeInTheDocument());
+    expect(screen.queryByText(/本机草稿保存失败/)).not.toBeInTheDocument();
+    expect(rendered.onSaveDraft).not.toHaveBeenCalled();
+    expect(rendered.onSave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "采用最新正式内容" }));
+    await waitFor(() => expect(rendered.onDeleteDraft).toHaveBeenCalledWith(record.id, { expectedRecord: current, expectedDraft: stored }));
+    expect(rendered.onSave).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit confirmation and captures the reviewed latest baseline", async () => {
+    const current = { ...record, title: "新正式标题", updatedAt: "2026-06-22T00:00:00.000Z" };
+    const stored = { id: record.id, recordId: record.id, baseUpdatedAt: record.updatedAt, draft: { ...record, title: "本机新标题" }, updatedAt: "2026-06-23T00:00:00.000Z" };
+    const rendered = renderEditor({ record: current, onGetDraft: vi.fn().mockResolvedValue(stored) });
+    await screen.findByText("已恢复未保存草稿，点击保存后才会写入正式记录。");
+    fireEvent.click(rendered.saveButton());
+    await screen.findByRole("region", { name: "核对记录版本" });
+    expect(rendered.onSave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /已核对两份内容/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认保存当前编辑内容" }));
+    await waitFor(() => expect(rendered.onSave).toHaveBeenCalledWith(expect.objectContaining({ title: "本机新标题" }), expect.objectContaining({ expectedRecord: current })));
+  });
+
   it("keeps the original draft base and gives actionable guidance for a transaction-level stale save", async () => {
     const onSave = vi.fn().mockRejectedValue(new StaleRecordError());
     const { onGetDraft, onSaveDraft, onDeleteDraft, saveButton } = renderEditor({ onSave });
@@ -834,8 +901,8 @@ describe("RecordEditorPage", () => {
     });
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-    expect(onDeleteDraft).toHaveBeenCalledWith(record.id);
-    expect(onSaveDraft.mock.invocationCallOrder[0]).toBeLessThan(onDeleteDraft.mock.invocationCallOrder[0]);
+    expect(onDeleteDraft).not.toHaveBeenCalled();
+    expect(onSaveDraft.mock.invocationCallOrder[0]).toBeLessThan(onSave.mock.invocationCallOrder[0]);
     expect(screen.getByRole("heading", { name: "Math note 1" })).toBeInTheDocument();
   });
 

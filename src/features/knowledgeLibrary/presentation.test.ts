@@ -51,7 +51,7 @@ describe("knowledge presentation model", () => {
   it("sizes long titles without overlapping neighboring subtrees", () => {
     const { state, add } = fixture(); add("long", "node", "beta", "这是需要完整显示的中文节点标题".repeat(8));
     const long = layoutKnowledgeMap(state, "topic", new Set()).nodes.find(node => node.id === "long")!;
-    expect(long.width).toBeLessThanOrEqual(200); expect(long.height).toBeGreaterThan(60); assertNoOverlap(state);
+    expect(long.width).toBeLessThanOrEqual(240); expect(long.height).toBeGreaterThan(60); assertNoOverlap(state);
   });
   it("lists each node's logs before its subnodes and collapses both together", () => {
     const { state, add } = fixture(); add("ref-one", "reference", "alpha"); add("ref-two", "reference", "alpha"); add("ref-deep", "reference", "deep");

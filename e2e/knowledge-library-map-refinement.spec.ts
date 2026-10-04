@@ -63,6 +63,21 @@ const dragTo = async (page: Page, source: Locator, target: Locator, fraction = .
   await page.mouse.up();
 };
 
+test("selection is immediate and details preserve the chosen zoom", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  for (let index = 0; index < 4; index += 1) await active(page).getByRole("button", { name: "缩小导图" }).click();
+  const zoom = active(page).locator(".knowledge-map-controls output");
+  const before = await zoom.innerText();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toHaveCount(0);
+  await expect(zoom).toHaveText(before);
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
+  await expect(zoom).toHaveText(before);
+});
+
 test("balanced map, compact circular controls, direct details and nested outline logs", async ({ page }) => {
   const ids = await prepare(page);
   await expect(active(page).locator(".knowledge-outline-log")).toHaveCount(3);
@@ -71,6 +86,7 @@ test("balanced map, compact circular controls, direct details and nested outline
   await expect(active(page).locator("[data-map-root]")).toBeVisible();
   await capture(page, "map-readable-start.png");
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await expect(active(page).locator("[data-map-root]")).toHaveText("数据结构与算法");
   await expect(active(page).locator(".knowledge-drag-handle")).toHaveCount(0);
   await expect(node(page, ids.deep).locator(".knowledge-map-toggle")).toHaveCount(0);
@@ -78,6 +94,7 @@ test("balanced map, compact circular controls, direct details and nested outline
   expect(sides).toContain("-1"); expect(sides).toContain("1");
   await capture(page, "balanced-map.png");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   const detail = active(page).getByRole("complementary", { name: "节点详情" });
   await expect(detail).toBeVisible();
   await expect(detail.locator(".knowledge-reference-link")).toHaveCount(3);
@@ -98,6 +115,7 @@ test("balanced map, compact circular controls, direct details and nested outline
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
   await active(page).getByRole("button", { name: "关闭节点详情" }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   const toggle = node(page, ids.first).getByRole("button", { name: "折叠分支" });
   await toggle.click(); await expect(node(page, ids.deep)).toHaveCount(0);
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toHaveCount(0);
@@ -119,12 +137,15 @@ test("drags deep and later branches, reorders siblings, rejects descendants and 
   await expect(active(page).locator("[data-map-root]")).toBeVisible();
   await capture(page, "map-readable-start.png");
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await dragTo(page, node(page, ids.deep).locator(".knowledge-map-label"), node(page, ids.roots[3]));
   await expect.poll(() => position(page, ids.deep)).toMatchObject({ parentNodeId: ids.roots[3] });
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await dragTo(page, node(page, ids.roots[2]).locator(".knowledge-map-label"), node(page, ids.roots[1]));
   await expect.poll(() => position(page, ids.roots[2])).toMatchObject({ parentNodeId: ids.roots[1] });
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await dragTo(page, node(page, ids.second).locator(".knowledge-map-label"), node(page, ids.first), .12);
   const siblingOrder = await page.evaluate(async parentId => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
@@ -150,6 +171,7 @@ test("touch long press moves a deep node and swipe does not mutate structure", a
   await expect(active(page).locator("[data-map-root]")).toBeVisible();
   await capture(page, "map-readable-start.png");
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   const cdp = await page.context().newCDPSession(page);
   const source = (await node(page, ids.deep).boundingBox())!; const target = (await node(page, ids.roots[3]).boundingBox())!;
   const start = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
@@ -174,10 +196,12 @@ test("map colors and compact controls stay readable across themes", async ({ pag
   for (const visual of ["reading", "modern"]) for (const theme of ["light", "dark"]) {
     await page.evaluate(({ visual, theme }) => { document.documentElement.dataset.visualTheme = visual; document.documentElement.dataset.theme = theme; }, { visual, theme });
     await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
     const geometry = await active(page).locator(".knowledge-workspace").evaluate(element => ({ width: document.documentElement.scrollWidth, viewport: innerWidth, height: element.getBoundingClientRect().height }));
     expect(geometry.width).toBeLessThanOrEqual(geometry.viewport); expect(geometry.height).toBeGreaterThan(450);
     await capture(page, "map-" + visual + "-" + theme + ".png");
     await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
     await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
     await capture(page, "details-" + visual + "-" + theme + ".png");
     await active(page).getByRole("button", { name: "关闭节点详情" }).click();
@@ -188,7 +212,10 @@ test("map keyboard creates adjacent siblings and children, saves focus and ignor
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").focus();
   await expect(node(page, ids.first)).toHaveClass(/selected/);
   await page.keyboard.press("Enter");
   const input = active(page).getByRole("textbox", { name: "新建节点", exact: true });
@@ -229,7 +256,10 @@ test("map arrow keys select visible nodes without writing and ignore the preview
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").focus();
   await expect(node(page, ids.first)).toHaveClass(/selected/);
   const count = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
   await page.keyboard.press("ArrowDown"); await expect(node(page, ids.second)).toHaveClass(/selected/);
@@ -248,6 +278,7 @@ test("drag previews describe child, before, after and invalid positions without 
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   const count = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
   for (const [sourceId, targetId, fraction, mode] of [[ids.second, ids.first, .5, "child"], [ids.second, ids.first, .1, "before"], [ids.second, ids.first, .9, "after"], [ids.roots[0], ids.first, .5, "invalid"]] as const) {
     const source = (await node(page, sourceId).boundingBox())!;
@@ -266,7 +297,9 @@ test("record dock returns one level, preserves full-page return and adapts its w
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   const detail = active(page).getByRole("complementary", { name: "节点详情" });
   await detail.locator(".knowledge-node-note summary").click();
   await detail.getByRole("button", { name: ids.labels[0], exact: true }).click();
@@ -299,7 +332,9 @@ test("knowledge sidebar collapses without losing map or dock and is scoped to th
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
   const viewport = active(page).locator(".knowledge-map-viewport");
   const before = (await viewport.boundingBox())!.width;
@@ -318,7 +353,9 @@ test("browser Back from full log restores preview and the next Back restores nod
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
   await active(page).getByRole("button", { name: "打开完整日志" }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
@@ -335,7 +372,9 @@ test("record dock remains readable at intermediate widths and preserves reading 
   const ids = await prepare(page, true);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
   await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
   await node(page, ids.first).locator(".knowledge-map-label").click();
+  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
   const pane = active(page).getByRole("complementary", { name: "日志浏览" });
   await expect(pane.getByRole("heading", { name: "阅读结构" })).toBeVisible();

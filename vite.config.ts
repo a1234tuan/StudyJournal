@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  server: { watch: { ignored: ["**/output/**", "**/release/**", "**/test-results/**"] } },
   plugins: [
     react(),
     VitePWA({

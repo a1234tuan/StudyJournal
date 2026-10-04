@@ -225,6 +225,26 @@ describe("ReviewPage", () => {
     richTextEditorMock.props = [];
   });
 
+  it.each(["e", "E"])("opens current card with %s without writing a rating", key => {
+    const { handlers } = renderReviewPage({ mode: "queue" });
+    fireEvent.keyDown(window, { key });
+    expect(handlers.onEditRecord).toHaveBeenCalledWith(records[0]);
+    expect(handlers.onRate).not.toHaveBeenCalled();
+  });
+
+  it.each([{ key: "e", isComposing: true }, { key: "e", ctrlKey: true }, { key: "e", altKey: true }, { key: "e", metaKey: true }, { key: "e", repeat: true }])("ignores edit shortcut modifiers %j", event => {
+    const { handlers } = renderReviewPage({ mode: "queue" });
+    fireEvent.keyDown(window, event);
+    expect(handlers.onEditRecord).not.toHaveBeenCalled();
+  });
+
+  it("ignores edit shortcuts inside inputs and when disabled", () => {
+    window.localStorage.setItem("studyjournal-review-edit-shortcut", "off");
+    const { handlers } = renderReviewPage({ mode: "queue" });
+    fireEvent.keyDown(window, { key: "e" });
+    expect(handlers.onEditRecord).not.toHaveBeenCalled();
+  });
+
   it("opens voice recall for the current card without changing queue or rating state", () => {
     const onOpenVoiceRecall = vi.fn();
     const onQueueChange = vi.fn();

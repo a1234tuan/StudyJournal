@@ -81,14 +81,14 @@ export function flattenKnowledgeOutline(state: KnowledgeState, workspaceId: stri
   }
   return rows;
 }
-const dimensions = (title: string, count = 0, center = false) => {
-  const textWidth = Array.from(title).reduce((sum, character) => sum + (/[^\x00-\xff]/.test(character) ? 15 : 9), 0);
-  const reserve = count ? 54 : 28;
-  const width = Math.min(center ? 224 : 200, Math.max(center ? 144 : 88, textWidth + reserve));
-  const height = Math.max(center ? 52 : 40, Math.ceil(textWidth / (width - reserve)) * 20 + 20);
+const dimensions = (title: string, count = 0, center = false, measure?: (title: string) => number) => {
+  const textWidth = measure ? measure(title) * (center ? 1.125 : 1) : Array.from(title).reduce((sum, character) => sum + (/[^\x00-\xff]/.test(character) ? 16 : 9), 0);
+  const reserve = count ? 86 + Math.max(0, String(count).length - 2) * 9 : 28;
+  const width = Math.min(center ? 264 : 240, Math.max(center ? 176 : 108, textWidth + reserve));
+  const height = Math.max(center ? 60 : 44, Math.ceil(textWidth / (width - reserve)) * 24 + 20);
   return { width, height };
 };
-export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}, draft?: { id: string; parentId: string; afterId?: string }) {
+export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}, draft?: { id: string; parentId: string; afterId?: string }, measure?: (title: string) => number) {
   const rows = layoutKnowledgeTree(state, workspaceId, draft ? new Set([...collapsed].filter(id => id !== draft.parentId)) : collapsed);
   if (draft && !rows.some(row => row.id === draft.id)) {
     const parent = rows.find(row => row.id === draft.parentId);
@@ -103,13 +103,13 @@ export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, c
   const children = new Map<string, string[]>();
   const allParents = new Set(Object.values(state.entities).filter(entity => entity.kind === "node" && entity.workspaceId === workspaceId && isKnowledgeVisible(state, entity)).map(entity => (valueOf(state, entity, "position") as KnowledgePosition).parentNodeId));
   const nodes = new Map<string, MapNode>();
-  const centerSize = dimensions(knowledgeLabel(state, state.entities[workspaceId]), 0, true);
+  const centerSize = dimensions(knowledgeLabel(state, state.entities[workspaceId]), 0, true, measure);
   const center: MapNode = { id: ROOT_NODE, parentId: "", x: -centerSize.width / 2, y: -centerSize.height / 2, ...centerSize, side: 0, branch: 0, depth: -1, count: 0, hasChildren: false };
   for (const row of rows) {
     const siblings = children.get(row.parentNodeId) ?? [];
     siblings.push(row.id); children.set(row.parentNodeId, siblings);
     const count = references.get(row.id)?.length ?? 0;
-    nodes.set(row.id, { id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...(row.id === draft?.id ? { width: 300, height: 48 } : dimensions(knowledgeLabel(state, state.entities[row.id]), count)), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
+    nodes.set(row.id, { id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...(row.id === draft?.id ? { width: 300, height: 48 } : dimensions(knowledgeLabel(state, state.entities[row.id]), count, false, measure)), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
   }
   const spans = new Map<string, number>();
   for (const row of [...rows].reverse()) {

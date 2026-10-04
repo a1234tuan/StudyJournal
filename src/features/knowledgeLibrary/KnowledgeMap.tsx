@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText } from "lucide-react";
+import { FileText, Focus, Home, Minus, Plus, Maximize2, Pencil, PanelRightOpen } from "lucide-react";
+import { pinchMap, wheelMapZoom, zoomMapAt, type MapPoint } from "./mapViewport";
+import { useMapCamera, useMapLayoutMotion } from "./useMapMotion";
 import { KnowledgeTitleInput, type KnowledgeTitleEditor } from "./KnowledgeOutline";
 import { ROOT_NODE, type KnowledgeState } from "./domain";
 import { knowledgeLabel } from "./query";
@@ -10,37 +12,83 @@ import type { KnowledgeNavigation } from "./navigation";
 
 interface Props {
   state: KnowledgeState; workspaceId: string; navigation: KnowledgeNavigation; organizing: boolean; editor?: KnowledgeTitleEditor;
-  onEdit: (id: string) => void; onNavigation: (patch: Partial<KnowledgeNavigation>) => void;
+  onDetails: (id: string) => void; onEdit: (id: string) => void; onNavigation: (patch: Partial<KnowledgeNavigation>) => void;
   onSelect: (id: string) => void; onClear: () => void; onToggle: (id: string) => void; onCreate: (parentId: string, afterId?: string) => void;
   onMove: (id: string, parentId: string, beforeId?: string) => void;
 }
-interface Gesture { x: number; y: number; panX: number; panY: number; nodeId?: string; ready: boolean; moved: boolean; touch: boolean; zoom: number; pinch?: number }
+interface Gesture { x: number; y: number; panX: number; panY: number; nodeId?: string; ready: boolean; moved: boolean; touch: boolean; zoom: number; pinch?: number; midpoint?: MapPoint }
 interface Drag { id: string; deltaX: number; deltaY: number; drop?: MapDrop }
-export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, editor, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove }: Props) => {
-  const [view, setView] = useState({ zoom: navigation.zoom, panX: navigation.panX, panY: navigation.panY });
+export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, editor, onDetails, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove }: Props) => {
+  const { view, setView, camera } = useMapCamera({ zoom: navigation.zoom, panX: navigation.panX, panY: navigation.panY });
   const viewport = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [fontVersion, setFontVersion] = useState(0);
+  const measure = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return undefined;
+    const font = getComputedStyle(viewport.current ?? document.documentElement);
+    context.font = "500 " + getComputedStyle(document.documentElement).fontSize + " " + font.fontFamily;
+    const cache = new Map<string, number>();
+    return (title: string) => { if (!cache.has(title)) cache.set(title, context.measureText(title).width); return cache.get(title)!; };
+  }, [fontVersion]);
+  useEffect(() => {
+    let alive = true;
+    void document.fonts?.ready.then(() => { if (alive) setFontVersion(version => version + 1); });
+    const observer = new MutationObserver(() => setFontVersion(version => version + 1));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    return () => { alive = false; observer.disconnect(); };
+  }, []);
   const sides = useRef(navigation.mapWorkspaceId === workspaceId ? navigation.mapSides ?? {} : {});
-  const layout = useMemo(() => layoutKnowledgeMap(state, workspaceId, new Set(navigation.collapsed), sides.current, editor?.isNew ? { id: editor.entityId, parentId: editor.parentId ?? ROOT_NODE, afterId: editor.afterId } : undefined), [state, workspaceId, navigation.collapsed, editor?.isNew, editor?.entityId, editor?.parentId, editor?.afterId]);
+  const previousLayout = useRef<ReturnType<typeof layoutKnowledgeMap>>();
+  const layout = useMemo(() => {
+    const next = layoutKnowledgeMap(state, workspaceId, new Set(navigation.collapsed), sides.current, editor?.isNew ? { id: editor.entityId, parentId: editor.parentId ?? ROOT_NODE, afterId: editor.afterId } : undefined, measure);
+    const anchorId = navigation.selectedNodeId ?? ROOT_NODE;
+    const before = previousLayout.current?.nodes.find(node => node.id === anchorId);
+    const after = next.nodes.find(node => node.id === anchorId);
+    if (before && after) {
+      const deltaX = before.x - after.x;
+      const deltaY = before.y - after.y;
+      next.nodes = next.nodes.map(node => ({ ...node, x: node.x + deltaX, y: node.y + deltaY }));
+    }
+    previousLayout.current = next;
+    return next;
+  }, [state, workspaceId, navigation.collapsed, editor?.isNew, editor?.entityId, editor?.parentId, editor?.afterId, measure]);
   const initialized = useRef(navigation.mapWorkspaceId === workspaceId);
   const latest = useRef({ view, onNavigation, layout });
-  latest.current = { view, onNavigation, layout };
+  latest.current = { view: camera.current, onNavigation, layout };
   const gesture = useRef<Gesture>();
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const holdTimer = useRef<number>();
   const selectTimer = useRef<number>();
   const [drag, setDrag] = useState<Drag>();
   const dragRef = useRef<Drag>();
-  const updateDrag = (next?: Drag) => { dragRef.current = next; setDrag(next); };
+  const dragFrame = useRef<number>();
+  const updateDrag = (next?: Drag) => {
+    dragRef.current = next;
+    if (!next) { if (dragFrame.current !== undefined) cancelAnimationFrame(dragFrame.current); dragFrame.current = undefined; setDrag(undefined); return; }
+    if (dragFrame.current === undefined) dragFrame.current = requestAnimationFrame(() => { dragFrame.current = undefined; setDrag(dragRef.current); });
+  };
+  useEffect(() => () => { if (dragFrame.current !== undefined) cancelAnimationFrame(dragFrame.current); }, []);
+  const animatedNodes = useMapLayoutMotion(layout.nodes);
   const frozen = useRef(layout.nodes);
-  if (!gesture.current) frozen.current = layout.nodes;
-  const nodes = gesture.current ? frozen.current : layout.nodes;
-  const byId = new Map(nodes.map(node => [node.id, node]));
+  if (!gesture.current) frozen.current = animatedNodes;
+  const nodes = gesture.current ? frozen.current : animatedNodes;
+  const byId = useMemo(() => new Map(nodes.map(node => [node.id, node])), [nodes]);
   const draggedIds = new Set<string>();
   if (drag) { draggedIds.add(drag.id); for (const node of nodes) if (draggedIds.has(node.parentId)) draggedIds.add(node.id); }
-  const visible = nodes.filter(node => node.id === editor?.entityId || (node.x + node.width) * view.zoom + view.panX > -80 && node.x * view.zoom + view.panX < size.width + 80 && (node.y + node.height) * view.zoom + view.panY > -80 && node.y * view.zoom + view.panY < size.height + 80);
+  const visible = nodes.filter(node => node.id === editor?.entityId || node.id === navigation.selectedNodeId || (node.x + node.width) * view.zoom + view.panX > -80 && node.x * view.zoom + view.panX < size.width + 80 && (node.y + node.height) * view.zoom + view.panY > -80 && node.y * view.zoom + view.panY < size.height + 80);
+  const visibleIds = new Set(visible.map(node => node.id));
+  const lineVisible = (node: typeof nodes[number]) => {
+    const parent = byId.get(node.parentId);
+    if (!parent) return false;
+    if (visibleIds.has(node.id) || visibleIds.has(parent.id)) return true;
+    return Math.max(node.x + node.width, parent.x + parent.width) * view.zoom + view.panX >= 0 && Math.min(node.x, parent.x) * view.zoom + view.panX <= size.width && Math.max(node.y + node.height, parent.y + parent.height) * view.zoom + view.panY >= 0 && Math.min(node.y, parent.y) * view.zoom + view.panY <= size.height;
+  };
   const cancel = () => { window.clearTimeout(holdTimer.current); window.clearTimeout(selectTimer.current); gesture.current = undefined; pointers.current.clear(); updateDrag(); };
+  const [cameraSettling, setCameraSettling] = useState(false);
   const fit = (initial = false) => {
+    setCameraSettling(true);
     const left = Math.min(...layout.nodes.map(node => node.x)) - 40;
     const right = Math.max(...layout.nodes.map(node => node.x + node.width)) + 40;
     const top = Math.min(...layout.nodes.map(node => node.y)) - 40;
@@ -49,10 +97,12 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
     const zoom = Math.max(readableStart ? .85 : .2, Math.min(1, size.width / (right - left), size.height / (bottom - top)));
     setView({ zoom, panX: size.width / 2 - (readableStart ? 0 : (left + right) / 2) * zoom, panY: size.height / 2 - (top + bottom) / 2 * zoom });
   };
-  const zoomAt = (zoom: number, anchorX = size.width / 2, anchorY = size.height / 2) => setView(current => {
-    const next = Math.min(2, Math.max(.2, zoom));
-    return { zoom: next, panX: anchorX - (anchorX - current.panX) * next / current.zoom, panY: anchorY - (anchorY - current.panY) * next / current.zoom };
-  });
+  useEffect(() => { if (cameraSettling) { const frame = requestAnimationFrame(() => setCameraSettling(false)); return () => cancelAnimationFrame(frame); } }, [view, cameraSettling]);
+  const zoomAt = (zoom: number, anchorX = size.width / 2, anchorY = size.height / 2) => setView(current => zoomMapAt(current, zoom, { x: anchorX, y: anchorY }));
+  const focusNode = (id = navigation.selectedNodeId ?? ROOT_NODE) => {
+    const selected = layout.nodes.find(node => node.id === id);
+    if (selected) setView(current => ({ ...current, panX: size.width / 2 - (selected.x + selected.width / 2) * current.zoom, panY: size.height / 2 - (selected.y + selected.height / 2) * current.zoom }));
+  };
   useEffect(() => {
     if (!viewport.current) return;
     const element = viewport.current;
@@ -70,10 +120,6 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
     const previewOverlay = navigation.recordPreviewId && (narrow || (viewport.current?.parentElement?.clientWidth ?? 0) < 720);
     const availableHeight = !editor && navigation.detailsOpen ? size.height * (previewOverlay ? .25 : narrow ? .48 : 1) : size.height;
     setView(current => {
-      if ((navigation.detailsOpen || editor) && current.zoom < .85) {
-        const zoom = .85;
-        return { zoom, panX: size.width / 2 - (selected.x + selected.width / 2) * zoom, panY: availableHeight / 2 - (selected.y + selected.height / 2) * zoom };
-      }
       const left = selected.x * current.zoom + current.panX;
       const top = selected.y * current.zoom + current.panY;
       const right = left + selected.width * current.zoom;
@@ -101,16 +147,16 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
   }, []);
   useEffect(() => { if (editor) { window.clearTimeout(selectTimer.current); } }, [editor]);
   const dropMessage = !drag ? "" : !drag.drop ? "拖到节点中间成为子节点，上下边缘调整顺序" : drag.drop.mode === "invalid" ? "不能移动到自身或下级分支" : drag.drop.mode === "child" ? drag.drop.parentId === ROOT_NODE ? "松开移至专题下" : "松开成为子节点" : drag.drop.mode === "before" ? "松开放在此节点之前" : "松开放在此节点之后";
-  const focusedSelection = useRef<string>();
+  const focusedSelection = useRef<{ id: string; button: HTMLButtonElement }>();
   useEffect(() => {
     if (editor) { focusedSelection.current = undefined; return; }
-    if (!navigation.selectedNodeId || focusedSelection.current === navigation.selectedNodeId) return;
+    if (!navigation.selectedNodeId || (focusedSelection.current?.id === navigation.selectedNodeId && focusedSelection.current.button.isConnected)) return;
     const frame = window.requestAnimationFrame(() => {
       const button = viewport.current?.querySelector<HTMLButtonElement>('[data-node-id="' + CSS.escape(navigation.selectedNodeId!) + '"] .knowledge-map-label');
-      if (button) { button.focus({ preventScroll: true }); focusedSelection.current = navigation.selectedNodeId; }
+      if (button) { button.focus({ preventScroll: true }); focusedSelection.current = { id: navigation.selectedNodeId!, button }; }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [Boolean(editor), navigation.selectedNodeId, layout, view]);
+  }, [Boolean(editor), navigation.selectedNodeId, layout, view, nodes]);
   const focusNeighbor = (direction: MapDirection) => {
     const nextId = mapNeighbor(layout.nodes, navigation.selectedNodeId, direction);
     if (!nextId) return false;
@@ -145,21 +191,24 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
   const dropPreview = drag?.drop ? mapDropPreview(nodes, drag.id, drag.drop) : undefined;
   return <section className="knowledge-map-section" aria-label="专题导图">
     {editor?.isNew && !layout.nodes.some(node => node.id === editor.entityId) && <div className="knowledge-map-new"><KnowledgeTitleInput editor={editor} label="新建节点" /></div>}
-    <div className="knowledge-map-controls"><button onClick={() => zoomAt(view.zoom / 1.2)} aria-label="缩小导图">−</button><output>{Math.round(view.zoom * 100)}%</output><button onClick={() => zoomAt(view.zoom * 1.2)} aria-label="放大导图">＋</button><button onClick={() => fit()}>查看全貌</button></div>
+    <div className="knowledge-map-context" aria-live="polite"><span>专题导图</span><small>{layout.nodes.length - 1} 个可见节点 · 单击选择，双击编辑</small></div>
+    {navigation.selectedNodeId && !editor && <div className="knowledge-map-selection-tools" aria-label="选中节点操作"><button type="button" onClick={() => onDetails(navigation.selectedNodeId!)}><PanelRightOpen size={15} />查看详情</button><button type="button" onClick={() => focusNode()}><Focus size={15} />聚焦</button>{organizing && <button type="button" onClick={() => onEdit(navigation.selectedNodeId!)}><Pencil size={15} />改名</button>}</div>}
+    <div className="knowledge-map-controls"><button type="button" onClick={() => zoomAt(camera.current.zoom / 1.2)} aria-label="缩小导图"><Minus size={16} /></button><output>{Math.round(view.zoom * 100)}%</output><button type="button" onClick={() => zoomAt(camera.current.zoom * 1.2)} aria-label="放大导图"><Plus size={16} /></button><span className="knowledge-map-control-divider" /><button type="button" onClick={() => focusNode(ROOT_NODE)} aria-label="回到中心"><Home size={16} /></button><button type="button" onClick={() => fit()}><Maximize2 size={15} /><span>查看全貌</span></button></div>
     {drag && <div className="knowledge-drop-message" role="status">{dropMessage}</div>}
-    <div className="knowledge-map-viewport" ref={viewport} tabIndex={0} aria-label="可平移缩放的导图画布"
+    <div className="knowledge-map-viewport" ref={viewport} tabIndex={0} aria-label="可平移缩放的导图画布" aria-busy={cameraSettling}
       onDoubleClick={event => { if (editor || (event.target as Element).closest("form, .knowledge-map-toggle")) return; const id = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId; if (id) { window.clearTimeout(selectTimer.current); onEdit(id); } }}
-      onWheel={event => { if (gesture.current) return; if (event.ctrlKey || event.metaKey) { const rect = event.currentTarget.getBoundingClientRect(); zoomAt(view.zoom * (event.deltaY > 0 ? .9 : 1.1), event.clientX - rect.left, event.clientY - rect.top); } else setView(current => ({ ...current, panX: current.panX - event.deltaX, panY: current.panY - event.deltaY })); }}
+      onWheel={event => { if (gesture.current || (event.target as Element).closest("input, textarea, form")) return; if (event.ctrlKey || event.metaKey) { const rect = event.currentTarget.getBoundingClientRect(); zoomAt(wheelMapZoom(camera.current.zoom, event.deltaY, event.deltaMode, size.height), event.clientX - rect.left, event.clientY - rect.top); } else { const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1; setView(current => ({ ...current, panX: current.panX - event.deltaX * unit, panY: current.panY - event.deltaY * unit })); } }}
       onKeyDown={handleKeyboard}
       onPointerDown={event => {
-        if (event.button !== 0 || (event.target as Element).closest("form, input, .knowledge-map-toggle")) return;
+        if (event.button !== 0 || (event.target as Element).closest("form, input, .knowledge-map-toggle, .knowledge-map-count")) return;
         window.clearTimeout(selectTimer.current);
         pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
         event.currentTarget.setPointerCapture(event.pointerId);
         if (pointers.current.size > 1) {
           window.clearTimeout(holdTimer.current);
           const values = [...pointers.current.values()];
-          gesture.current = { x: 0, y: 0, panX: view.panX, panY: view.panY, ready: false, moved: true, touch: true, zoom: view.zoom, pinch: Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y) };
+          const bounds = event.currentTarget.getBoundingClientRect();
+          gesture.current = { x: 0, y: 0, panX: camera.current.panX, panY: camera.current.panY, ready: false, moved: true, touch: true, zoom: camera.current.zoom, midpoint: { x: (values[0].x + values[1].x) / 2 - bounds.left, y: (values[0].y + values[1].y) / 2 - bounds.top }, pinch: Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y) };
           updateDrag(); return;
         }
         const nodeId = (event.target as Element).closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
@@ -173,7 +222,10 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
         pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
         if (pointers.current.size > 1) {
           const values = [...pointers.current.values()];
-          if (current.pinch) zoomAt(current.zoom * Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y) / current.pinch);
+          if (current.pinch && current.midpoint) {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setView(pinchMap(current, current.midpoint, { x: (values[0].x + values[1].x) / 2 - bounds.left, y: (values[0].y + values[1].y) / 2 - bounds.top }, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y) / current.pinch));
+          }
           return;
         }
         if (current.pinch) return;
@@ -194,17 +246,17 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
         if (current?.moved && finalDrag?.drop && finalDrag.drop.mode !== "invalid") onMove(finalDrag.id, finalDrag.drop.parentId, finalDrag.drop.beforeId);
         else if (current && !current.moved && !editor) {
           const nodeId = current.nodeId;
-          if (nodeId) selectTimer.current = window.setTimeout(() => onSelect(nodeId), current.touch ? 0 : 220);
+          if (nodeId) onSelect(nodeId);
           else onClear();
         }
         gesture.current = undefined; updateDrag();
       }}
       onPointerCancel={cancel}>
       <div className="knowledge-map-plane" style={{ transform: "translate(" + view.panX + "px," + view.panY + "px) scale(" + view.zoom + ")" }}>
-        <svg aria-hidden="true" className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => node.id !== ROOT_NODE && (visible.includes(node) || visible.includes(byId.get(node.parentId)!))).map(node => <path key={node.id} data-branch={node.branch} data-depth={node.depth} d={knowledgeMapPath(byId.get(node.parentId)!, node)} />)}</svg>
+        <svg aria-hidden="true" className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => node.id !== ROOT_NODE && lineVisible(node)).map(node => <path key={node.id} data-branch={node.branch} data-depth={node.depth} d={knowledgeMapPath(byId.get(node.parentId)!, node)} />)}</svg>
          {dropPreview && <svg aria-hidden="true" className="knowledge-map-drop-preview" data-drop-preview-mode={drag?.drop?.mode} width="1" height="1"><path d={dropPreview.path} /><rect x={dropPreview.slot.x} y={dropPreview.slot.y} width={dropPreview.slot.width} height={dropPreview.slot.height} rx="6" /><circle cx={dropPreview.x} cy={dropPreview.y} r="4" /></svg>}
         {visible.map(node => <div key={node.id} data-node-id={node.id === ROOT_NODE ? undefined : node.id} data-map-root={node.id === ROOT_NODE || undefined} data-branch={node.branch} data-side={node.side} data-depth={node.depth} data-drop={drag?.drop?.targetId === node.id ? drag.drop.mode : undefined} className={"knowledge-map-node" + (node.id === ROOT_NODE ? " knowledge-map-center" : "") + (navigation.selectedNodeId === node.id ? " selected" : "") + (draggedIds.has(node.id) ? " dragging" : "")} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}>
-          {node.id === ROOT_NODE ? <strong>{knowledgeLabel(state, state.entities[workspaceId])}</strong> : editor?.entityId === node.id ? <KnowledgeTitleInput editor={editor} label={editor.isNew ? "新建节点" : "节点标题"} /> : <><button className="knowledge-map-label" aria-pressed={navigation.selectedNodeId === node.id} onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); window.clearTimeout(selectTimer.current); onEdit(node.id); } }} onClick={event => { if (event.detail === 0) onSelect(node.id); }}>{knowledgeLabel(state, state.entities[node.id])}</button>{node.count > 0 && <span className="knowledge-map-count" aria-label={node.count + " 条日志"}><FileText size={11} />{node.count}</span>}</>}
+          {node.id === ROOT_NODE ? <strong>{knowledgeLabel(state, state.entities[workspaceId])}</strong> : editor?.entityId === node.id ? <KnowledgeTitleInput editor={editor} label={editor.isNew ? "新建节点" : "节点标题"} /> : <><button className="knowledge-map-label" aria-pressed={navigation.selectedNodeId === node.id} onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); window.clearTimeout(selectTimer.current); onEdit(node.id); } }} onClick={event => { if (event.detail === 0) onSelect(node.id); }}>{knowledgeLabel(state, state.entities[node.id])}</button>{node.count > 0 && <button type="button" className="knowledge-map-count" aria-label={"查看 " + node.count + " 条日志"} onDoubleClick={event => event.stopPropagation()} onClick={() => onDetails(node.id)}><FileText size={13} />{node.count}</button>}</>}
           {node.hasChildren && <button className="knowledge-map-toggle" aria-expanded={!navigation.collapsed.includes(node.id)} aria-label={navigation.collapsed.includes(node.id) ? "展开分支" : "折叠分支"} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={() => onToggle(node.id)}><span>{navigation.collapsed.includes(node.id) ? "+" : "−"}</span></button>}
         </div>)}
         {drag && <div className="knowledge-map-ghost" aria-hidden="true" style={{ transform: "translate(" + drag.deltaX + "px," + drag.deltaY + "px)" }}><svg className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => draggedIds.has(node.id) && draggedIds.has(node.parentId)).map(node => <path key={node.id} data-branch={node.branch} d={knowledgeMapPath(byId.get(node.parentId)!, node)} />)}</svg>{nodes.filter(node => draggedIds.has(node.id)).map(node => <div className="knowledge-map-node" data-branch={node.branch} key={node.id} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}><span className="knowledge-map-label">{knowledgeLabel(state, state.entities[node.id])}</span></div>)}</div>}

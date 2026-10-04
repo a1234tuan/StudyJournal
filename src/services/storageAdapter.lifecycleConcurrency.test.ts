@@ -95,6 +95,29 @@ afterEach(async () => {
 });
 
 describe("SJ-AUD-01 record lifecycle interleavings", () => {
+  it("rejects conditional draft cleanup if a newer draft arrives", async () => {
+    const original = record();
+    const draft = { id: original.id, recordId: original.id, baseUpdatedAt: stamp, draft: original, updatedAt: stamp };
+    await database.blocks.put(original);
+    await database.recordDrafts.put(draft);
+    const newer = { ...draft, updatedAt: nextStamp, draft: record({ title: "另一窗口的草稿" }) };
+    await peer.recordDrafts.put(newer);
+    await expect(adapter.deleteRecordDraft(original.id, { expectedRecord: original, expectedDraft: draft })).rejects.toMatchObject({ code: "stale-record" });
+    expect(await database.recordDrafts.get(original.id)).toEqual(newer);
+    expect(await database.blocks.get(original.id)).toEqual(original);
+  });
+
+  it("cleans an acknowledged redundant draft without writing formal content", async () => {
+    const original = record();
+    const draft = { id: original.id, recordId: original.id, baseUpdatedAt: stamp, draft: original, updatedAt: stamp };
+    await database.blocks.put(original);
+    await database.recordDrafts.put(draft);
+    const put = vi.spyOn(database.blocks, "put");
+    await adapter.deleteRecordDraft(original.id, { expectedRecord: original, expectedDraft: draft });
+    expect(await database.recordDrafts.get(original.id)).toBeUndefined();
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("rejects deletion after a formal expected-row save without erasing its content or draft", async () => {
     const original = record();
     await database.blocks.put(original);

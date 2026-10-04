@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionableError } from "../lib/uiError";
+import { finishCommittedWrite } from "../lib/committedWrite";
 
 import type {
   AppSettings,
@@ -316,11 +317,11 @@ export const useAppData = () => {
   const saveBlock = useCallback(
     async (block: Block, options?: RecordSaveOptions) => {
       const saved = await storage.saveBlock(block, options);
-      await refresh();
-      await markAutoBackupDirty("block");
-      if (saved.type === "record") {
-        enqueueAutoOcrForRecord(saved, { onAssetChanged: refresh });
-      }
+      return finishCommittedWrite(saved, [
+        () => markAutoBackupDirty("block"),
+        refresh,
+        async () => { if (saved.type === "record") enqueueAutoOcrForRecord(saved, { onAssetChanged: refresh }); },
+      ]);
     },
     [refresh],
   );
@@ -452,14 +453,14 @@ export const useAppData = () => {
   const saveRecordDraft = useCallback(async (draft: Parameters<typeof storage.saveRecordDraft>[0]) => {
     const saved = await storage.saveRecordDraft(draft);
     setRecordDrafts((previous) => [...previous.filter((item) => item.recordId !== saved.recordId), saved]);
-    await markAutoBackupDirty("record-draft");
-    return saved;
+    return finishCommittedWrite(saved, [() => markAutoBackupDirty("record-draft")]);
   }, []);
 
-  const deleteRecordDraft = useCallback(async (recordId: string) => {
-    await storage.deleteRecordDraft(recordId);
+  const deleteRecordDraft = useCallback(async (recordId: string, guard?: Parameters<typeof storage.deleteRecordDraft>[1]) => {
+    if (guard) await storage.deleteRecordDraft(recordId, guard);
+    else await storage.deleteRecordDraft(recordId);
     setRecordDrafts((previous) => previous.filter((item) => item.recordId !== recordId));
-    await markAutoBackupDirty("record-draft-delete");
+    await finishCommittedWrite(undefined, [() => markAutoBackupDirty("record-draft-delete")]);
   }, []);
 
   const addRecordToReview = useCallback(

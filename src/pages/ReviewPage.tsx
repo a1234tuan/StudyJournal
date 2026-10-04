@@ -341,6 +341,13 @@ export const ReviewPage = ({
   onCoachOpenChange,
 }: ReviewPageProps) => {
   const pageLayerState = usePageTransitionLayerState();
+  const [editShortcutEnabled, setEditShortcutEnabled] = useState(() => {
+    try { return localStorage.getItem("studyjournal-review-edit-shortcut") !== "off"; } catch { return true; }
+  });
+  const toggleEditShortcut = () => setEditShortcutEnabled(current => {
+    try { localStorage.setItem("studyjournal-review-edit-shortcut", current ? "off" : "on"); } catch { }
+    return !current;
+  });
   const touchStartYRef = useRef<number | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const [pullReady, setPullReady] = useState(false);
@@ -845,6 +852,20 @@ export const ReviewPage = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [pendingUndoRestore, ratingRecordId, undoHistory.length, undoLastRating, undoing]);
 
+  useEffect(() => {
+    const editCurrent = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!editShortcutEnabled || pageLayerState !== "entered" || mode !== "queue" || !currentRecord || coachOpen || cardCoachOpen || dueBoardOpen || annotationOpen || headerMenuOpen || ratingRecordId || undoing || pendingUndoRestore) return;
+      if (event.key.toLowerCase() !== "e" || event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+      if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=textbox], [role=dialog], [role=menu]")) return;
+      if (document.querySelector("dialog[open], [role=dialog][aria-modal=true]")) return;
+      event.preventDefault();
+      onEditRecord(currentRecord);
+    };
+    window.addEventListener("keydown", editCurrent);
+    return () => window.removeEventListener("keydown", editCurrent);
+  }, [editShortcutEnabled, pageLayerState, mode, currentRecord, coachOpen, cardCoachOpen, dueBoardOpen, annotationOpen, headerMenuOpen, ratingRecordId, undoing, pendingUndoRestore, onEditRecord]);
+
   const runFeedbackAction = async (actionId: string, action: () => Promise<unknown>) => {
     if (feedbackActionId) return;
     setRatingError("");
@@ -910,7 +931,7 @@ export const ReviewPage = ({
             {!standalone && !coachOpen && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={17} /><span>待复习</span></button>}
             <div className="review-header-menu" ref={headerMenuRef}>
             {!coachOpen && mode === "queue" && currentRecord && (
-              <button type="button" className="secondary-button review-direct-edit" onClick={() => onEditRecord(currentRecord)}>
+              <button type="button" className="secondary-button review-direct-edit" title="编辑（E）" aria-keyshortcuts={editShortcutEnabled ? "E" : undefined} onClick={() => onEditRecord(currentRecord)}>
                 <Edit3 size={16} />编辑
               </button>
             )}
@@ -926,6 +947,7 @@ export const ReviewPage = ({
               <MoreHorizontal size={19} />
             </button>
             <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
+                <button type="button" role="menuitemcheckbox" aria-checked={editShortcutEnabled} onClick={toggleEditShortcut}>E 快捷编辑：{editShortcutEnabled ? "开启" : "关闭"}</button>
                 <button
                   type="button"
                   role="menuitem"
@@ -1081,12 +1103,13 @@ export const ReviewPage = ({
                   <MoreHorizontal size={19} />
                 </button>
                 <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
+                <button type="button" role="menuitemcheckbox" aria-checked={editShortcutEnabled} onClick={toggleEditShortcut}>E 快捷编辑：{editShortcutEnabled ? "开启" : "关闭"}</button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
                     <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
                   </button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}><RefreshCw size={16} /><span>刷新复习列表</span></button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }} disabled={!onOpenStats}><BarChart3 size={16} /><span>学习统计</span></button>
-                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span></button>
+                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span><small aria-hidden="true">E</small></button>
                   {onAskAiRecord && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onAskAiRecord(currentRecord); }}><Bot size={16} /><span>AI 问答</span></button>}
                   {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
                 </MotionPresence>

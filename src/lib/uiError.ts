@@ -41,6 +41,8 @@ export class StaleRecordError extends Error {
   }
 }
 
+const diagnostics: Array<{ diagnosticId: string; context: UiErrorContext; errorType: string; timestamp: string }> = [];
+export const getUiDiagnostics = () => diagnostics.map(entry => ({ ...entry }));
 let diagnosticSequence = 0;
 
 const diagnosticPrefix = (context: UiErrorContext): string => context
@@ -53,11 +55,16 @@ export const normalizeUiError = (error: unknown, context: UiErrorContext): UiErr
   diagnosticSequence = (diagnosticSequence + 1) % 46_656;
   const time = Date.now().toString(36).slice(-5).toUpperCase();
   const sequence = diagnosticSequence.toString(36).padStart(3, "0").toUpperCase();
+  const diagnosticId = `${diagnosticPrefix(context)}-${time}${sequence}`;
+  const knownNames = ["QuotaExceededError", "AbortError", "DataError", "InvalidStateError", "TransactionInactiveError", "ConstraintError", "StaleRecordError", "Error"];
+  const errorType = error instanceof Error && knownNames.includes(error.name) ? error.name : "UnknownError";
+  diagnostics.push({ diagnosticId, context, errorType, timestamp: new Date().toISOString() });
+  if (diagnostics.length > 30) diagnostics.shift();
   return {
     message: context === "record-save" && error instanceof StaleRecordError
       ? STALE_RECORD_MESSAGE
       : CONTEXT_MESSAGES[context],
-    diagnosticId: `${diagnosticPrefix(context)}-${time}${sequence}`,
+    diagnosticId,
   };
 };
 
