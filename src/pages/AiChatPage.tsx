@@ -7,7 +7,6 @@ import {
   ChevronDown,
   CircleAlert,
   CircleStop,
-  Clock3,
   Copy,
   Download,
   Ellipsis,
@@ -20,7 +19,6 @@ import {
   Settings,
   Sparkles,
   Trash2,
-  User,
   X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -180,6 +178,7 @@ export const AiChatPage = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const sendAbortRef = useRef<AbortController>();
+  const refreshGeneration = useRef(0);
 
   useEffect(() => () => { sendAbortRef.current?.abort(); }, []);
   const presets = useMemo(() => sortedPresets(settings), [settings]);
@@ -189,17 +188,14 @@ export const AiChatPage = ({
   const provider = useMemo(() => getCurrentAiProvider(settings.ai), [settings.ai]);
 
   const refresh = async () => {
+    const generation = ++refreshGeneration.current;
     const nextSessions = await storage.listAiSessions?.() ?? [];
-    setSessions(nextSessions);
-    if (!sessionId) {
-      setSession(null);
-      setMessages([]);
-      return;
-    }
-    const nextSession = await storage.getAiSession?.(sessionId);
-    setSession(nextSession ?? null);
+    const nextSession = sessionId ? await storage.getAiSession?.(sessionId) : undefined;
     const nextMessages = nextSession ? await storage.listAiMessages?.(nextSession.id) ?? [] : [];
     const nextAttachments = nextSession ? await storage.listAiAttachments?.(nextSession.id) ?? [] : [];
+    if (generation !== refreshGeneration.current) return;
+    setSessions(nextSessions);
+    setSession(nextSession ?? null);
     setMessages(nextMessages);
     setMessageAttachments(
       nextAttachments.reduce<Record<string, AiChatAttachment[]>>((grouped, attachment) => {
@@ -218,6 +214,7 @@ export const AiChatPage = ({
     setLearningActionsOpen(false);
     setImageActionsOpen(false);
     void refresh();
+    return () => { refreshGeneration.current += 1; };
   }, [sessionId]);
 
   const isNearThreadBottom = (thread: HTMLElement): boolean =>
@@ -620,11 +617,30 @@ export const AiChatPage = ({
     );
   }
 
+  const historyList = <div className="ai-history-list">
+    {sessions.length === 0 ? <p className="helper-text">还没有 AI 聊天记录。</p> : sessions.map(item => (
+      <div key={item.id} className={"ai-history-entry" + (item.id === sessionId ? " active" : "")}>
+        <button type="button" disabled={busy} aria-current={item.id === sessionId ? "page" : undefined} onClick={() => { setHistoryOpen(false); onOpenSession(item.id); }}>
+          <strong>{item.title}</strong>
+          <small>{item.scopeTitle ?? item.attachment?.scopeTitle ?? item.sourceDate ?? item.updatedAt.slice(0, 10)}</small>
+        </button>
+        <button type="button" className="ai-history-delete" disabled={busy} aria-label={"删除聊天：" + item.title} title="删除聊天" onClick={() => void deleteSession(item.id)}><Trash2 size={15} /></button>
+      </div>
+    ))}
+  </div>;
+
   return (
     <main className="page ai-chat-page immersive">
+      <aside className="ai-history-sidebar" aria-label="聊天历史">
+        <button type="button" className="ai-history-return" onClick={onBack}><ArrowLeft size={17} />返回学习日志</button>
+        <h2>AI 问答</h2>
+        <button type="button" className="ai-new-chat" disabled={busy} onClick={onOpenScopeScreen}><MessageSquarePlus size={18} />新建问答</button>
+        <p className="ai-history-label">聊天记录</p>
+        {historyList}
+      </aside>
       <section className="ai-chat-shell">
         <header className="ai-topbar">
-          <button type="button" className="icon-button" onClick={onBack} aria-label="返回" title="返回">
+          <button type="button" className="icon-button ai-workspace-back" onClick={onBack} aria-label="返回" title="返回">
             <ArrowLeft size={18} />
           </button>
           <div className="ai-topbar-title">
@@ -644,7 +660,7 @@ export const AiChatPage = ({
                 <ChevronDown size={15} />
               </button>
             )}
-            <button type="button" className="icon-button" onClick={() => setHistoryOpen(true)} aria-label="打开历史聊天">
+            <button type="button" className="icon-button ai-history-trigger" onClick={() => setHistoryOpen(true)} aria-label="打开历史聊天">
               <History size={18} />
             </button>
             <button type="button" className="icon-button" onClick={() => setMoreActionsOpen(true)} aria-label="更多 AI 操作" title="更多 AI 操作">
@@ -709,20 +725,8 @@ export const AiChatPage = ({
             </div>
           ) : (
             messages.map((message) => (
-              <article key={message.id} className={`ai-bubble-row ${message.role} ${message.error ? "error" : ""}`}>
-                {message.role === "assistant" && (
-                  <span className="ai-avatar">
-                    <Bot size={17} />
-                  </span>
-                )}
-                <div className="ai-bubble">
-                  <header>
-                    <span>{message.role === "user" ? "你" : "AI"}</span>
-                    <button type="button" onClick={() => void copy(message.content)}>
-                      <Copy size={14} />
-                      复制
-                    </button>
-                  </header>
+              <article key={message.id} aria-label={message.role === "user" ? "用户消息" : "AI 回复"} className={`ai-bubble-row ${message.role} ${message.error ? "error" : ""}`}>
+                <div className={message.role === "user" ? "ai-bubble" : "ai-answer"}>
                   <div className="ai-markdown">
                     {(messageAttachments[message.id] ?? []).length > 0 && (
                       <div className="ai-message-images">
@@ -731,14 +735,10 @@ export const AiChatPage = ({
                         ))}
                       </div>
                     )}
-                    <AiMarkdown content={message.content} />
+                    {message.role === "user" ? <div className="ai-user-text">{message.content}</div> : <AiMarkdown content={message.content} />}
                   </div>
                 </div>
-                {message.role === "user" && (
-                  <span className="ai-avatar user">
-                    <User size={17} />
-                  </span>
-                )}
+                <button type="button" className="ai-message-copy" aria-label={message.role === "user" ? "复制用户消息" : "复制回答"} title="复制" onClick={() => void copy(message.content)}><Copy size={15} /></button>
               </article>
             ))
           )}
@@ -747,7 +747,7 @@ export const AiChatPage = ({
               <span className="ai-avatar">
                 <Bot size={17} />
               </span>
-              <div className="ai-bubble typing">
+              <div className="ai-answer typing">
                 <RefreshCw size={16} className="spin" />
                 正在思考...
               </div>
@@ -1005,38 +1005,7 @@ export const AiChatPage = ({
                 <X size={18} />
               </button>
             </header>
-            <div className="ai-history-list">
-              {sessions.length === 0 ? (
-                <p className="helper-text">还没有 AI 聊天记录。</p>
-              ) : (
-                sessions.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={item.id === sessionId ? "active" : ""}
-                    onClick={() => {
-                      setHistoryOpen(false);
-                      onOpenSession(item.id);
-                    }}
-                  >
-                    <span>
-                      <strong>{item.title}</strong>
-                      <small>
-                        <Clock3 size={13} />
-                        {item.scopeTitle ?? item.attachment?.scopeTitle ?? item.sourceDate ?? item.updatedAt.slice(0, 10)} / {item.updatedAt.slice(11, 16)}
-                      </small>
-                    </span>
-                    <Trash2
-                      size={16}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void deleteSession(item.id);
-                      }}
-                    />
-                  </button>
-                ))
-              )}
-            </div>
+            {historyList}
           </aside>
       </MotionPresence>
     </main>

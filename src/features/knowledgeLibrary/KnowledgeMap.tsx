@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Focus, Home, Minus, Plus, Maximize2, Pencil, PanelRightOpen } from "lucide-react";
+import { FileText, Focus, Home, Minus, Plus, Maximize2, Minimize2, Scan, Pencil, PanelRightOpen } from "lucide-react";
 import { pinchMap, wheelMapZoom, zoomMapAt, type MapPoint } from "./mapViewport";
 import { useMapCamera, useMapLayoutMotion } from "./useMapMotion";
 import { KnowledgeTitleInput, type KnowledgeTitleEditor } from "./KnowledgeOutline";
@@ -11,6 +11,7 @@ import type { KnowledgePosition } from "./domain";
 import type { KnowledgeNavigation } from "./navigation";
 
 interface Props {
+  fullscreen?: boolean; onFullscreenChange?: (fullscreen: boolean) => void;
   state: KnowledgeState; workspaceId: string; navigation: KnowledgeNavigation; organizing: boolean; editor?: KnowledgeTitleEditor;
   onDetails: (id: string) => void; onEdit: (id: string) => void; onNavigation: (patch: Partial<KnowledgeNavigation>) => void;
   onSelect: (id: string) => void; onClear: () => void; onToggle: (id: string) => void; onCreate: (parentId: string, afterId?: string) => void;
@@ -18,7 +19,7 @@ interface Props {
 }
 interface Gesture { x: number; y: number; panX: number; panY: number; nodeId?: string; ready: boolean; moved: boolean; touch: boolean; zoom: number; pinch?: number; midpoint?: MapPoint }
 interface Drag { id: string; deltaX: number; deltaY: number; drop?: MapDrop }
-export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, editor, onDetails, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove }: Props) => {
+export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, workspaceId, navigation, organizing, editor, onDetails, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove }: Props) => {
   const { view, setView, camera } = useMapCamera({ zoom: navigation.zoom, panX: navigation.panX, panY: navigation.panY });
   const viewport = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -191,9 +192,9 @@ export const KnowledgeMap = ({ state, workspaceId, navigation, organizing, edito
   const dropPreview = drag?.drop ? mapDropPreview(nodes, drag.id, drag.drop) : undefined;
   return <section className="knowledge-map-section" aria-label="专题导图">
     {editor?.isNew && !layout.nodes.some(node => node.id === editor.entityId) && <div className="knowledge-map-new"><KnowledgeTitleInput editor={editor} label="新建节点" /></div>}
-    <div className="knowledge-map-context" aria-live="polite"><span>专题导图</span><small>{layout.nodes.length - 1} 个可见节点 · 单击选择，双击编辑</small></div>
+    <div className="knowledge-map-context" aria-live="polite"><span>{fullscreen ? knowledgeLabel(state, state.entities[workspaceId]) : "专题导图"}</span><small>{layout.nodes.length - 1} 个可见节点 · 单击选择，双击编辑</small></div>
     {navigation.selectedNodeId && !editor && <div className="knowledge-map-selection-tools" aria-label="选中节点操作"><button type="button" onClick={() => onDetails(navigation.selectedNodeId!)}><PanelRightOpen size={15} />查看详情</button><button type="button" onClick={() => focusNode()}><Focus size={15} />聚焦</button>{organizing && <button type="button" onClick={() => onEdit(navigation.selectedNodeId!)}><Pencil size={15} />改名</button>}</div>}
-    <div className="knowledge-map-controls"><button type="button" onClick={() => zoomAt(camera.current.zoom / 1.2)} aria-label="缩小导图"><Minus size={16} /></button><output>{Math.round(view.zoom * 100)}%</output><button type="button" onClick={() => zoomAt(camera.current.zoom * 1.2)} aria-label="放大导图"><Plus size={16} /></button><span className="knowledge-map-control-divider" /><button type="button" onClick={() => focusNode(ROOT_NODE)} aria-label="回到中心"><Home size={16} /></button><button type="button" onClick={() => fit()}><Maximize2 size={15} /><span>查看全貌</span></button></div>
+    <div className="knowledge-map-controls"><button type="button" onClick={() => zoomAt(camera.current.zoom / 1.2)} aria-label="缩小导图"><Minus size={16} /></button><output>{Math.round(view.zoom * 100)}%</output><button type="button" onClick={() => zoomAt(camera.current.zoom * 1.2)} aria-label="放大导图"><Plus size={16} /></button><span className="knowledge-map-control-divider" /><button type="button" onClick={() => focusNode(ROOT_NODE)} aria-label="回到中心"><Home size={16} /></button><button type="button" onClick={() => fit()} aria-label="适应画布" title="适应画布"><Scan size={16} /></button><button type="button" onClick={() => onFullscreenChange?.(!fullscreen)} aria-pressed={fullscreen}>{fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}<span>{fullscreen ? "退出全屏" : "全屏显示"}</span></button></div>
     {drag && <div className="knowledge-drop-message" role="status">{dropMessage}</div>}
     <div className="knowledge-map-viewport" ref={viewport} tabIndex={0} aria-label="可平移缩放的导图画布" aria-busy={cameraSettling}
       onDoubleClick={event => { if (editor || (event.target as Element).closest("form, .knowledge-map-toggle")) return; const id = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId; if (id) { window.clearTimeout(selectTimer.current); onEdit(id); } }}

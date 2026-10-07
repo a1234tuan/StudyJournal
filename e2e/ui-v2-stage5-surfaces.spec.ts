@@ -40,7 +40,7 @@ for (const theme of ["reading", "modern"] as const) {
     await noOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`stage5-ai-${theme}.png`), fullPage: true });
 
-    await page.getByRole("button", { name: "返回", exact: true }).click();
+    await page.locator(".ai-workspace-back:visible, .ai-history-return:visible").click();
     await page.getByRole("button", { name: "日志", exact: true }).first().click();
     await page.getByRole("button", { name: "全局搜索" }).click();
     await page.getByPlaceholder(/搜索中值定理/).fill("BFS");

@@ -4,7 +4,7 @@ import { CommittedWriteError } from "./lib/committedWrite";
 import { DailyPlanReminder } from "./components/DailyPlanReminder";
 import { useDailyPlanReminder } from "./hooks/useDailyPlanReminder";
 import { useCloudSyncStore } from "./services/cloudSyncStore";
-import { useRestoreInProgress } from "./services/restoreLockService";
+import { isRestoreInProgress, subscribeRestoreLock, useRestoreInProgress } from "./services/restoreLockService";
 import { currentKnowledgeOwner } from "./features/knowledgeLibrary/context";
 import { initialKnowledgeNavigation, patchKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
 import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
@@ -76,6 +76,7 @@ import { buildPlanIndex } from "./lib/dailyPlan";
 import { newId } from "./lib/entity";
 import { createDraftFlushTracker } from "./lib/draftFlushTracker";
 import { createReviewSessionRuntime } from "./features/reviewSession/runtime";
+import { clearReviewCheckpoint } from "./features/reviewSession/checkpoint";
 import { isDesktopPlatform } from "./lib/platform";
 import { isKeyboardViewportVisible, nextKeyboardBaselineHeight, resolveViewportHeight } from "./lib/viewport";
 import { getCurrentAiProvider } from "./lib/aiProviders";
@@ -308,6 +309,12 @@ export const App = () => {
   const { reclaimPlanRecords: reclaimPlanRecordsFromApp, initialized: appInitialized } = app;
   const keyboardVisible = useKeyboardVisible();
   const restoreLocked = useRestoreInProgress();
+  useEffect(() => subscribeRestoreLock(() => {
+    if (!isRestoreInProgress()) return;
+    try { clearReviewCheckpoint(); } catch {}
+    setReviewRuntime(createReviewSessionRuntime(todayISO()));
+    setTabMemory(current => ({ ...current, review: { ...current.review, queueIds: [], currentRecordId: undefined, reviewProgress: undefined } }));
+  }), []);
   const cloudStatus = useCloudSyncStore();
   const planReminder = useDailyPlanReminder(app.initialized && Boolean(app.settings)
     && activeTab === "today" && getTabDepth(activeTab, tabMemory) === 0 && !tabMemory.today.adaptiveTaskId

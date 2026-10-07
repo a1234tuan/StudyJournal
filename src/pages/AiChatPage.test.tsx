@@ -65,10 +65,10 @@ const scopeRecord = (id: string, subject: string, title: string, order = 0): Rec
 const scrollIntoViewMock = vi.fn();
 const scrollToMock = vi.fn();
 
-const renderAiChatPage = () => {
+const renderAiChatPage = (messages = [assistantMessage]) => {
   vi.spyOn(storage, "listAiSessions").mockResolvedValue([session]);
   vi.spyOn(storage, "getAiSession").mockResolvedValue(session);
-  vi.spyOn(storage, "listAiMessages").mockResolvedValue([assistantMessage]);
+  vi.spyOn(storage, "listAiMessages").mockResolvedValue(messages);
   vi.spyOn(storage, "listAiAttachments").mockResolvedValue([]);
 
   return render(
@@ -134,18 +134,32 @@ describe("AiChatPage", () => {
     vi.mocked(copyTextToClipboard).mockResolvedValue(true);
     renderAiChatPage();
 
-    const copyButton = await screen.findByRole("button", { name: "复制" });
+    const copyButton = await screen.findByRole("button", { name: "复制回答" });
     fireEvent.click(copyButton);
 
     await waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledWith(assistantMessage.content));
     expect(await screen.findByText("已复制。")).toBeInTheDocument();
   });
 
+  it("renders user text without a role heading and keeps an accessible copy action", async () => {
+    const userMessage: AiChatMessage = { ...assistantMessage, id: "user-1", role: "user", content: "请保留我的文字\n**原始表达**" };
+    vi.mocked(copyTextToClipboard).mockResolvedValue(true);
+    renderAiChatPage([userMessage, assistantMessage]);
+    const user = await screen.findByRole("article", { name: "用户消息" });
+    expect(user.querySelector("header")).toBeNull();
+    expect(user.textContent).toBe(userMessage.content);
+    expect(screen.getByRole("article", { name: "AI 回复" }).querySelector(".ai-bubble")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制用户消息" }));
+    await waitFor(() => expect(copyTextToClipboard).toHaveBeenCalledWith(userMessage.content));
+    expect(screen.getByRole("complementary", { name: "聊天历史" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^公式问答/ })).toHaveAttribute("aria-current", "page");
+  });
+
   it("shows a manual-copy hint when clipboard fallback fails", async () => {
     vi.mocked(copyTextToClipboard).mockResolvedValue(false);
     renderAiChatPage();
 
-    const copyButton = await screen.findByRole("button", { name: "复制" });
+    const copyButton = await screen.findByRole("button", { name: "复制回答" });
     fireEvent.click(copyButton);
 
     expect(await screen.findByText("复制失败，请长按选择文本后手动复制。")).toBeInTheDocument();

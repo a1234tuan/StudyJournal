@@ -11,7 +11,6 @@ export interface ReviewUndoEntry {
   queueIds: string[];
   currentRecordId: string;
   blockFeedbackDrafts: Record<string, DecisionBlockFeedbackDraft>;
-  dailyLimitIds: string[];
   showAllDue: boolean;
   reviewProgress: ReviewSessionProgress;
   feedbackDraftKey?: string;
@@ -24,6 +23,7 @@ export interface ReviewSessionRuntimeState {
   feedbackDrafts?: Record<string, Record<string, DecisionBlockFeedbackDraft>>;
   showAllDue?: boolean;
   selectedQueueIds?: string[];
+  sessionRecordIds?: string[];
 }
 
 export const createReviewSessionRuntime = (day: string): ReviewSessionRuntimeState => ({

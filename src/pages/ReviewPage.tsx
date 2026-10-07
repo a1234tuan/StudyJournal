@@ -1,4 +1,7 @@
 ﻿import { pendingReviewNavigation } from "../features/reviewSession/navigationGuard";
+import { readReviewCheckpoint, reconcileReviewCheckpoint, writeReviewCheckpoint } from "../features/reviewSession/checkpoint";
+import { useLocalToday } from "../hooks/useLocalToday";
+import { useRestoreInProgress } from "../services/restoreLockService";
 import { DueReviewBoard } from "../features/arrangedReview/DueReviewBoard";
 import { CardCoach } from "../features/arrangedReview/CardCoach";
 import { saveCardFeedback } from "../features/arrangedReview/cardFeedback";
@@ -49,7 +52,6 @@ import { isoDateTimeToLocalDate, todayISO } from "../lib/date";
 import { normalizeRecordTags, recordTagKey } from "../lib/recordTags";
 import {
   ACTIVE_REVIEW_RATINGS,
-  REVIEW_DAILY_SUGGESTED_LIMIT,
   isReviewDueOn,
   previewReviewRatings,
   ratingLabel,
@@ -69,7 +71,7 @@ import { reviewOccurrenceKey } from "../features/reviewAnnotations/domain";
 export interface ReviewPageProps {
   onOpenCardTask?: (id: string) => void;
   onAnalyzeCardFeedback?: (recordId: string, feedbackIds: readonly string[]) => Promise<unknown>;
-  standalone?: { roundId: string; title: string; recordId: string; readOnly: boolean; rating: RecordReviewRating | null; index: number; total: number; onUndo?: () => Promise<void>; onBack: () => void; onRate: (rating: RecordReviewRating) => Promise<void> };
+  standalone?: { roundId: string; title: string; recordId: string; readOnly: boolean; rating: RecordReviewRating | null; index: number; total: number; completed?: number; onUndo?: () => Promise<void>; onBack: () => void; onRate: (rating: RecordReviewRating) => Promise<void> };
   records: RecordBlock[];
   dueReviews: RecordReviewState[];
   reviewStates: RecordReviewState[];
@@ -200,9 +202,6 @@ const reviewDueLabel = (review: RecordReviewState | undefined) => {
 
 const intervalLabel = (days: number) => days <= 1 ? "明天" : `${days}天后`;
 
-const sameIds = (left: string[], right: string[]) =>
-  left.length === right.length && left.every((id, index) => id === right[index]);
-
 const normalizeReviewSessionProgress = (progress: ReviewSessionProgress | undefined): ReviewSessionProgress | undefined => {
   if (!progress || !Number.isInteger(progress.total) || !Number.isInteger(progress.completed)) {
     return undefined;
@@ -231,12 +230,6 @@ const interpretationDifficultyLabel: Record<NonNullable<FeedbackInterpretation["
   other: "其他",
 };
 const hasEvaluationText = (log: RecordReviewLog) => Boolean(log.evaluationText?.trim());
-
-const suggestedDailyLimitIds = (reviews: RecordReviewState[], today: string) =>
-  reviews
-    .filter((review) => isReviewDueOn(review, today))
-    .slice(0, REVIEW_DAILY_SUGGESTED_LIMIT)
-    .map((review) => review.recordId);
 
 const matchesFilter = (review: RecordReviewState | undefined, filter: ReviewCardFilter, today: string) => {
   if (filter === "all") return true;
@@ -384,8 +377,12 @@ export const ReviewPage = ({
   const [legacyLinkTargets, setLegacyLinkTargets] = useState<Record<string, string>>({});
   const [legacyIncludeInAnalysis, setLegacyIncludeInAnalysis] = useState<Record<string, boolean>>({});
   const [feedbackActionId, setFeedbackActionId] = useState<string>();
-  const today = todayISO();
-  const [dailyLimitIds, setDailyLimitIds] = useState<string[]>(() => suggestedDailyLimitIds(dueReviews, today));
+  const today = useLocalToday();
+  const restoreLocked = useRestoreInProgress();
+  const [checkpointReady, setCheckpointReady] = useState(false);
+  const checkpointLoaded = useRef(false);
+  const checkpointSessionPending = useRef<string[]>();
+  const [checkpointError, setCheckpointError] = useState("");
   const [sessionProgress, setSessionProgress] = useState<ReviewSessionProgress | undefined>(
     () => normalizeReviewSessionProgress(reviewProgress),
   );
@@ -447,8 +444,8 @@ export const ReviewPage = ({
     [dueReviews, ratedRecordIds, today],
   );
   const queuedDueReviews = useMemo(
-    () => reviewRuntime.selectedQueueIds ? availableDueReviews.filter(review => reviewRuntime.selectedQueueIds!.includes(review.recordId)) : showAllDue ? availableDueReviews : availableDueReviews.filter((review) => dailyLimitIds.includes(review.recordId)),
-    [availableDueReviews, dailyLimitIds, showAllDue, reviewRuntime.selectedQueueIds],
+    () => reviewRuntime.sessionRecordIds ? availableDueReviews.filter(review => reviewRuntime.sessionRecordIds!.includes(review.recordId)) : availableDueReviews,
+    [availableDueReviews, reviewRuntime.sessionRecordIds],
   );
   const dueIds = useMemo(() => new Set(queuedDueReviews.map((review) => review.recordId)), [queuedDueReviews]);
   const recordMap = useMemo(() => new Map(records.map((record) => [record.id, record])), [records]);
@@ -520,12 +517,16 @@ export const ReviewPage = ({
   const reviewTotal = Math.max(activeSessionProgress.total, completedReviewCount + effectiveQueue.length);
   const currentIndex = currentId ? Math.min(reviewTotal, completedReviewCount + 1) : 0;
   const progressPercent = reviewTotal > 0
-    ? Math.min(100, Math.round((currentIndex / reviewTotal) * 100))
+    ? Math.min(completedReviewCount < reviewTotal ? 99 : 100, Math.round((completedReviewCount / reviewTotal) * 100))
     : 0;
+  const displayedTotal = standalone?.total ?? reviewTotal;
+  const displayedCompleted = standalone ? standalone.completed ?? 0 : completedReviewCount;
+  const displayedPercent = standalone ? (displayedTotal ? displayedCompleted / displayedTotal * 100 : 0) : progressPercent;
   const overdueCount = availableDueReviews.filter((review) => review.nextReviewDate && review.nextReviewDate < today).length;
   const todayCount = availableDueReviews.filter((review) => review.nextReviewDate === today).length;
-  const hiddenDueCount = reviewRuntime.selectedQueueIds ? availableDueReviews.filter(review => !reviewRuntime.selectedQueueIds!.includes(review.recordId)).length : showAllDue ? 0 : availableDueReviews.filter((review) => !dailyLimitIds.includes(review.recordId)).length;
-  const queueReady = showAllDue || availableDueReviews.length === 0 || dailyLimitIds.length > 0;
+  const hiddenDueCount = availableDueReviews.length - queuedDueReviews.length;
+  const queueReady = checkpointReady && !restoreLocked
+    && (!checkpointSessionPending.current || checkpointSessionPending.current === reviewRuntime.sessionRecordIds);
   const ratingPreviews = useMemo(
     () => currentReview ? new Map(previewReviewRatings(currentReview, today).map((preview) => [preview.rating, preview])) : new Map(),
     [currentReview, today],
@@ -619,26 +620,48 @@ export const ReviewPage = ({
   }, [onEnsureDay, today, dueReviews.length]);
 
   useEffect(() => {
-    setDailyLimitIds([]);
-  }, [today]);
+    if (standalone || checkpointLoaded.current || restoreLocked) return;
+    checkpointLoaded.current = true;
+    try {
+      const checkpoint = readReviewCheckpoint(today);
+      if (checkpoint && !reviewRuntime.sessionRecordIds) {
+        const restored = reconcileReviewCheckpoint(checkpoint, records, reviewStates);
+        checkpointSessionPending.current = restored.recordIds;
+        onReviewRuntimeChange(current => ({ ...current, day: today, sessionRecordIds: restored.recordIds, ratedRecordIds: restored.ratedRecordIds, selectedQueueIds: checkpoint.selected ? restored.recordIds : undefined }));
+        onQueueChange(restored.queueIds);
+        onCurrentRecordChange(restored.currentRecordId);
+        updateSessionProgress(restored.progress);
+      }
+    } catch {
+      setCheckpointError("无法读取本机复习断点；已提交的评分不受影响。");
+    }
+    setCheckpointReady(true);
+  }, [standalone, restoreLocked, today, records, reviewStates, reviewRuntime.sessionRecordIds, onReviewRuntimeChange, onQueueChange, onCurrentRecordChange, updateSessionProgress]);
 
   useEffect(() => {
-    if (showAllDue || pendingUndoRestore) {
-      return;
+    if (standalone || !queueReady || reviewRuntime.day !== today || !reviewRuntime.sessionRecordIds) return;
+    try {
+      writeReviewCheckpoint({ version: 1, day: today, recordIds: reviewRuntime.sessionRecordIds, currentRecordId: currentRecordId && reviewRuntime.sessionRecordIds.includes(currentRecordId) ? currentRecordId : undefined, selected: Boolean(reviewRuntime.selectedQueueIds) });
+      setCheckpointError("");
+    } catch {
+      setCheckpointError("无法保存本机复习断点，重启后可能无法续接；已提交的评分不受影响。");
     }
-    const nextDailyLimitIds = suggestedDailyLimitIds(dueReviews, today);
-    if (!sameIds(dailyLimitIds, nextDailyLimitIds)) {
-      setDailyLimitIds(nextDailyLimitIds);
-    }
-  }, [dailyLimitIds, dueReviews, pendingUndoRestore, showAllDue, today]);
+  }, [standalone, queueReady, today, reviewRuntime.day, reviewRuntime.sessionRecordIds, reviewRuntime.selectedQueueIds, currentRecordId]);
 
   useEffect(() => {
-    if (standalone || !queueReady || pendingUndoRestore) {
+    if (checkpointSessionPending.current === reviewRuntime.sessionRecordIds) checkpointSessionPending.current = undefined;
+  }, [reviewRuntime.sessionRecordIds]);
+
+  useEffect(() => {
+    if (standalone || !queueReady || pendingUndoRestore || mode !== "queue") {
       return;
     }
-    const nextQueue = effectiveQueue.length > 0 ? effectiveQueue : queuedDueReviews.map((review) => review.recordId).filter((id) => recordMap.has(id));
+    const nextQueue = reviewRuntime.sessionRecordIds && effectiveQueue.length > 0 ? effectiveQueue : queuedDueReviews.map((review) => review.recordId).filter((id) => recordMap.has(id));
+    if (nextQueue.length > 0 && !reviewRuntime.sessionRecordIds) {
+      onReviewRuntimeChange(current => ({ ...current, sessionRecordIds: nextQueue }));
+    }
     if (nextQueue.length > 0 && !sessionProgress) {
-      updateSessionProgress({ total: nextQueue.length, completed: 0 });
+      updateSessionProgress({ total: nextQueue.length + ratedRecordIds.size, completed: ratedRecordIds.size });
     }
     if (nextQueue.join("|") !== queueIds.join("|")) {
       onQueueChange(nextQueue);
@@ -649,7 +672,7 @@ export const ReviewPage = ({
     if (nextQueue.length === 0 && currentRecordId) {
       onCurrentRecordChange(undefined);
     }
-  }, [currentRecordId, effectiveQueue, onCurrentRecordChange, onQueueChange, pendingUndoRestore, queueIds, queueReady, queuedDueReviews, recordMap, sessionProgress, updateSessionProgress]);
+  }, [currentRecordId, effectiveQueue, onCurrentRecordChange, onQueueChange, pendingUndoRestore, queueIds, queueReady, queuedDueReviews, recordMap, sessionProgress, updateSessionProgress, mode, reviewRuntime.sessionRecordIds, onReviewRuntimeChange, ratedRecordIds]);
 
   useEffect(() => {
     onReviewRuntimeChange((current) => current.day === today ? current : {
@@ -695,12 +718,11 @@ export const ReviewPage = ({
       (review) => review.recordId === pendingUndoRestore.currentRecordId && isReviewDueOn(review, today),
     );
     const restoredDailyScopeIsReady =
-      showAllDue === pendingUndoRestore.showAllDue &&
-      (showAllDue || sameIds(dailyLimitIds, pendingUndoRestore.dailyLimitIds));
+      showAllDue === pendingUndoRestore.showAllDue;
     if (restoredCardIsDue && !ratedRecordIds.has(pendingUndoRestore.currentRecordId) && restoredDailyScopeIsReady) {
       setPendingUndoRestore(null);
     }
-  }, [dailyLimitIds, dueReviews, pendingUndoRestore, ratedRecordIds, showAllDue, today]);
+  }, [dueReviews, pendingUndoRestore, ratedRecordIds, showAllDue, today]);
 
   const cardFeedbackInputs = (): RecordReviewDecisionBlockFeedbackInput[] => currentDecisionBlocks.flatMap(block => { const draft = blockFeedbackDrafts[block.decisionBlockId]; return draft?.comment.trim() ? [{ decisionBlockId: block.decisionBlockId, contentVersion: block.contentVersion, comment: draft.comment.trim(), includeInAnalysis: draft.includeInAnalysis, operationId: newId() }] : []; });
   const rate = async (rating: RecordReviewRating) => {
@@ -761,7 +783,6 @@ export const ReviewPage = ({
             queueIds: previousQueue,
             currentRecordId: previousCurrentId,
             blockFeedbackDrafts: submittedDrafts,
-            dailyLimitIds,
             showAllDue,
             reviewProgress: previousProgress,
             feedbackDraftKey,
@@ -814,7 +835,6 @@ export const ReviewPage = ({
       updateSessionProgress(entry.reviewProgress);
       if (entry.feedbackDraftKey) updateFeedbackDrafts(entry.feedbackDraftKey, entry.blockFeedbackDrafts);
       setShowAllDue(entry.showAllDue);
-      setDailyLimitIds(entry.dailyLimitIds);
       onModeChange("queue");
       onQueueChange(entry.queueIds);
       onCurrentRecordChange(entry.currentRecordId);
@@ -885,7 +905,7 @@ export const ReviewPage = ({
       total: Math.max(activeSessionProgress.total, activeSessionProgress.completed + nextQueue.length),
       completed: activeSessionProgress.completed,
     });
-    onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: undefined }));
+    onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: undefined, sessionRecordIds: [...new Set([...(current.sessionRecordIds ?? []), ...nextQueue])] }));
     onQueueChange(nextQueue);
     onCurrentRecordChange(nextQueue[0]);
   };
@@ -911,7 +931,7 @@ export const ReviewPage = ({
     }
   };
 
-  if (dueBoardOpen && !standalone) return <DueReviewBoard records={records} due={dueReviews} onClose={() => setDueBoardOpen(false)} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} />;
+  if (dueBoardOpen && !standalone) return <DueReviewBoard records={records} due={dueReviews} onClose={() => setDueBoardOpen(false)} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids, sessionRecordIds: ids, ratedRecordIds: [], undoHistory: [] })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} />;
   if (cardCoachOpen && currentRecord) return <CardCoach record={currentRecord} inputs={cardFeedbackInputs()} scope={standalone?.roundId ?? feedbackDraftKey} origin={standalone ? { id: standalone.roundId, title: standalone.title } : undefined} snapshot={reviewCoachSnapshot} onAnalyze={onAnalyzeCardFeedback} onResume={onResumeDeepAnalysis} onRefresh={onRefresh} onOpenTask={onOpenCardTask ?? onOpenAdaptiveTask} onSwitchTask={onSwitchAdaptiveTask} onClose={() => setCardCoachOpen(false)} />;
 
   return (
@@ -1015,6 +1035,7 @@ export const ReviewPage = ({
       />}
       {pullReady && <p className="status-message">松手刷新复习列表</p>}
       {ratingError && <p className="status-message">{ratingError}</p>}
+      {!standalone && checkpointError && <p className="status-message" role="status">{checkpointError}</p>}
 
       {(!currentRecord || mode !== "queue" || coachOpen) && <div className="review-mode-tabs" role="tablist" aria-label="复习视图">
         <button type="button" className={!coachOpen && mode === "queue" ? "active" : ""} onClick={() => { setCoachOpen(false); onModeChange("queue"); }}>
@@ -1050,10 +1071,11 @@ export const ReviewPage = ({
       {!coachOpen && (mode === "queue" ? (
         !currentRecord ? (
           <section className="empty-state review-empty-state">
-            <h2>{reviewRuntime.selectedQueueIds ? "所选复习已完成" : hiddenDueCount > 0 ? "今日建议已完成" : "今天暂无待复习"}</h2>
+            <h2>{reviewTotal > 0 ? completedReviewCount === reviewTotal ? "本轮复习已完成" : "本轮暂无待复习" : "今天暂无待复习"}</h2>
+            {reviewTotal > 0 && <p>已完成 {completedReviewCount}/{reviewTotal} 条</p>}
             <p>
               {hiddenDueCount > 0
-                ? reviewRuntime.selectedQueueIds ? `还有 ${hiddenDueCount} 条待复习。` : `还有 ${hiddenDueCount} 条到期记录，已经超出今日建议量。`
+                ? `本轮之外还有 ${hiddenDueCount} 条待复习。`
                 : ""}
             </p>
             <small>累计复习 {stats?.totalReviews ?? 0} 次</small>
@@ -1076,17 +1098,18 @@ export const ReviewPage = ({
               </button>
               <div className="review-progress-meta">
                 <span>第 {standalone?.index ?? currentIndex}/{standalone?.total ?? reviewTotal} 条</span>
+                <span>已完成 {displayedCompleted}/{displayedTotal}</span>
                 <strong>{standalone ? standalone.title : currentReview?.nextReviewDate && currentReview.nextReviewDate < today ? "已过期" : "今日到期"}</strong>
               </div>
               <div
                 className="review-progress-track"
                 role="progressbar"
                 aria-valuemin={0}
-                aria-valuemax={reviewTotal}
-                aria-valuenow={currentIndex}
-                aria-label={`复习进度，第 ${currentIndex} 条，共 ${reviewTotal} 条`}
+                aria-valuemax={displayedTotal}
+                aria-valuenow={displayedCompleted}
+                aria-label={`复习进度，已完成 ${displayedCompleted} 条，共 ${displayedTotal} 条`}
               >
-                <span style={{ width: `${standalone ? standalone.index / standalone.total * 100 : progressPercent}%` }} />
+                <span style={{ width: `${displayedPercent}%` }} />
               </div>
               <div className="review-session-actions">
                 {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={18} /><span>看板</span></button>}

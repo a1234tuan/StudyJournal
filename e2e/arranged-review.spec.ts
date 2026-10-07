@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 test.setTimeout(90_000);
-const output = "output/ui-ux-polish-2026-10-03/arranged-review";
+const output = "output/workspace-polish-2026-10-05/arranged-review";
 const screenshot = async (page: Page, path: string) => { await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0); await page.screenshot({ path, animations: "disabled" }); };
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const seed = async (page: Page) => {
@@ -74,7 +74,7 @@ test("ordinary board selects a subset without consuming the other due cards", as
   await expect(active(page).getByRole("heading", { name: "冒泡排序流程理解", exact: true })).toBeVisible();
   await screenshot(page, output + "/" + info.project.name + "-ordinary-session.png");
   await page.getByRole("button", { name: /^良好/ }).click();
-  await expect(active(page).getByRole("heading", { name: "所选复习已完成", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("heading", { name: "本轮复习已完成", exact: true })).toBeVisible();
   const dueIds = await page.evaluate(async () => { const { storage } = await import("/src/services/storageAdapter.ts"); const { todayISO } = await import("/src/lib/date.ts"); return (await storage.listDueRecordReviews(todayISO())).map(item => item.recordId); });
   expect(dueIds).toEqual(["arranged-record-1"]);
   await active(page).getByRole("button", { name: "继续处理剩余", exact: true }).click();

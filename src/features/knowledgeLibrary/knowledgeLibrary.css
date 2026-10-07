@@ -1,4 +1,14 @@
 .knowledge-library { --knowledge-on-primary: #fff; min-width: 0; color: var(--color-text); }
+.app-shell:has(.knowledge-library.is-map-fullscreen) { grid-template-columns: minmax(0, 1fr); }
+.app-shell:has(.knowledge-library.is-map-fullscreen) > .sidebar,
+.app-shell:has(.knowledge-library.is-map-fullscreen) .bottom-nav,
+.app-shell:has(.knowledge-library.is-map-fullscreen) .web-navigation-back-row { display: none; }
+.app-shell:has(.knowledge-library.is-map-fullscreen) .content-area { padding: 0; }
+.page.knowledge-shell.is-map-fullscreen { height: 100dvh; min-height: 0; padding: 0; gap: 0; }
+.knowledge-library.is-map-fullscreen > .knowledge-header,
+.knowledge-library.is-map-fullscreen > .knowledge-contextbar { display: none; }
+.knowledge-library.is-map-fullscreen > .knowledge-workspace { border: 0; border-radius: 0; }
+.knowledge-library.is-map-fullscreen .knowledge-map-controls { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
 @media (min-width: 921px) {
   .app-shell.knowledge-sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
   .app-shell.knowledge-sidebar-collapsed > .sidebar { display: none; }

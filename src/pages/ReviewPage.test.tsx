@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RecordBlock, RecordReviewLog, RecordReviewRating, RecordReviewState, RecordReviewStats, RecordReviewUndoToken, SubjectConfig } from "../types";
@@ -7,6 +7,10 @@ import type { AnalysisQueueItem, DecisionBlockFeedback } from "../features/revie
 import { createInitialReviewLibraryState } from "../lib/tabNavigation";
 import { coachTestInterpretation } from "../features/reviewCoach/reviewCoachTestFixtures";
 import type { ReviewAnnotationDraft } from "../features/reviewAnnotations/domain";
+import { writeReviewCheckpoint } from "../features/reviewSession/checkpoint";
+import { PageTransition } from "../components/PageTransition";
+import { createReviewSessionRuntime } from "../features/reviewSession/runtime";
+import type { ReviewSessionProgress } from "../lib/tabNavigation";
 
 vi.mock("../features/reviewAnnotations/repository", () => ({
   reviewAnnotationRepository: {
@@ -166,7 +170,7 @@ const referenceSubjects: SubjectConfig[] = [
 
 type RenderOptions = Partial<React.ComponentProps<typeof ReviewPage>>;
 
-const renderReviewPage = (options: RenderOptions = {}) => {
+const renderReviewPage = (options: RenderOptions = {}, transitioned = false) => {
   const handlers = {
     onModeChange: vi.fn(),
     onQueueChange: vi.fn(),
@@ -190,7 +194,12 @@ const renderReviewPage = (options: RenderOptions = {}) => {
   } = options;
   const ReviewPageHarness = () => {
     const [libraryState, setLibraryState] = useState(initialLibraryState);
-    return (
+    const [runtime, setRuntime] = useState(() => createReviewSessionRuntime("2026-07-03"));
+    const [queueIds, setQueueIds] = useState<string[]>([]);
+    const [currentRecordId, setCurrentRecordId] = useState<string>();
+    const [progress, setProgress] = useState<ReviewSessionProgress>();
+    const transitionProps: RenderOptions = transitioned ? { reviewRuntime: runtime, onReviewRuntimeChange: setRuntime, queueIds, onQueueChange: setQueueIds, currentRecordId, onCurrentRecordChange: setCurrentRecordId, reviewProgress: progress, onReviewProgressChange: setProgress } : {};
+    const page = (
       <ReviewPage
         records={records}
         dueReviews={[review("active")]}
@@ -201,6 +210,7 @@ const renderReviewPage = (options: RenderOptions = {}) => {
         currentRecordId="active"
         {...handlers}
         {...restOptions}
+        {...transitionProps}
         libraryState={libraryState}
         onLibraryStateChange={(state) => {
           onLibraryStateChange(state);
@@ -208,9 +218,10 @@ const renderReviewPage = (options: RenderOptions = {}) => {
         }}
       />
     );
+    return transitioned ? <PageTransition pageKey="review">{page}</PageTransition> : page;
   };
   render(
-    <ReviewPageHarness />,
+    transitioned ? <StrictMode><ReviewPageHarness /></StrictMode> : <ReviewPageHarness />,
   );
   return { handlers: { ...handlers, ...restOptions, onLibraryStateChange }, records };
 };
@@ -315,10 +326,10 @@ describe("ReviewPage", () => {
       currentRecordId: "active",
     });
 
-    const progress = screen.getByRole("progressbar", { name: "复习进度，第 1 条，共 2 条" });
+    const progress = screen.getByRole("progressbar", { name: "复习进度，已完成 0 条，共 2 条" });
     expect(progress).toHaveAttribute("aria-valuemin", "0");
     expect(progress).toHaveAttribute("aria-valuemax", "2");
-    expect(progress).toHaveAttribute("aria-valuenow", "1");
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
     expect(screen.queryByText("已掌握")).not.toBeInTheDocument();
   });
 
@@ -362,27 +373,27 @@ describe("ReviewPage", () => {
 
     render(<ProgressHarness />);
 
-    const initialProgress = screen.getByRole("progressbar", { name: "复习进度，第 1 条，共 3 条" });
+    const initialProgress = screen.getByRole("progressbar", { name: "复习进度，已完成 0 条，共 3 条" });
     expect(initialProgress).toHaveAttribute("aria-valuemax", "3");
-    expect(initialProgress).toHaveAttribute("aria-valuenow", "1");
-    expect(initialProgress.querySelector("span")).toHaveStyle({ width: "33%" });
+    expect(initialProgress).toHaveAttribute("aria-valuenow", "0");
+    expect(initialProgress.querySelector("span")).toHaveStyle({ width: "0%" });
     expect(screen.getByRole("button", { name: /忘记了/ }).querySelector("svg")).toBeNull();
     expect(screen.getByRole("button", { name: /模糊/ }).querySelector("svg")).toBeNull();
 
     clickRating(/良好/);
     await waitFor(() => {
-      const progress = screen.getByRole("progressbar", { name: "复习进度，第 2 条，共 3 条" });
+      const progress = screen.getByRole("progressbar", { name: "复习进度，已完成 1 条，共 3 条" });
       expect(progress).toHaveAttribute("aria-valuemax", "3");
-      expect(progress).toHaveAttribute("aria-valuenow", "2");
-      expect(progress.querySelector("span")).toHaveStyle({ width: "67%" });
+      expect(progress).toHaveAttribute("aria-valuenow", "1");
+      expect(progress.querySelector("span")).toHaveStyle({ width: "33%" });
     });
 
     clickRating(/良好/);
     await waitFor(() => {
-      const progress = screen.getByRole("progressbar", { name: "复习进度，第 3 条，共 3 条" });
+      const progress = screen.getByRole("progressbar", { name: "复习进度，已完成 2 条，共 3 条" });
       expect(progress).toHaveAttribute("aria-valuemax", "3");
-      expect(progress).toHaveAttribute("aria-valuenow", "3");
-      expect(progress.querySelector("span")).toHaveStyle({ width: "100%" });
+      expect(progress).toHaveAttribute("aria-valuenow", "2");
+      expect(progress.querySelector("span")).toHaveStyle({ width: "67%" });
     });
   });
 
@@ -428,17 +439,17 @@ describe("ReviewPage", () => {
     };
 
     render(<ProgressRefreshHarness />);
-    expect(screen.getByRole("progressbar", { name: "复习进度，第 1 条，共 3 条" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "复习进度，已完成 0 条，共 3 条" })).toBeInTheDocument();
 
     clickRating(/良好/);
-    await waitFor(() => expect(screen.getByRole("progressbar", { name: "复习进度，第 2 条，共 3 条" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: "复习进度，已完成 1 条，共 3 条" })).toBeInTheDocument());
 
     clickRating(/良好/);
     await waitFor(() => {
-      const progress = screen.getByRole("progressbar", { name: "复习进度，第 3 条，共 3 条" });
+      const progress = screen.getByRole("progressbar", { name: "复习进度，已完成 2 条，共 3 条" });
       expect(progress).toHaveAttribute("aria-valuemax", "3");
-      expect(progress).toHaveAttribute("aria-valuenow", "3");
-      expect(progress.querySelector("span")).toHaveStyle({ width: "100%" });
+      expect(progress).toHaveAttribute("aria-valuenow", "2");
+      expect(progress.querySelector("span")).toHaveStyle({ width: "67%" });
     });
   });
 
@@ -626,7 +637,7 @@ describe("ReviewPage", () => {
     expect(onCurrentRecordChange).not.toHaveBeenCalledWith(undefined);
   });
 
-  it("initializes the suggested queue with at most twenty due cards", async () => {
+  it("initializes the queue with all twenty-five due cards", async () => {
     const manyRecords = Array.from({ length: 25 }, (_, index) => record(`due-${index + 1}`, `复习卡 ${index + 1}`, "数据结构"));
     const manyReviews = manyRecords.map((item) => review(item.id));
     const onQueueChange = vi.fn();
@@ -643,9 +654,44 @@ describe("ReviewPage", () => {
       onCurrentRecordChange,
     });
 
-    const expectedIds = manyRecords.slice(0, 20).map((item) => item.id);
+    const expectedIds = manyRecords.map((item) => item.id);
     await waitFor(() => expect(onQueueChange).toHaveBeenCalledWith(expectedIds));
     expect(onCurrentRecordChange).toHaveBeenCalledWith("due-1");
+  });
+
+  it("restores progress from committed ratings instead of starting at zero", async () => {
+    writeReviewCheckpoint({ version: 1, day: "2026-07-03", recordIds: ["active", "second"], currentRecordId: "active", selected: false });
+    const onCurrentRecordChange = vi.fn();
+    renderReviewPage({
+      mode: "queue", queueIds: ["active", "second"], currentRecordId: "active",
+      dueReviews: [review("second")],
+      reviewStates: [review("active", { lastReviewDate: "2026-07-03", nextReviewDate: "2026-07-08" }), review("second")],
+      onCurrentRecordChange,
+    });
+    await waitFor(() => expect(onCurrentRecordChange).toHaveBeenCalledWith("second"));
+    expect(screen.getByRole("progressbar", { name: "复习进度，已完成 1 条，共 2 条" })).toHaveAttribute("aria-valuenow", "1");
+  });
+
+  it("reports local checkpoint failure without disabling rating", async () => {
+    const failingStorage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+    try {
+      renderReviewPage({ mode: "queue" });
+      expect(await screen.findByText(/无法保存本机复习断点/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /良好/ })).toBeEnabled();
+    } finally {
+      failingStorage.mockRestore();
+    }
+  });
+
+  it("waits for the transition layer to echo restored state before initializing a new queue", async () => {
+    writeReviewCheckpoint({ version: 1, day: "2026-07-03", recordIds: ["active", "second"], currentRecordId: "second", selected: false });
+    renderReviewPage({
+      mode: "queue", dueReviews: [review("second")],
+      reviewStates: [review("active", { lastReviewDate: "2026-07-03", nextReviewDate: "2026-07-08" }), review("second")],
+    }, true);
+    await waitFor(() => expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1"));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemax", "2");
+    expect(screen.getByRole("heading", { name: "页表缓存" })).toBeInTheDocument();
   });
 
   it("filters the card library by subject, tag and explicit status", () => {
@@ -1015,7 +1061,7 @@ describe("ReviewPage", () => {
     await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
 
     clickRating(/良好/);
-    await waitFor(() => expect(screen.getByText("今天暂无待复习")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("本轮复习已完成")).toBeInTheDocument());
 
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
     await waitFor(() => expect(onUndo).toHaveBeenCalledWith(expect.objectContaining({ recordId: "second" })));
