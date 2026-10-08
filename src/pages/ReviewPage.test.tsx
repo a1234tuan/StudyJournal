@@ -231,6 +231,32 @@ const clickRating = (name: string | RegExp) => {
 };
 
 describe("ReviewPage", () => {
+  it("opens a standalone board without unmounting the current review", async () => {
+    const originalShow = HTMLDialogElement.prototype.showModal;
+    const originalClose = HTMLDialogElement.prototype.close;
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    try {
+      renderReviewPage({ mode: "queue", currentRecordId: "active", queueIds: ["active"] });
+      fireEvent.click(screen.getByRole("button", { name: "复习看板" }));
+      const dialog = await screen.findByRole("dialog", { name: "复习看板" });
+      expect(screen.getByRole("heading", { name: "BFS 队列" })).toBeInTheDocument();
+      fireEvent.click(within(dialog).getByRole("button", { name: "关闭复习看板" }));
+      expect(screen.queryByRole("dialog", { name: "复习看板" })).not.toBeInTheDocument();
+    } finally { HTMLDialogElement.prototype.showModal = originalShow; HTMLDialogElement.prototype.close = originalClose; }
+  });
+
+  it("keeps E editing enabled despite the retired local preference", () => {
+    localStorage.setItem("studyjournal-review-edit-shortcut", "off");
+    const onEditRecord = vi.fn();
+    renderReviewPage({ mode: "queue", currentRecordId: "active", queueIds: ["active"], onEditRecord });
+    fireEvent.keyDown(window, { key: "e" });
+    expect(onEditRecord).toHaveBeenCalledWith(records[0]);
+    fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
+    expect(screen.queryByText(/快捷编辑：/)).not.toBeInTheDocument();
+    localStorage.removeItem("studyjournal-review-edit-shortcut");
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     richTextEditorMock.props = [];
@@ -249,11 +275,13 @@ describe("ReviewPage", () => {
     expect(handlers.onEditRecord).not.toHaveBeenCalled();
   });
 
-  it("ignores edit shortcuts inside inputs and when disabled", () => {
-    window.localStorage.setItem("studyjournal-review-edit-shortcut", "off");
+  it("ignores edit shortcuts inside inputs", () => {
     const { handlers } = renderReviewPage({ mode: "queue" });
-    fireEvent.keyDown(window, { key: "e" });
+    const input = document.createElement("input");
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: "e" });
     expect(handlers.onEditRecord).not.toHaveBeenCalled();
+    input.remove();
   });
 
   it("opens voice recall for the current card without changing queue or rating state", () => {
@@ -865,7 +893,7 @@ describe("ReviewPage", () => {
   it("exits an active review session without discarding its queue", () => {
     const { handlers } = renderReviewPage({ mode: "queue" });
 
-    fireEvent.click(screen.getByRole("button", { name: "返回复习" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回卡片库" }));
 
     expect(handlers.onModeChange).toHaveBeenCalledWith("manage");
     expect(handlers.onQueueChange).not.toHaveBeenCalledWith([]);
@@ -876,10 +904,10 @@ describe("ReviewPage", () => {
     const onExitReviewSession = vi.fn();
     renderReviewPage({ mode: "queue", onExitReviewSession });
 
-    fireEvent.click(screen.getByRole("button", { name: "返回复习" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回卡片库" }));
 
     expect(onExitReviewSession).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "返回复习" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回卡片库" })).toBeInTheDocument();
   });
 
   it("keeps decision-block feedback when rating fails", async () => {

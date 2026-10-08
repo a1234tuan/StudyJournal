@@ -329,7 +329,7 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
     // Voice recall owns its internal start/scope/call/summary transitions. A
     // stable page key prevents PageTransition from remounting the workspace
     // and pausing a session immediately after it connects.
-    const voicePart = memory.review.voiceRecall ? "voice" : memory.review.mode;
+    const voicePart = memory.review.voiceRecall ? "voice" : "workspace";
     return `${tab}-${depth}-${recordPart}-${voicePart}`;
   }
   if (tab === "today") {

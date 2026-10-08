@@ -65,6 +65,34 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallRepository", () => {
+  it("ends an inactive session without deleting turns or creating learning facts", async () => {
+    const { database, repository } = await openRepository();
+    const paused = session("session-1", "paused");
+    await repository.putSession(paused);
+    await repository.putTurn(turn());
+    await repository.endInactiveSession(paused);
+    expect((await repository.getSession(paused.id))?.status).toBe("ended");
+    expect(await repository.listResumableSessions()).toHaveLength(0);
+    expect((await repository.listTurns(paused.id))[0].confirmedText).toBe("回答");
+    expect(await database.cloudSyncMutation.count()).toBe(0);
+    expect(await database.recordReviewLogs.count()).toBe(0);
+    database.close();
+  });
+
+  it("rejects stale, missing, and active-session end requests", async () => {
+    const { database, repository } = await openRepository();
+    const paused = session("session-1", "paused");
+    await repository.putSession(paused);
+    await repository.putSession({ ...paused, memory: { ...paused.memory, learningGoal: "新目标" } });
+    await expect(repository.endInactiveSession(paused)).rejects.toThrow("状态已变化");
+    const active = session("active", "listening");
+    await repository.putSession(active);
+    await expect(repository.endInactiveSession(active)).rejects.toThrow("先暂停");
+    await expect(repository.endInactiveSession(session("missing", "paused"))).rejects.toThrow("状态已变化");
+    expect((await repository.getSession("session-1"))?.status).toBe("paused");
+    database.close();
+  });
+
   it.each([11999, 12000, 12001])("enforces the explicit history capacity at %i characters without truncation", async (length) => {
     const { database, repository } = await openRepository();
     const entry = { ...history(), summary: "文".repeat(length) };

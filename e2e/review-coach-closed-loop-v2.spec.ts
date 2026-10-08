@@ -73,7 +73,7 @@ const readFormalState = (page: Page, taskId: string) => page.evaluate(async (id:
 /** Navigates from the seeded app into the v2 task's training screen. */
 const openV2Task = async (page: Page) => {
   await page.getByRole("button", { name: /^复习/ }).first().click();
-  await page.getByRole("button", { name: "返回复习", exact: true }).click();
+  await page.getByRole("button", { name: "返回卡片库", exact: true }).click();
   await page.getByRole("button", { name: "学习助教", exact: true }).click();
   await page.getByRole("button", { name: /开始训练|继续训练/ }).first().click();
 };
@@ -203,7 +203,7 @@ test.describe("closed-loop v2 end to end", () => {
     await page.goto("/?preview=loop-v2-verify");
 
     await page.getByRole("button", { name: /^复习/ }).first().click();
-    await page.getByRole("button", { name: "返回复习", exact: true }).click();
+    await page.getByRole("button", { name: "返回卡片库", exact: true }).click();
     await page.getByRole("button", { name: "学习助教", exact: true }).click();
     await page.getByRole("button", { name: /继续训练|开始训练/ }).first().click();
 

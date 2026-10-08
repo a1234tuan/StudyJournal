@@ -4,7 +4,7 @@ test.setTimeout(90_000);
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const capture = async (page: Page, name: string) => {
   await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0);
-  await page.screenshot({ path: "output/workspace-polish-2026-10-05/" + name + ".png", animations: "disabled" });
+  await page.screenshot({ path: "output/review-workspace-2026-10-07/" + name + ".png", animations: "disabled" });
 };
 const start = async (page: Page) => {
   await page.goto("/");
@@ -50,7 +50,7 @@ test("all 25 due cards keep their progress across reload and undo", async ({ pag
   const local = await page.evaluate(() => JSON.parse(localStorage.getItem("studyjournal-ordinary-review-checkpoint-v1")!));
   expect(local.recordIds).toHaveLength(25);
   expect(local.undoHistory).toBeUndefined();
-  await active(page).getByRole("button", { name: "返回复习", exact: true }).click();
+  await active(page).getByRole("button", { name: "返回卡片库", exact: true }).click();
   await page.evaluate(async () => { const { withRestoreLock } = await import("/src/services/restoreLockService.ts"); await withRestoreLock(() => new Promise(resolve => setTimeout(resolve, 100))); });
   expect(await page.evaluate(() => localStorage.getItem("studyjournal-ordinary-review-checkpoint-v1"))).toBeNull();
 });

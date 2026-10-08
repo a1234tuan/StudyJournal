@@ -9,6 +9,7 @@ const submitKeyboardAnswer = async (page: Page, answer: string) => {
 test("voice recall starts with the user and keeps natural conversation controls", async ({ page }) => {
   await page.goto("/?preview=voice-recall-policy");
   await page.getByRole("tab", { name: "自由主题" }).click();
+  await page.getByLabel("更改输入方式").click();
   await page.getByRole("button", { name: /点击录音/ }).click();
   await page.getByPlaceholder("例如：解释事件循环").fill("核心概念");
   await page.getByRole("button", { name: "开始语音复述" }).click();

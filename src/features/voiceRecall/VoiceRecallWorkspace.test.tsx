@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { useState } from "react";
@@ -81,6 +81,40 @@ afterEach(async () => {
 });
 
 describe("VoiceRecallWorkspace", () => {
+  it("highlights only the latest meaningful checkpoint, keeps failed attempts in records, and confirms ending", async () => {
+    const capture = vi.spyOn(WebVoiceCaptureAdapter.prototype, "start").mockImplementation(async function* () {});
+    const { database, runtime, repository, Harness } = await openWorkspace();
+    const id = await runtime.createSession({ mode: "free-topic", inputMode: "tap-to-record", source: { kind: "free-topic", topic: "模板" } });
+    await runtime.end();
+    const base = (await repository.getSession(id))!;
+    for (const [sessionId, status, topic, updatedAt] of [
+      ["older", "paused", "更早的练习", "2026-10-01T01:00:00.000Z"],
+      ["latest", "paused", "最近的练习", "2026-10-02T01:00:00.000Z"],
+      ["empty-failure", "failed", "未开始的失败尝试", "2026-10-03T01:00:00.000Z"],
+    ] as const) await repository.putSession({ ...base, id: sessionId, status, source: { kind: "free-topic", topic }, updatedAt, endedAt: undefined });
+    await repository.putTurn({ id: "kept", sessionId: "latest", sequence: 0, operationId: "kept-operation", status: "completed", teacherText: "已有回复", confirmedText: "已有回答", createdAt: now, updatedAt: now });
+    const view = render(<Harness />);
+    const reminder = await screen.findByRole("region", { name: "上次练习提醒" });
+    expect(within(reminder).getByText("最近的练习")).toBeInTheDocument();
+    expect(screen.queryByText("更早的练习")).not.toBeInTheDocument();
+    expect(screen.queryByText("未开始的失败尝试")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "本机记录" }));
+    const list = await screen.findByRole("region", { name: "未结束的本机练习" });
+    expect(within(list).getAllByRole("button", { name: "查看并继续" })).toHaveLength(3);
+    const entry = within(list).getByText("最近的练习").closest("article")!;
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    fireEvent.click(within(entry).getByRole("button", { name: "结束此练习" }));
+    expect((await repository.getSession("latest"))?.status).toBe("paused");
+    fireEvent.click(within(entry).getByRole("button", { name: "结束此练习" }));
+    await screen.findByRole("button", { name: "保留为本机历史" });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect((await repository.getSession("latest"))?.status).toBe("ended");
+    expect((await repository.listTurns("latest"))[0].confirmedText).toBe("已有回答");
+    expect(capture).not.toHaveBeenCalled();
+    view.unmount();
+    database.close();
+  });
+
   it("makes an oversized history summary editable without truncation and reports a failed write", async () => {
     const { database, runtime, repository } = await openWorkspace();
     const sessionId = await runtime.createSession({ mode: "free-topic", inputMode: "tap-to-record", source: { kind: "free-topic" } });
@@ -114,6 +148,7 @@ describe("VoiceRecallWorkspace", () => {
     fireEvent.click(screen.getByRole("tab", { name: "从学习资料开始" }));
     expect(screen.getByRole("heading", { name: "Private" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByLabelText("更改输入方式"));
     fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "NEW_TOPIC_596" } });
     fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
@@ -143,6 +178,7 @@ describe("VoiceRecallWorkspace", () => {
     const view = render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
+    fireEvent.click(screen.getByLabelText("更改输入方式"));
     fireEvent.click(screen.getByRole("button", { name: /按住讲话/ }));
     fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
@@ -168,6 +204,7 @@ describe("VoiceRecallWorkspace", () => {
     const view = render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "保留的主题" } });
+    fireEvent.click(screen.getByLabelText("更改输入方式"));
     fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
     fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /我了解本次发送范围/ }));
@@ -176,7 +213,7 @@ describe("VoiceRecallWorkspace", () => {
     const sessionId = runtime.activeSessionId;
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     fireEvent.click(await screen.findByRole("button", { name: /暂停并离开/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /恢复暂停通话/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看并继续" }));
     await screen.findByRole("button", { name: "继续通话" });
     expect(runtime.activeSessionId).toBe(sessionId);
     expect(runtime.snapshot?.status).toBe("paused");
@@ -291,6 +328,7 @@ describe("VoiceRecallWorkspace", () => {
     const { database, repository, runtime, onCreateJournal, Harness } = await openWorkspace();
     const view = render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByLabelText("更改输入方式"));
     fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
     const start = screen.getByRole("button", { name: "开始语音复述" });
 
@@ -359,6 +397,7 @@ describe("VoiceRecallWorkspace", () => {
     const respond = vi.spyOn(runtime, "respondTurn");
     const view = render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "自由主题" }));
+    fireEvent.click(screen.getByLabelText("更改输入方式"));
     fireEvent.click(screen.getByRole("button", { name: /点击录音/ }));
     fireEvent.change(screen.getByPlaceholderText("例如：解释事件循环"), { target: { value: "事件循环" } });
     fireEvent.click(screen.getByRole("button", { name: "开始语音复述" }));

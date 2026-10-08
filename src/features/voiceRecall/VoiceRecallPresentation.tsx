@@ -89,6 +89,7 @@ export interface VoiceRecallStartViewProps {
   disclosureConfirmed: boolean;
   message?: string;
   children?: ReactNode;
+  topicEditor?: ReactNode;
   onBack: () => void;
   onOpenHistory: () => void;
   onKnowledgeModeChange: (mode: VoiceRecallKnowledgeMode) => void;
@@ -125,6 +126,7 @@ export const VoiceRecallStartView = ({
   disclosureConfirmed,
   message,
   children,
+  topicEditor,
   onBack,
   onOpenHistory,
   onKnowledgeModeChange,
@@ -139,10 +141,11 @@ export const VoiceRecallStartView = ({
       <button className="vr-icon-button" type="button" aria-label="返回复习" onClick={onBack}><ArrowLeft /></button>
       <strong>语音复述</strong>
       <div className="vr-start-actions">
-        <button className="vr-icon-button" type="button" aria-label="本机历史" onClick={onOpenHistory}><Headphones /></button>
+        <button className="vr-icon-button" type="button" aria-label="本机记录" onClick={onOpenHistory}><Headphones /></button>
       </div>
     </header>
 
+    <div className="vr-start-content">
     <section className="vr-start-band" aria-labelledby="vr-start-title">
       <div className="vr-start-copy">
         <p className="vr-eyebrow"><Sparkles />主动回忆</p>
@@ -165,6 +168,9 @@ export const VoiceRecallStartView = ({
       {knowledgeMode === "material" && <button className="vr-row-action" type="button" onClick={onAdjustScope}>调整范围 <ChevronRight /></button>}
     </section>
 
+    {topicEditor}
+    <details className="vr-input-settings">
+      <summary aria-label="更改输入方式"><span>输入方式</span><strong>{voiceRecallModeOptions.find(mode => mode.id === inputMode)?.label}</strong><span>更改</span></summary>
     <section className="vr-mode-band vr-mode-band-visible" aria-labelledby="vr-mode-title">
       <div><span className="vr-section-label">输入方式</span><h2 id="vr-mode-title">选择语音交互方式</h2></div>
       <div className="vr-mode-grid">
@@ -176,12 +182,13 @@ export const VoiceRecallStartView = ({
         ))}
       </div>
     </section>
+    </details>
     <details className="vr-advanced-details">
-      <summary><span>更多设置</span><small>当前：{voiceRecallModeOptions.find((mode) => mode.id === inputMode)?.label ?? "自动轮次"}</small></summary>
+      <summary><span>音频留存说明</span><small>仅本次通话临时缓存</small></summary>
       <VoiceRecallAudioPolicy compact />
     </details>
 
-    {providerSetup && <VoiceProviderSettings setup={providerSetup} />}
+    {providerSetup && <details className="vr-service-settings" open={message ? true : undefined}><summary><span>语音服务</span><small>{providerSetup.summaries[providerSetup.selectedTemplateId]?.asr} · {providerSetup.summaries[providerSetup.selectedTemplateId]?.llm}</small><span>设置</span></summary><p className="vr-service-note">连接前会检查本机配置；选择服务不代表凭据已验证。</p><VoiceProviderSettings setup={providerSetup} /></details>}
 
     {children}
 
@@ -190,6 +197,7 @@ export const VoiceRecallStartView = ({
       <button className="vr-primary" type="button" disabled={busy || !canStart || (preflightOpen && !disclosureConfirmed)} onClick={onStart}>{preflightOpen ? <Headphones /> : <Mic />}{preflightOpen ? "确认并连接" : "开始语音复述"}</button>
     </footer>
     {message && <p className="status-message" role="status">{message}</p>}
+    </div>
   </main>
 );
 
@@ -249,12 +257,14 @@ export interface VoiceRecallHistoryViewProps {
   onOpenSession?: (item: VoiceRecallLocalHistory) => void;
   onLoadMore?: () => void;
   loading?: boolean;
+  resumable?: ReactNode;
 }
 
-export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onOpenSession, onLoadMore, loading }: VoiceRecallHistoryViewProps) => (
+export const VoiceRecallHistoryView = ({ theme, history, onBack, onDelete, onOpenSession, onLoadMore, loading, resumable }: VoiceRecallHistoryViewProps) => (
   <main className="vr-shell vr-history page-section-transition" data-visual-theme={theme}>
-    <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机通话历史</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
+    <header className="vr-start-header"><button className="vr-icon-button" type="button" aria-label="返回语音复述" onClick={onBack}><ArrowLeft /></button><h1>本机记录</h1><span className="vr-header-spacer" aria-hidden="true" /></header>
     <section className="vr-history-intro"><span className="vr-eyebrow"><Headphones />仅此设备</span><h1>你的复述轨迹</h1><p>这里是你主动选择保留的摘要和用量记录：不会自动继续会话、不会作为 AI 上下文，也不会进入云同步或备份。需要跨设备保留时，请整理为正式日志。</p></section>
+    {resumable}
     <VoiceRecallAudioPolicy />
     <section className="vr-history-list" aria-label="本机通话历史">{history.length === 0 ? <div className="vr-empty-state"><Headphones /><strong>还没有保留的摘要</strong><span>结束一次复述后，可在摘要页选择保留。</span></div> : history.map((item) => <article className="vr-history-item" key={item.id}><div><small>{new Date(item.savedAt).toLocaleString()}</small><h2>{item.title}</h2></div><p>{item.summary}</p><p>用量：ASR {item.observedUsage?.asrSeconds ?? "未记录"} 秒 · LLM 输入 {item.observedUsage?.llmInputTokens ?? "未记录"} / 输出 {item.observedUsage?.llmOutputTokens ?? "未记录"} token · TTS {item.observedUsage?.ttsCharacters ?? "未记录"} 字符（本机估算，不等于账单）</p><div className="vr-history-actions">{item.sessionId && onOpenSession && <button type="button" onClick={() => onOpenSession(item)}>打开通话</button>}<button type="button" className="vr-icon-button" aria-label={`删除 ${item.title}`} onClick={() => onDelete(item.id)}><Trash2 /></button></div></article>)}</section>
     {onLoadMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更多</button>}

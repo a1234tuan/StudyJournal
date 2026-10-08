@@ -49,6 +49,15 @@ export class VoiceRecallRepository {
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
+  async endInactiveSession(expected: VoiceRecallSessionLocal, now = new Date().toISOString()) {
+    await this.database.transaction("rw", this.database.voiceRecallSessions, async () => {
+      const current = await this.database.voiceRecallSessions.get(expected.id);
+      if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error("练习状态已变化，请重新打开本机记录后再操作。");
+      if (!["idle", "paused", "interrupted", "failed"].includes(current.status)) throw new Error("请先暂停当前练习再结束。");
+      await this.database.voiceRecallSessions.put({ ...current, status: "ended", endedAt: now, updatedAt: now });
+    });
+  }
+
   async putSession(session: VoiceRecallSessionLocal, options: { allowCreate?: boolean } = {}) {
     validateSession(session);
     let missing = false;

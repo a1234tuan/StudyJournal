@@ -375,7 +375,7 @@ describe("tabNavigation", () => {
     expect(buildTabPageKey("review", changedQueue)).toBe(buildTabPageKey("review", base));
   });
 
-  it("changes review page key for mode changes and record detail depth", () => {
+  it("keeps the review workspace mounted across modes but separates record detail", () => {
     const base = createInitialTabMemory();
     const manage = {
       ...base,
@@ -386,7 +386,7 @@ describe("tabNavigation", () => {
       review: { ...base.review, recordId: "record-1" },
     };
 
-    expect(buildTabPageKey("review", manage)).not.toBe(buildTabPageKey("review", base));
+    expect(buildTabPageKey("review", manage)).toBe(buildTabPageKey("review", base));
     expect(buildTabPageKey("review", recordDetail)).not.toBe(buildTabPageKey("review", base));
   });
 

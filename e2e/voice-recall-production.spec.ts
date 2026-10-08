@@ -32,6 +32,7 @@ test.describe("voice recall production workspace migration", () => {
   test("shows device-local provider templates and the redesigned local history", async ({ page }) => {
     await page.goto("/?preview=voice-recall-production");
 
+    await page.locator(".vr-service-settings > summary").click();
     const providerDetails = page.getByRole("region", { name: "本机语音服务配置" });
     await expect(providerDetails.locator("summary")).toHaveCount(3);
     await expect(providerDetails.locator("summary").filter({ hasText: "ASR：" })).toContainText("阿里云");
@@ -60,12 +61,13 @@ test.describe("voice recall production workspace migration", () => {
     await expect(tts.getByLabel("模型", { exact: true })).toHaveValue("volcano_tts");
     await expect(tts.getByLabel("旧版控制台 App ID")).toBeVisible();
 
-    await page.getByRole("button", { name: "本机历史" }).click();
+    await page.getByRole("button", { name: "本机记录" }).click();
     await expect(page.locator(".vr-history")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "本机通话历史" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "本机记录" })).toBeVisible();
     await expect(page.getByText("你的复述轨迹")).toBeVisible();
-    await expect(page.locator(".sidebar")).toBeHidden();
-    await expect(page.locator(".bottom-nav")).toBeHidden();
+    await expect(page.locator(".app-shell")).not.toHaveClass(/immersive-task-active/);
+    if (test.info().project.name === "desktop") await expect(page.locator(".sidebar")).toBeVisible();
+    else await expect(page.locator(".bottom-nav")).toBeVisible();
   });
 
   test("refuses to start instead of showing a simulated call when the chain is unconfigured", async ({ page }) => {
@@ -75,8 +77,9 @@ test.describe("voice recall production workspace migration", () => {
 
     await expect(page.getByRole("heading", { name: "把刚学过的内容讲出来" })).toBeVisible();
     await expect(page.locator(".vr-start")).toBeVisible();
-    await expect(page.locator(".sidebar")).toBeHidden();
-    await expect(page.locator(".bottom-nav")).toBeHidden();
+    await expect(page.locator(".app-shell")).not.toHaveClass(/immersive-task-active/);
+    if (test.info().project.name === "desktop") await expect(page.locator(".sidebar")).toBeVisible();
+    else await expect(page.locator(".bottom-nav")).toBeVisible();
 
     await page.getByRole("tab", { name: "自由主题" }).click();
     await page.getByPlaceholder("例如：解释事件循环").fill("间隔复习为什么有效");

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 test.setTimeout(90_000);
-const output = "output/workspace-polish-2026-10-05/arranged-review";
+const output = "output/review-workspace-2026-10-07/arranged-review";
 const screenshot = async (page: Page, path: string) => { await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0); await page.screenshot({ path, animations: "disabled" }); };
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const seed = async (page: Page) => {
@@ -56,8 +56,8 @@ for (const view of ["大纲", "导图"]) test(view + " creates a round and click
   expect(facts).toEqual({ scores: 1, reviews: 0, logs: 0 });
   await page.reload(); await page.getByRole("button", { name: "复习", exact: true }).last().click();
   await expect(active(page).getByText("1/4 已完成", { exact: true })).toBeVisible();
-  await active(page).getByRole("button", { name: "普通复习", exact: true }).click();
-  await expect(active(page).getByRole("button", { name: "待复习看板", exact: true })).toBeVisible();
+  await active(page).getByRole("button", { name: "待复习", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "复习看板", exact: true }).getByRole("textbox", { name: "搜索待复习日志" })).toBeVisible();
   await active(page).getByRole("button", { name: "已安排", exact: true }).click();
   await expect(active(page).getByText("1/4 已完成", { exact: true })).toBeVisible();
 });
@@ -66,7 +66,7 @@ test("ordinary board selects a subset without consuming the other due cards", as
   await seed(page);
   await page.evaluate(async () => { const { storage } = await import("/src/services/storageAdapter.ts"); await storage.addRecordToReview("arranged-record-0"); await storage.addRecordToReview("arranged-record-1"); const { db } = await import("/src/db/database.ts"); const { todayISO } = await import("/src/lib/date.ts"); for (const log of await db.recordReviewLogs.toArray()) if (log.stateAfter) await db.recordReviewLogs.update(log.id, { nextReviewDate: todayISO(), stateAfter: { ...log.stateAfter, nextReviewDate: todayISO(), lastReviewDate: undefined } }); for (const review of await db.recordReviews.toArray()) await db.recordReviews.update(review.id, { nextReviewDate: todayISO(), lastReviewDate: undefined }); });
   await page.reload(); await page.getByRole("button", { name: /^复习/ }).last().click();
-  await active(page).getByRole("button", { name: "待复习看板", exact: true }).click();
+  await active(page).getByRole("button", { name: "复习看板", exact: true }).click();
   await expect(active(page).getByRole("checkbox", { name: "选择 冒泡排序流程理解", exact: true })).toBeVisible();
   await screenshot(page, output + "/" + info.project.name + "-ordinary-board.png");
   await active(page).getByRole("checkbox", { name: "选择 冒泡排序流程理解", exact: true }).check();
@@ -184,10 +184,11 @@ test("mode switching waits for the registered review draft guard", async ({ page
   const dialog = page.getByRole("dialog", { name: "安排复习", exact: true }); await dialog.getByRole("checkbox", { name: "冒泡排序流程理解", exact: true }).check(); await dialog.getByRole("button", { name: "创建复习", exact: true }).click();
   await active(page).getByRole("button", { name: /冒泡排序流程理解.*未完成/ }).click();
   await page.evaluate(async () => { const { registerReviewNavigationCheck } = await import("/src/features/reviewSession/navigationGuard.ts"); let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; }); const unregister = registerReviewNavigationCheck(() => pending); (window as unknown as { releaseReviewDraft: () => void }).releaseReviewDraft = () => { unregister(); release(); }; });
-  await active(page).getByRole("button", { name: "普通复习", exact: true }).click();
+  await active(page).getByRole("button", { name: "返回看板", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "复习看板" })).not.toBeVisible();
   await expect(active(page).getByRole("heading", { name: "冒泡排序流程理解", exact: true })).toBeVisible();
   await page.evaluate(() => (window as unknown as { releaseReviewDraft: () => void }).releaseReviewDraft());
-  await expect(active(page).getByRole("button", { name: "待复习看板", exact: true })).toBeVisible();
-  await active(page).getByRole("button", { name: "已安排", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "复习看板" })).toBeVisible();
+  await active(page).getByRole("button", { name: /冒泡排序流程理解.*未完成/ }).click();
   await expect(active(page).getByRole("heading", { name: "冒泡排序流程理解", exact: true })).toBeVisible();
 });

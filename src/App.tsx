@@ -2025,13 +2025,14 @@ export const App = () => {
     && tabMemory.more.podcastScreen === "scope";
   const reviewScopePickerActive = activeTab === "review"
     && tabMemory.review.voiceRecall?.screen === "scope";
-  const arrangedCardActive = activeTab === "review" && reviewHubRoute.mode === "arranged" && Boolean(reviewHubRoute.recordId);
+  const voiceWorkspaceActive = activeTab === "review" && Boolean(tabMemory.review.voiceRecall);
+  const arrangedCardActive = activeTab === "review" && !voiceWorkspaceActive && reviewHubRoute.mode === "arranged" && Boolean(reviewHubRoute.recordId);
   const immersiveTaskActive = Boolean(
     arrangedCardActive ||
-    (currentRecord && currentRecordState.recordEditing)
-    || (activeTab === "review" && reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
+    (currentRecord && currentRecordState.recordEditing && !voiceWorkspaceActive)
+    || (activeTab === "review" && !voiceWorkspaceActive && reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
-    || (activeTab === "review" && Boolean(tabMemory.review.voiceRecall)),
+    || (voiceWorkspaceActive && tabMemory.review.voiceRecall?.screen === "call"),
   );
   const desktopReviewSessionActive = activeTab === "review"
     && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && Boolean(tabMemory.review.currentRecordId)))
@@ -2045,16 +2046,18 @@ export const App = () => {
     isDesktopPlatform() ? "desktop-app" : "",
     keyboardVisible ? "keyboard-open" : "",
     aiWorkspaceActive ? "ai-chat-active" : "",
+    voiceWorkspaceActive ? "voice-workspace-active" : "",
     podcastScopeActive || reviewScopePickerActive ? "ai-scope-active" : "",
     immersiveTaskActive ? "immersive-task-active" : "",
     desktopReviewSessionActive ? "desktop-review-session" : "",
     arrangedCardActive ? "arranged-review-card-active" : "",
     activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !currentRecord && tabMemory.more.knowledge?.sidebarCollapsed ? "knowledge-sidebar-collapsed" : "",
-    activeTab === "review" && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)) ? "review-session-active" : "",
+    activeTab === "review" && !voiceWorkspaceActive && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)) ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const showWebNavigationBack = !Capacitor.isNativePlatform()
     && getTabDepth(activeTab, tabMemory) > 0
     && !immersiveTaskActive
+    && !voiceWorkspaceActive
     && !currentRecord
     && !(activeTab === "today" && tabMemory.today.adaptiveTaskId)
     // DailyPlanPage renders its own back control, so the global web back row must

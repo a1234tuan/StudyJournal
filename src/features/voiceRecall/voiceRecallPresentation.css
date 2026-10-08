@@ -848,3 +848,41 @@
     --vr-danger: #eb8e8e;
   }
 }
+.voice-workspace-active { --voice-nav-space: 0px; }
+.voice-workspace-active:not(.immersive-task-active) .vr-shell { min-height: calc(100dvh - var(--voice-nav-space)); }
+.voice-workspace-active .vr-start { padding-bottom: calc(20px + var(--voice-nav-space)); }
+.voice-workspace-active .vr-start-header { position: relative; border-bottom: 0; padding-inline: 24px; background: transparent; backdrop-filter: none; }
+.vr-start-content { width: min(880px, calc(100% - 48px)); margin-inline: auto; padding-block: 12px 20px; }
+.vr-start-content > .vr-start-band, .vr-start-content > .vr-setup-band, .vr-start-content > .vr-disclosure, .vr-start-content > .vr-topic-editor, .vr-start-content > .vr-advanced-details { width: 100%; margin-inline: 0; }
+.vr-start-content .vr-start-band { display: block; padding: 12px 0 20px; }
+.vr-start-content .vr-start-band h1 { font-family: var(--font-ui); font-size: clamp(1.4rem, 2.1vw, 1.85rem); line-height: 1.35; }
+.vr-start-content .vr-kind-switch { margin-top: 18px; }
+.vr-start-content .vr-setup-band { margin-bottom: 16px; }
+.vr-input-settings, .vr-service-settings { border-bottom: 1px solid var(--vr-line); padding-block: 12px; }
+.vr-input-settings > summary, .vr-service-settings > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; cursor: pointer; font-size: .85rem; }
+.vr-input-settings > summary > :last-child, .vr-service-settings > summary > :last-child { margin-left: auto; color: var(--vr-accent); }
+.vr-input-settings > summary > strong { font-size: .85rem; }
+.vr-service-settings summary small { color: var(--vr-muted); overflow-wrap: anywhere; }
+.vr-input-settings .vr-mode-band { width: 100%; margin-top: 16px; padding: 0 0 10px; }
+.vr-input-settings .vr-mode-band > div:first-child { display: none; }
+.vr-service-note { color: var(--vr-muted); font-size: .8rem; line-height: 1.5; }
+.vr-service-settings .vr-provider-body { width: 100%; margin: 0; padding-inline: 0; }
+.vr-start-content .vr-advanced-details { margin-block: 0; padding-block: 12px; }
+.vr-start-content .vr-start-footer { position: sticky; inset: auto; bottom: var(--voice-nav-space, 0px); width: 100%; min-height: 64px; margin-top: 24px; padding: 12px 0; gap: 12px; background: var(--vr-bg); border-top: 1px solid var(--vr-line); backdrop-filter: none; }
+.vr-start-footer .vr-primary { flex-shrink: 0; color: #fff; }
+.vr-start-content .vr-resumable { width: 100%; margin: 18px 0 0; }
+.vr-resumable { width: min(900px, calc(100% - 40px)); margin-inline: auto; padding-block: 14px; border-block: 1px solid var(--vr-line); }
+.vr-resumable header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.vr-resumable h2 { margin: 0; font-size: .92rem; }
+.vr-resumable article { display: flex; align-items: center; justify-content: space-between; gap: 10px 20px; flex-wrap: wrap; }
+.vr-resumable article > div:first-child { min-width: 0; flex: 1; }
+.vr-resumable article strong { font-size: .88rem; overflow-wrap: anywhere; }
+.vr-resumable article small { display: block; margin-top: 4px; color: var(--vr-muted); font-size: .76rem; }
+.vr-resume-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.vr-resumable .vr-resume-end { color: var(--vr-muted); font-weight: 400; }
+.vr-resumable p { margin: 0; font-size: .77rem; line-height: 1.6; }
+.voice-workspace-active .vr-history, .voice-workspace-active .vr-summary { padding-bottom: calc(28px + var(--voice-nav-space)); }
+@media (max-width: 920px) { .voice-workspace-active { --voice-nav-space: calc(var(--bottom-nav-height, 78px) + env(safe-area-inset-bottom)); } }
+@media (max-width: 600px) { .vr-start-content { width: calc(100% - 32px); padding-top: 0; } .voice-workspace-active .vr-start-header { padding-inline: 12px; } .vr-start-content .vr-kind-switch { margin-top: 14px; } .vr-start-footer > div { max-width: 42%; overflow-wrap: anywhere; font-size: .72rem; } .vr-start-footer .vr-primary { padding-inline: 12px; font-size: .8rem; } .vr-service-settings summary small { flex-basis: 100%; order: 3; } .vr-resumable article { display: block; } .vr-resume-actions { margin-top: 6px; } }
+:root[data-theme="dark"] .vr-start-footer .vr-primary { color: #15241e; }
+@media (prefers-color-scheme: dark) { :root[data-theme="system"] .vr-start-footer .vr-primary { color: #15241e; } }

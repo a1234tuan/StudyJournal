@@ -180,6 +180,7 @@ export const VoiceRecallWorkspace = ({
   const [disclosureConfirmed, setDisclosureConfirmed] = useState(false);
   const [turns, setTurns] = useState<VoiceRecallTurnLocal[]>([]);
   const [history, setHistory] = useState<VoiceRecallLocalHistory[]>([]);
+  const [reminderSession, setReminderSession] = useState<VoiceRecallSessionLocal>();
   const [resumableSessions, setResumableSessions] = useState<VoiceRecallSessionLocal[]>([]);
   const [historyDraft, setHistoryDraft] = useState<string>();
   const historySavingRef = useRef(false);
@@ -283,11 +284,20 @@ export const VoiceRecallWorkspace = ({
   const historySummary = historyDraft ?? summary;
   useEffect(() => { setHistoryDraft(undefined); setHistorySaved(false); }, [route.sessionId]);
   useEffect(() => {
-    if (route.screen !== "start") return;
+    if (route.screen !== "start" && route.screen !== "history") return;
     let active = true;
-    void repository.listResumableSessions().then((sessions) => {
-      if (active) setResumableSessions(sessions.filter((session) => !session.sourceUnavailable));
-    }).catch((error) => { if (active) setMessage(describeVoiceError(error)); });
+    void (async () => {
+      const sessions = (await repository.listResumableSessions()).filter(session => !session.sourceUnavailable);
+      let reminder: VoiceRecallSessionLocal | undefined;
+      for (const session of sessions) {
+        if (!active) return;
+        if (session.status === "paused" || session.checkpoint.lastConfirmedText?.trim() || (await repository.listTurns(session.id)).some(turn => !turn.systemGenerated && Boolean((turn.confirmedText ?? turn.cleanText)?.trim()))) {
+          reminder = session;
+          break;
+        }
+      }
+      if (active) { setResumableSessions(sessions); setReminderSession(reminder); }
+    })().catch((error) => { if (active) setMessage(describeVoiceError(error)); });
     return () => { active = false; };
   }, [repository, route.screen, runtimeState?.status]);
   const pendingPlaybackTurn = useMemo(
@@ -1350,6 +1360,26 @@ export const VoiceRecallWorkspace = ({
     }
   };
 
+  const sessionRoute = (session: VoiceRecallSessionLocal, screen: "call" | "summary"): VoiceRecallNavigationRoute => ({ screen, sessionId: session.id, returnTab: route.returnTab, sourceKind: session.sourceKind, recordIds: session.mode === "free-topic" ? [] : session.sourceRecordIds, taskId: session.mode === "free-topic" ? undefined : session.sourceTaskId, topic: session.source.topic, learningGoal: session.memory.learningGoal });
+  const endResumableSession = async (session: VoiceRecallSessionLocal) => {
+    if (busy || !window.confirm("结束此练习？现有内容不会立即删除，随后可在摘要页保存到本机记录。")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (runtime.activeSessionId === session.id) await runtime.end();
+      else await repository.endInactiveSession(session);
+      setResumableSessions(current => current.filter(item => item.id !== session.id));
+      setReminderSession(current => current?.id === session.id ? undefined : current);
+      onRouteChange(sessionRoute(session, "summary"));
+    } catch (error) { setMessage(describeVoiceError(error)); } finally { setBusy(false); }
+  };
+  const resumableList = (sessions: readonly VoiceRecallSessionLocal[], compact = false) => sessions.length > 0 && <section className={"vr-resumable " + (compact ? "is-compact" : "")} aria-label={compact ? "上次练习提醒" : "未结束的本机练习"}>
+    <header><h2>{compact ? "上次练习尚未结束" : "未结束的练习"}</h2>{compact && <button type="button" className="vr-row-action" onClick={() => onRouteChange({ ...route, screen: "history" })}>查看本机记录</button>}</header>
+    {sessions.map(session => <article key={session.id}><div><strong>{session.source.topic || session.memory.learningGoal || "语音复述"}</strong><small>{new Date(session.updatedAt).toLocaleString()} · {session.status === "failed" ? "上次连接或练习失败" : "已暂停或中断"}</small></div><div className="vr-resume-actions"><button type="button" className="vr-row-action" disabled={busy} onClick={() => { setMessage(""); onRouteChange(sessionRoute(session, "call")); }}>查看并继续</button><button type="button" className="vr-row-action vr-resume-end" disabled={busy} onClick={() => void endResumableSession(session)}>结束此练习</button></div></article>)}
+    <p>打开后仍保持暂停，点击“继续通话”才会开启麦克风。</p>
+    {route.screen === "history" && message && <p role="alert">{message}</p>}
+  </section>;
+
   if (route.screen === "scope") {
     return <AiKnowledgeScopePicker
       blocks={blocks}
@@ -1370,6 +1400,7 @@ export const VoiceRecallWorkspace = ({
     return <VoiceRecallHistoryView
       theme={visualTheme}
       history={history}
+      resumable={resumableList(resumableSessions)}
       loading={busy}
       onLoadMore={historyCursor ? () => void loadMoreHistory() : undefined}
       onBack={() => onRouteChange({ ...route, screen: "start" })}
@@ -1489,16 +1520,10 @@ export const VoiceRecallWorkspace = ({
       setDisclosureConfirmed(confirmed);
       if (confirmed && typeof window !== "undefined") window.localStorage.setItem(disclosureStorageKey, "accepted");
     }}
+    topicEditor={knowledgeMode === "topic" && <section className="vr-topic-editor"><label><span>主题</span><input value={topic} onChange={event => setTopic(event.target.value)} placeholder="例如：解释事件循环" /></label><label><span>本次目标</span><input value={learningGoal} onChange={event => setLearningGoal(event.target.value)} /></label></section>}
     providerSetup={providerSetup}
   >
-    {resumableSessions.length > 0 && <section className="vr-resumable" aria-label="未结束的本机通话">
-      <h2>继续未结束的通话</h2><p>恢复后仍保持暂停，只有点击“继续通话”才会重新启用输入。</p>
-      {resumableSessions.map((session) => <button type="button" key={session.id} className="vr-row-action" disabled={busy} onClick={() => {
-        setMessage("");
-        onRouteChange({ screen: "call", sessionId: session.id, returnTab: route.returnTab, sourceKind: session.sourceKind, recordIds: session.mode === "free-topic" ? [] : session.sourceRecordIds, taskId: session.mode === "free-topic" ? undefined : session.sourceTaskId, topic: session.source.topic, learningGoal: session.memory.learningGoal });
-      }}>恢复暂停通话 · {session.source.topic || session.memory.learningGoal || "语音复述"} · {new Date(session.updatedAt).toLocaleString()}</button>)}
-    </section>}
-    {knowledgeMode === "topic" && <section className="vr-topic-editor"><label><span>主题</span><input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例如：解释事件循环" /></label><label><span>本次目标</span><input value={learningGoal} onChange={(event) => setLearningGoal(event.target.value)} /></label></section>}
+    {reminderSession && resumableList([reminderSession], true)}
     {preflightOpen && <section className="vr-disclosure vr-production-disclosure"><div className="vr-disclosure-heading"><div><span className="vr-section-label">首次使用确认</span><h2>本次会使用哪些服务？</h2></div></div><p className="vr-disclosure-summary">你的语音会交给 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.asr ?? "语音识别服务"}</strong> 识别，所选资料会交给 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.llm ?? "内容理解服务"}</strong> 生成追问，AI 回复会由 <strong>{providerSummaries[providerSetup.selectedTemplateId]?.tts ?? "语音播放服务"}</strong> 播放。</p><label className="vr-confirm-check"><input type="checkbox" checked={disclosureConfirmed} onChange={(event) => { const confirmed = event.target.checked; setDisclosureConfirmed(confirmed); if (confirmed && typeof window !== "undefined") window.localStorage.setItem(disclosureStorageKey, "accepted"); }} /><span>我了解本次发送范围，并记住这个选择</span></label></section>}
   </VoiceRecallStartView>;
 };

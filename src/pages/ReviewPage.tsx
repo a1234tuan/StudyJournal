@@ -2,6 +2,7 @@
 import { readReviewCheckpoint, reconcileReviewCheckpoint, writeReviewCheckpoint } from "../features/reviewSession/checkpoint";
 import { useLocalToday } from "../hooks/useLocalToday";
 import { useRestoreInProgress } from "../services/restoreLockService";
+import { ReviewBoardDialog } from "../features/arrangedReview/ReviewBoardDialog";
 import { DueReviewBoard } from "../features/arrangedReview/DueReviewBoard";
 import { CardCoach } from "../features/arrangedReview/CardCoach";
 import { saveCardFeedback } from "../features/arrangedReview/cardFeedback";
@@ -69,6 +70,8 @@ import { reviewAnnotationRepository } from "../features/reviewAnnotations/reposi
 import { reviewOccurrenceKey } from "../features/reviewAnnotations/domain";
 
 export interface ReviewPageProps {
+  onOpenReviewBoard?: () => void;
+  reviewExitLabel?: string;
   onOpenCardTask?: (id: string) => void;
   onAnalyzeCardFeedback?: (recordId: string, feedbackIds: readonly string[]) => Promise<unknown>;
   standalone?: { roundId: string; title: string; recordId: string; readOnly: boolean; rating: RecordReviewRating | null; index: number; total: number; completed?: number; onUndo?: () => Promise<void>; onBack: () => void; onRate: (rating: RecordReviewRating) => Promise<void> };
@@ -332,15 +335,10 @@ export const ReviewPage = ({
   onEnsureAdaptiveCurrentTask,
   coachOpen: controlledCoachOpen,
   onCoachOpenChange,
+  onOpenReviewBoard,
+  reviewExitLabel = "返回卡片库",
 }: ReviewPageProps) => {
   const pageLayerState = usePageTransitionLayerState();
-  const [editShortcutEnabled, setEditShortcutEnabled] = useState(() => {
-    try { return localStorage.getItem("studyjournal-review-edit-shortcut") !== "off"; } catch { return true; }
-  });
-  const toggleEditShortcut = () => setEditShortcutEnabled(current => {
-    try { localStorage.setItem("studyjournal-review-edit-shortcut", current ? "off" : "on"); } catch { }
-    return !current;
-  });
   const touchStartYRef = useRef<number | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const [pullReady, setPullReady] = useState(false);
@@ -392,7 +390,8 @@ export const ReviewPage = ({
     void (async () => {
       try {
         await pendingReviewNavigation();
-        setDueBoardOpen(true);
+        if (onOpenReviewBoard) onOpenReviewBoard();
+        else setDueBoardOpen(true);
       } catch (error) {
         setRatingError(formatUiError(error, "review-annotation"));
       }
@@ -858,6 +857,7 @@ export const ReviewPage = ({
         (!event.ctrlKey && !event.metaKey) ||
         event.shiftKey ||
         isEditable ||
+        Boolean(document.querySelector("dialog[open], [role=dialog][aria-modal=true]")) ||
         undoHistory.length === 0 ||
         Boolean(ratingRecordId) ||
         undoing ||
@@ -875,7 +875,7 @@ export const ReviewPage = ({
   useEffect(() => {
     const editCurrent = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (!editShortcutEnabled || pageLayerState !== "entered" || mode !== "queue" || !currentRecord || coachOpen || cardCoachOpen || dueBoardOpen || annotationOpen || headerMenuOpen || ratingRecordId || undoing || pendingUndoRestore) return;
+      if (pageLayerState !== "entered" || mode !== "queue" || !currentRecord || coachOpen || cardCoachOpen || dueBoardOpen || annotationOpen || headerMenuOpen || ratingRecordId || undoing || pendingUndoRestore) return;
       if (event.key.toLowerCase() !== "e" || event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
       if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=textbox], [role=dialog], [role=menu]")) return;
       if (document.querySelector("dialog[open], [role=dialog][aria-modal=true]")) return;
@@ -884,7 +884,7 @@ export const ReviewPage = ({
     };
     window.addEventListener("keydown", editCurrent);
     return () => window.removeEventListener("keydown", editCurrent);
-  }, [editShortcutEnabled, pageLayerState, mode, currentRecord, coachOpen, cardCoachOpen, dueBoardOpen, annotationOpen, headerMenuOpen, ratingRecordId, undoing, pendingUndoRestore, onEditRecord]);
+  }, [pageLayerState, mode, currentRecord, coachOpen, cardCoachOpen, dueBoardOpen, annotationOpen, headerMenuOpen, ratingRecordId, undoing, pendingUndoRestore, onEditRecord]);
 
   const runFeedbackAction = async (actionId: string, action: () => Promise<unknown>) => {
     if (feedbackActionId) return;
@@ -931,7 +931,6 @@ export const ReviewPage = ({
     }
   };
 
-  if (dueBoardOpen && !standalone) return <DueReviewBoard records={records} due={dueReviews} onClose={() => setDueBoardOpen(false)} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids, sessionRecordIds: ids, ratedRecordIds: [], undoHistory: [] })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} />;
   if (cardCoachOpen && currentRecord) return <CardCoach record={currentRecord} inputs={cardFeedbackInputs()} scope={standalone?.roundId ?? feedbackDraftKey} origin={standalone ? { id: standalone.roundId, title: standalone.title } : undefined} snapshot={reviewCoachSnapshot} onAnalyze={onAnalyzeCardFeedback} onResume={onResumeDeepAnalysis} onRefresh={onRefresh} onOpenTask={onOpenCardTask ?? onOpenAdaptiveTask} onSwitchTask={onSwitchAdaptiveTask} onClose={() => setCardCoachOpen(false)} />;
 
   return (
@@ -948,10 +947,10 @@ export const ReviewPage = ({
         className="review-page-header"
         actions={(
           <div className="review-header-actions">
-            {!standalone && !coachOpen && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={17} /><span>待复习</span></button>}
+            {!standalone && !coachOpen && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={17} /><span>看板</span></button>}
             <div className="review-header-menu" ref={headerMenuRef}>
             {!coachOpen && mode === "queue" && currentRecord && (
-              <button type="button" className="secondary-button review-direct-edit" title="编辑（E）" aria-keyshortcuts={editShortcutEnabled ? "E" : undefined} onClick={() => onEditRecord(currentRecord)}>
+              <button type="button" className="secondary-button review-direct-edit" title="编辑（E）" aria-keyshortcuts="E" onClick={() => onEditRecord(currentRecord)}>
                 <Edit3 size={16} />编辑
               </button>
             )}
@@ -967,7 +966,6 @@ export const ReviewPage = ({
               <MoreHorizontal size={19} />
             </button>
             <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
-                <button type="button" role="menuitemcheckbox" aria-checked={editShortcutEnabled} onClick={toggleEditShortcut}>E 快捷编辑：{editShortcutEnabled ? "开启" : "关闭"}</button>
                 <button
                   type="button"
                   role="menuitem"
@@ -1094,7 +1092,7 @@ export const ReviewPage = ({
                 onClick={exitReviewSession}
               >
                 <ArrowLeft size={18} />
-                {standalone ? "返回看板" : "返回复习"}
+                {standalone ? "返回看板" : reviewExitLabel}
               </button>
               <div className="review-progress-meta">
                 <span>第 {standalone?.index ?? currentIndex}/{standalone?.total ?? reviewTotal} 条</span>
@@ -1112,7 +1110,7 @@ export const ReviewPage = ({
                 <span style={{ width: `${displayedPercent}%` }} />
               </div>
               <div className="review-session-actions">
-                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="待复习看板" title="待复习看板"><ListChecks size={18} /><span>看板</span></button>}
+                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={18} /><span>看板</span></button>}
                 <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
                 <button
                   type="button"
@@ -1126,7 +1124,6 @@ export const ReviewPage = ({
                   <MoreHorizontal size={19} />
                 </button>
                 <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
-                <button type="button" role="menuitemcheckbox" aria-checked={editShortcutEnabled} onClick={toggleEditShortcut}>E 快捷编辑：{editShortcutEnabled ? "开启" : "关闭"}</button>
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
                     <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
                   </button>
@@ -1650,6 +1647,7 @@ export const ReviewPage = ({
           </div>
         </section>
       ))}
+      {!standalone && !onOpenReviewBoard && <ReviewBoardDialog open={dueBoardOpen} onClose={() => setDueBoardOpen(false)}><DueReviewBoard records={records} due={dueReviews} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids, sessionRecordIds: ids, ratedRecordIds: [], undoHistory: [] })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} /></ReviewBoardDialog>}
     </main>
   );
 };

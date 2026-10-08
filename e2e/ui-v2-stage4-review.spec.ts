@@ -91,7 +91,7 @@ test("desktop review layout, brand and click feedback use the new visual hierarc
   expect(sessionGeometry.focusAfterBody).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("desktop-review-centered.png"), fullPage: false });
 
-  await page.getByRole("button", { name: "返回复习", exact: true }).click();
+  await page.getByRole("button", { name: "返回卡片库", exact: true }).click();
   await expect(page.getByRole("button", { name: "卡片库", exact: true })).toHaveClass(/active/);
   const libraryGeometry = await page.evaluate(() => {
     const library = document.querySelector(".review-library")!.getBoundingClientRect();
@@ -131,7 +131,7 @@ test("opens AI Q&A with the current review log and returns to the session", asyn
 
   await page.locator(".ai-chat-page").getByRole("button", { name: "返回", exact: true }).click();
   await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "返回复习", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "返回卡片库", exact: true })).toBeVisible();
 });
 
 for (const theme of ["reading", "modern"] as const) {
@@ -169,14 +169,14 @@ for (const theme of ["reading", "modern"] as const) {
 
     await page.goto("/?preview=stage6");
     await page.getByRole("button", { name: /^复习/ }).first().click();
-    await expect(page.getByRole("button", { name: "返回复习", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "返回卡片库", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "日志复习", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "返回复习", exact: true }).click();
+    await page.getByRole("button", { name: "返回卡片库", exact: true }).click();
     await expect(page.getByRole("button", { name: "日志复习", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "卡片库", exact: true })).toHaveClass(/active/);
     await page.getByRole("button", { name: "日志复习", exact: true }).click();
-    await expect(page.getByRole("button", { name: "返回复习", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "返回复习", exact: true }).click();
+    await expect(page.getByRole("button", { name: "返回卡片库", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "返回卡片库", exact: true }).click();
     await page.getByRole("button", { name: "学习助教", exact: true }).click();
     await expect(page.getByRole("heading", { name: "学习助教" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "复习助教" })).toBeVisible();
