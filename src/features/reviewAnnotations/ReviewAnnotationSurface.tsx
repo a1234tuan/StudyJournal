@@ -17,6 +17,7 @@ interface Props {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   viewportOverlayHost?: HTMLElement | null;
+  entryHost?: HTMLElement | null;
 }
 
 const colors = ["#d1495b", "#2364aa", "#2a9d8f", "#111827", "#f4b942"];
@@ -52,7 +53,7 @@ const emptyDraft = (recordId: string, occurrenceKey: string, contentRevision: st
   updatedAt: new Date().toISOString(),
 });
 
-export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevision, children, open: controlledOpen, onOpenChange, viewportOverlayHost }: Props) => {
+export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevision, children, open: controlledOpen, onOpenChange, viewportOverlayHost, entryHost }: Props) => {
   const pageLayerState = usePageTransitionLayerState();
   const rootRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number>();
@@ -456,8 +457,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
     persist(next); return next;
   });
 
-  const viewportControls = pageLayerState === "exiting" ? null : <>
-    <button
+  const entry = pageLayerState === "exiting" ? null : <button
       type="button"
       className={`review-annotation-entry ${open ? "active" : ""}`}
       aria-label={open ? "关闭批注工具" : "打开批注工具"}
@@ -465,7 +465,9 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
       disabled={!ready}
       title={open ? "关闭批注" : "打开批注"}
       onClick={() => setOpen((value) => !value)}
-    ><Pencil size={18} /></button>
+    ><Pencil size={16} />{entryHost !== undefined && <span>批注</span>}</button>;
+  const viewportControls = pageLayerState === "exiting" ? null : <>
+    {entryHost === undefined && entry}
     {open && <div className="review-viewport-dock review-annotation-toolbar" role="toolbar" aria-label="批注工具栏">
       <span className="review-annotation-current" aria-live="polite">当前：<strong>{toolLabels[tool]}</strong></span>
       <button type="button" aria-label="浏览" aria-pressed={tool === "browse"} className={tool === "browse" ? "active" : ""} onClick={() => setTool("browse")} title="浏览"><Hand size={17} /></button>
@@ -495,6 +497,7 @@ export const ReviewAnnotationSurface = ({ recordId, occurrenceKey, contentRevisi
 
   return <div className={`review-annotation-root ${open && tool === "selection" ? "selecting" : ""}`} ref={rootRef}>
     {children}
+    {entryHost && createPortal(entry, entryHost)}
     {viewportOverlayHost ? createPortal(viewportControls, viewportOverlayHost) : viewportControls}
     <svg className={`review-annotation-svg ${open && tool === "selection" ? "selecting" : ""} ${open && tool !== "browse" && tool !== "selection" ? "drawing" : ""}`} onPointerDown={pointerDown} onPointerMove={(event) => { if (tool === "eraser") setEraserPointer({ x: event.clientX, y: event.clientY }); pointerMove(event); }} onPointerUp={pointerUp} onPointerCancel={pointerCancel}>
       {geometries.map(({ element, left, top, width, height }) => {

@@ -25,12 +25,14 @@ npm run dev
 
 ```powershell
 npm run test -- --exclude "**/*.live.test.ts"
-npm run test:voice-host
+npm run test:desktop
 npm run test:e2e
 npm run test:firebase
 npm run build
 git diff --check
 ```
+
+根单测配置不包含所有桌面壳层测试，`test:desktop` 补充 Node IPC/右键菜单/语音传输及桌面 Vitest 用例。界面改动还应按需跑布局锚点与返回滚动用例（`e2e/workspace-layout-stability.spec.ts`），不能仅以页面可达或按钮可点击代替布局稳定性验收。
 
 涉及 Android 或 Windows 壳层时，还应完成对应构建和真实设备人工检查，并在 PR 中列出未验证项。
 

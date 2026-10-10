@@ -45,14 +45,14 @@ export const StatsPage = ({ blocks, reviewStats }: StatsPageProps) => {
   );
 
   return (
-    <main className="page stats-page">
+    <main className="page stats-page primary-workspace-page">
       <PageHeader
-        eyebrow="Stats"
         title="学习状态"
         subtitle="只保留能帮助你调整学习节奏的信息。"
-        density="compact"
+        density="workspace"
         actions={<span className="counter-pill">{weekRangeLabel()}</span>}
       />
+      <div className="workspace-content">
 
       <section className="stats-section stats-action-section" aria-labelledby="stats-action-title">
         <div className="stats-section-heading">
@@ -98,6 +98,7 @@ export const StatsPage = ({ blocks, reviewStats }: StatsPageProps) => {
           )}
         </div>
       </details>
+      </div>
     </main>
   );
 };

@@ -23,7 +23,7 @@ const manage = async (page: Page) => {
 
 test("switches, renames and deletes legacy libraries without offering new independent libraries", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -81,7 +81,7 @@ test("switches, renames and deletes legacy libraries without offering new indepe
 
 test("topic inputs keep the caret, target selectors receive pointer focus, and dialog reopening stays interactive", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await home(page);
   for (let iteration = 0; iteration < 3; iteration += 1) {
     await active(page).getByRole("button", { name: "创建第一个专题" }).click();
@@ -124,7 +124,7 @@ test("topic inputs keep the caret, target selectors receive pointer focus, and d
 
 test("clears deleted branches but preserves archives and blocks cloud-library purge", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity, editKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -157,7 +157,7 @@ test("clears deleted branches but preserves archives and blocks cloud-library pu
 
 test("keeps recovery copies with unresolved blocked commands undeletable", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { db } = await import("/src/db/database.ts");
@@ -184,7 +184,7 @@ test("keeps recovery copies with unresolved blocked commands undeletable", async
 
 test("can leave an inline editor after draft persistence fails without overwriting the old draft", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -218,7 +218,7 @@ test("can leave an inline editor after draft persistence fails without overwriti
 
 test("resets outline position when changing topics and does not reuse a stale record origin", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -237,7 +237,7 @@ test("resets outline position when changing topics and does not reuse a stale re
     await db.blocks.put({ id: "origin-record", type: "record", title: "来源日志", subject: "算法", date: "2026-09-23", createdAt: "2026-09-23T00:00:00.000Z", updatedAt: "2026-09-23T00:00:00.000Z", order: 0, contentHtml: "<p>导航回归</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
   });
   await page.reload();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await home(page);
   await active(page).getByRole("button", { name: "长专题", exact: true }).click();
   await active(page).locator(".knowledge-outline").evaluate(element => { element.scrollTop = 900; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
@@ -262,7 +262,7 @@ test("resets outline position when changing topics and does not reuse a stale re
 
 test("shows safe cloud-history recovery without skipping damaged commits", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     await repository.createLibrary("云历史异常", "broken-library");
@@ -278,7 +278,7 @@ test("shows safe cloud-history recovery without skipping damaged commits", async
 });
 test("keeps preserved source drafts accessible without the old sync selection UI", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { db } = await import("/src/db/database.ts");

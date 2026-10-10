@@ -1,6 +1,11 @@
 export {};
 
 declare global {
+  interface StudyJournalWindowChromeState {
+    enabled: boolean;
+    fullscreen: boolean;
+  }
+
   interface StudyJournalDesktopBackupFile {
     path: string;
     displayName: string;
@@ -11,6 +16,11 @@ declare global {
   interface Window {
     studyJournalDesktop?: Readonly<{
       isDesktop: true;
+      windowChrome?: Readonly<{
+        getState: () => Promise<StudyJournalWindowChromeState>;
+        setAppearance: (appearance: { color: string; symbolColor: string }) => Promise<void>;
+        onStateChange: (listener: (state: StudyJournalWindowChromeState) => void) => () => void;
+      }>;
       auth: Readonly<{
         signInWithGoogle: () => Promise<{ idToken: string }>;
       }>;

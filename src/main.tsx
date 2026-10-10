@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 
 import { App } from "./App";
+import { DesktopTitleBar } from "./components/DesktopTitleBar";
 import { cleanupNativeServiceWorker } from "./lib/nativeServiceWorker";
 import { isDesktopPlatform, isNativePlatform } from "./lib/platform";
 import { ReviewCoachPreviewApp } from "./preview/ReviewCoachPreviewApp";
@@ -16,8 +17,12 @@ import "./styles/components.css";
 import "./styles/pages.css";
 import "./styles/motion.css";
 import "./styles/visual-v2.css";
+import "./styles/content-first.css";
+import "./styles/workspace-layout.css";
+import "./styles/scrollbars.css";
 import "./styles/subject-radial-picker.css";
 import "./styles/ai-chat.css";
+import "./styles/desktop-chrome.css";
 
 const startApplication = async () => {
   if (isVoiceRecallPrototypeRequest()) {
@@ -71,6 +76,7 @@ const startApplication = async () => {
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
+      <DesktopTitleBar />
       <App />
     </React.StrictMode>,
   );

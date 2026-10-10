@@ -136,7 +136,7 @@ for (const theme of ["reading", "modern"] as const) {
     await expect(page.getByRole("heading", { name: /BFS 中 visited/ })).toBeVisible();
     await expect(page.getByText("正式内容已保存", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "返回", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
     await assertNoHorizontalOverflow(page);
     expect(errors).toEqual([]);
   });

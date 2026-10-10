@@ -1,0 +1,24 @@
+:root {
+  --scrollbar-thumb: color-mix(in srgb, var(--color-muted) 72%, var(--color-surface));
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+:where(.sidebar, .journal-library-scroll, .journal-preview-body, .knowledge-pane, .comparison-table-scroll, .rich-editor pre):is(:hover, :focus-within) {
+  scrollbar-color: var(--color-muted) transparent;
+}
+
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border: 2px solid transparent; background-clip: padding-box; border-radius: 8px; }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--color-muted); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+}
+
+@media (forced-colors: active) {
+  :root, * { scrollbar-color: auto !important; scrollbar-width: auto !important; }
+}

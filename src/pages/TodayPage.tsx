@@ -1,4 +1,4 @@
-import { CalendarCheck, CalendarClock, ChevronDown, Plus, Star } from "lucide-react";
+import { ArrowRight, CalendarCheck, CalendarClock, ChevronDown, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
 import type { Block, ContentTemplate, DayEntry, RecordBlock, RecordReviewLog, RecordReviewState, RecordReviewStats, Subject, SubjectConfig } from "../types";
@@ -8,7 +8,7 @@ import { RecordCard } from "../components/RecordCard";
 import { CloudSyncButton } from "../components/CloudSyncButton";
 import { fallbackSubjectName } from "../lib/subjects";
 import { PageHeader } from "../components/ui";
-import { getDailyMotto } from "../lib/dailyMotto";
+
 import { deriveLearningStats } from "../lib/learningStats";
 
 interface TodayPageProps {
@@ -20,6 +20,8 @@ interface TodayPageProps {
   onSaveEntry: (entry: DayEntry) => void;
   onCreateRecord: (date: string, subject: Subject, contentHtml?: string) => Promise<RecordBlock>;
   onOpenFavorites: () => void;
+  onOpenJournal?: () => void;
+  onOpenSearch?: () => void;
   onOpenRecord: (record: RecordBlock) => void;
   onOpenReview?: () => void;
   onOpenDailyPlan?: () => void;
@@ -44,6 +46,8 @@ export const TodayPage = ({
   onSaveEntry,
   onCreateRecord,
   onOpenFavorites,
+  onOpenJournal,
+  onOpenSearch,
   onOpenRecord,
   onOpenReview = () => undefined,
   onOpenDailyPlan = () => undefined,
@@ -73,32 +77,15 @@ export const TodayPage = ({
   const learningSummary = deriveLearningStats(reviewStats, today);
 
   return (
-    <main className="page today-page primary-workspace-page">
-      <PageHeader
-        eyebrow={formatChineseDate(today)}
-        title="今天想记下什么？"
-        subtitle={getDailyMotto(today)}
-        density="compact"
-        titleActions={(
-          <button type="button" className="primary-button" onClick={onOpenDailyPlan} title="今日计划" aria-label="打开今日计划">
-            今日计划
-          </button>
-        )}
-        actions={(
-          <>
-            <div className="today-goal-pill" title="距离目标" aria-label={`距离目标 ${countdown >= 0 ? `${countdown} 天` : "已结束"}`}>
-              <CalendarClock size={16} />
-              <span>距离目标</span>
-              <strong>{countdown >= 0 ? `${countdown} 天` : "已结束"}</strong>
-            </div>
-            <CloudSyncButton onSignedOut={onOpenCloudSyncSettings} onRestored={onCloudSyncRestored} />
-            <button type="button" className="icon-button" onClick={onOpenFavorites} title="收藏夹" aria-label="打开收藏夹">
-              <Star size={18} />
-            </button>
-          </>
-        )}
+    <main className="page today-page primary-workspace-page content-first-home">
+      <PageHeader title="今天" subtitle={formatChineseDate(today)} density="workspace"
+        actions={<>
+          {onOpenSearch && <button type="button" className="workspace-icon-button" aria-label="全局搜索" title="全局搜索" onClick={onOpenSearch}><Search size={18} /></button>}
+          <CloudSyncButton showLabel onSignedOut={onOpenCloudSyncSettings} onRestored={onCloudSyncRestored} />
+        </>}
       />
-
+      <div className="today-content">
+      <div className="today-home-actions">
       <section className="today-compose-band" aria-label="新建学习日志">
         <button
           type="button"
@@ -117,18 +104,64 @@ export const TodayPage = ({
         </details>
       </section>
 
+      <div className="today-home-links">
+        <button type="button" className="secondary-button" onClick={onOpenDailyPlan} aria-label="打开今日计划">今日计划</button>
+        <button type="button" className="subtle-button" onClick={onOpenFavorites} aria-label="打开收藏夹">收藏夹</button>
+      </div>
+      </div>
+      <div className="today-content-grid">
+      <div className="today-journal-column">
+      {entry && (
+        <details className="entry-meta-panel">
+          <summary>编辑今日日志标题</summary>
+          <input
+            value={entry.title}
+            onChange={(event) => onSaveEntry({ ...entry, title: event.target.value })}
+            aria-label="今日日志标题"
+          />
+        </details>
+      )}
+
+      <section className="today-recent-records">
+        <div className="today-section-heading"><h2>今天的记录</h2><small>{records.length} 条</small>{onOpenJournal && <button type="button" className="subtle-button" onClick={onOpenJournal}>日志资料库<ArrowRight size={14} /></button>}</div>
+        <div className="record-list">
+        {records.length === 0 ? (
+          <div className="empty-state">
+            <h2>今天还很干净。</h2>
+          </div>
+        ) : (
+          records.map((record) => (
+            <RecordCard
+              key={record.id}
+              menuActions
+              record={record}
+              onOpen={onOpenRecord}
+              onAskAi={onAskAi}
+              onToggleFavorite={(favorite) => onToggleFavorite(record, favorite)}
+              reviewState={reviewStatesByRecord[record.id]}
+              reviewLogs={reviewLogsByRecord[record.id]}
+              onAddReview={() => onAddToReview(record.id)}
+            />
+          ))
+        )}
+        </div>
+      </section>
+      </div>
+      <aside className="today-study-aside" aria-label="学习概览">
+      <section className="today-review-summary">
+        <h2><CalendarCheck size={16} />今日复习</h2>
+        <p className="today-review-count"><strong>{dueReviewStates.length}</strong><span>条待复习</span></p>
       {dueReviewStates.length > 0 && (
         <section className="review-due-banner">
           <div>
-            <CalendarCheck size={22} />
             <span>
-              <strong>今天有 {todayDue.length} 条待复习</strong>
+              <span>今日到期 {todayDue.length} 条</span>
               {overdue.length > 0 && <small>另有 {overdue.length} 条已过期</small>}
             </span>
           </div>
           {previewDue.length > 0 && <p>{previewDue.join("、")}</p>}
-          <button type="button" className="primary-button" onClick={onOpenReview}>
-            开始复习
+          <button type="button" className="secondary-button" onClick={onOpenReview}>
+            开始复习<ArrowRight size={15} />
           </button>
         </section>
       )}
@@ -149,39 +182,15 @@ export const TodayPage = ({
         </section>
       )}
 
-      {entry && (
-        <section className="entry-meta-panel">
-          <input
-            value={entry.title}
-            onChange={(event) => onSaveEntry({ ...entry, title: event.target.value })}
-            aria-label="今日日志标题"
-          />
-        </section>
-      )}
-
-      <section className="today-recent-records">
-        <div className="today-section-heading"><h2>最近日志</h2><small>{records.length} 条</small></div>
-        <div className="record-list">
-        {records.length === 0 ? (
-          <div className="empty-state">
-            <h2>今天还很干净。</h2>
-          </div>
-        ) : (
-          records.map((record) => (
-            <RecordCard
-              key={record.id}
-              record={record}
-              onOpen={onOpenRecord}
-              onAskAi={onAskAi}
-              onToggleFavorite={(favorite) => onToggleFavorite(record, favorite)}
-              reviewState={reviewStatesByRecord[record.id]}
-              reviewLogs={reviewLogsByRecord[record.id]}
-              onAddReview={() => onAddToReview(record.id)}
-            />
-          ))
-        )}
-        </div>
       </section>
+      <section className="today-goal-summary">
+        <h2><CalendarClock size={16} />目标日期</h2>
+        <time dateTime={examDate}>{formatChineseDate(examDate)}</time>
+        <small>{countdown >= 0 ? `还有 ${countdown} 天` : "目标日期已过"}</small>
+      </section>
+      </aside>
+      </div>
+      </div>
     </main>
   );
 };

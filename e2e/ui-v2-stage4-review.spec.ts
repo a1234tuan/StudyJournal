@@ -122,14 +122,14 @@ test("opens AI Q&A with the current review log and returns to the session", asyn
   await page.getByRole("button", { name: "打开复习更多菜单" }).click();
   await page.getByRole("menuitem", { name: "AI 问答" }).click();
   await expect(page.locator(".ai-chat-page")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /AI 问答/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /AI 问答/, level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "打开范围详情" }).click();
   await expect(page.getByText("1 条", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "范围详情" }).getByText("BFS Stage3 Preview", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "关闭范围详情" }).click();
 
-  await page.locator(".ai-chat-page").getByRole("button", { name: "返回", exact: true }).click();
+  await page.locator(".ai-workspace-back:visible, .ai-history-return:visible").click();
   await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
   await expect(page.getByRole("button", { name: "返回卡片库", exact: true })).toBeVisible();
 });

@@ -31,7 +31,7 @@ const fixture = (): TableData => ({
 
 const openTable = async (page: Page, data: TableData, options: { collapse?: boolean; markdown?: boolean } = {}) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async ({ data, recordTitle, options }) => {
     const modulePath = "/src/db/database.ts";
     const { db } = await import(modulePath);
@@ -48,9 +48,10 @@ const openTable = async (page: Page, data: TableData, options: { collapse?: bool
     });
   }, { data, recordTitle, options });
   await page.reload();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "日志", exact: true }).first().click();
   await live(page).locator(".record-card-main").filter({ hasText: recordTitle }).click();
+  await live(page).getByRole("button", { name: "打开完整日志", exact: true }).click();
   await expect(table(page)).toBeVisible();
   await expect(live(page)).toHaveClass(/page-transition-layer-entered/);
 };

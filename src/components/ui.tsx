@@ -1,4 +1,11 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import { createContext, useContext, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
+import { ArrowLeft } from "lucide-react";
+
+export const WorkspaceBackContext = createContext<(() => void) | undefined>(undefined);
+
+export const WorkspaceBackButton = ({ children = "返回", className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button type="button" className={`workspace-back ${className}`.trim()} {...props}><ArrowLeft size={17} aria-hidden="true" /><span>{children}</span></button>
+);
 
 type SurfaceCardProps = HTMLAttributes<HTMLElement> & {
   as?: "article" | "section" | "div";
@@ -28,16 +35,18 @@ export const ActionButton = ({
 );
 
 type PageHeaderProps = {
+  back?: ReactNode;
   eyebrow?: string;
   title: ReactNode;
   subtitle?: ReactNode;
   titleActions?: ReactNode;
   actions?: ReactNode;
-  density?: "normal" | "compact";
+  density?: "normal" | "compact" | "workspace";
   className?: string;
 };
 
 export const PageHeader = ({
+  back,
   eyebrow,
   title,
   subtitle,
@@ -45,8 +54,11 @@ export const PageHeader = ({
   actions,
   density = "normal",
   className = "",
-}: PageHeaderProps) => (
-  <header className={`page-header page-header-${density} ${className}`.trim()}>
+}: PageHeaderProps) => {
+  const onBack = useContext(WorkspaceBackContext);
+  const backControl = back !== undefined ? back : density === "workspace" && onBack ? <WorkspaceBackButton onClick={onBack} /> : null;
+  return <header className={`page-header page-header-${density} ${className}`.trim()}>
+    {backControl && <div className="page-header-back">{backControl}</div>}
     <div className="page-header-lead">
       {eyebrow && <p className="eyebrow">{eyebrow}</p>}
       <div className="page-header-title-row">
@@ -56,8 +68,8 @@ export const PageHeader = ({
       {subtitle && <p className="page-header-subtitle">{subtitle}</p>}
     </div>
     {actions && <div className="page-header-actions">{actions}</div>}
-  </header>
-);
+  </header>;
+};
 
 type ListRowProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   icon?: ReactNode;

@@ -1,4 +1,4 @@
-import { Archive, ArrowDown, ArrowLeft, ArrowUp, Bot, Check, Edit3, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Archive, ArrowDown, ArrowUp, Bot, Check, Edit3, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { AiKnowledgeScope, Block, RecordBlock, RecordReviewLog, RecordReviewState, Subject, SubjectConfig } from "../types";
@@ -10,6 +10,7 @@ import {
 } from "../lib/journalSelectors";
 import { normalizeRecordTags, recordTagKey } from "../lib/recordTags";
 import { formatUiError } from "../lib/uiError";
+import { PageHeader, WorkspaceBackButton } from "../components/ui";
 import { RecordCard } from "../components/RecordCard";
 import { RecordTagChips } from "../components/RecordTagChips";
 
@@ -300,24 +301,12 @@ export const CategoriesPage = ({
   };
 
   return (
-    <main className="page categories-page">
-      <section className="section-header">
-        <div>
-          <p className="eyebrow">Categories</p>
-          <h1>{managing ? "学科管理" : activeSubject ?? "学科分类"}</h1>
-        </div>
-        {activeSubject ? (
-          <button type="button" className="secondary-button" onClick={() => onActiveSubjectChange(null)}>
-            <ArrowLeft size={18} />
-            返回分类
-          </button>
-        ) : (
-          <button type="button" className="secondary-button" onClick={() => onManagingChange(!managing)}>
-            {managing ? <X size={18} /> : <SlidersHorizontal size={18} />}
-            {managing ? "完成" : "管理学科"}
-          </button>
-        )}
-      </section>
+    <main className="page categories-page primary-workspace-page">
+      <PageHeader density="workspace" title={managing ? "学科管理" : activeSubject ?? "学科分类"}
+        back={activeSubject ? <WorkspaceBackButton onClick={() => onActiveSubjectChange(null)}>返回分类</WorkspaceBackButton> : undefined}
+        actions={!activeSubject && <button type="button" className="secondary-button" onClick={() => onManagingChange(!managing)}>{managing ? <X size={18} /> : <SlidersHorizontal size={18} />}{managing ? "完成" : "管理学科"}</button>}
+      />
+      <div className="workspace-content">
 
       {managing && !activeSubject ? (
         <section className="subject-manager">
@@ -588,6 +577,7 @@ export const CategoriesPage = ({
           )}
         </section>
       )}
+      </div>
     </main>
   );
 };

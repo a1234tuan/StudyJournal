@@ -73,6 +73,27 @@ const prepareGeometry = (container: HTMLElement) => {
 };
 
 describe("ReviewAnnotationSurface", () => {
+
+  it("places the entry in its workspace slot while retaining viewport tools", async () => {
+    const host = document.createElement("div");
+    const overlay = document.createElement("div");
+    document.body.append(host, overlay);
+    const view = render(<ReviewAnnotationSurface recordId="inline" occurrenceKey="inline" contentRevision="rev-1" entryHost={host} viewportOverlayHost={overlay}>{body()}</ReviewAnnotationSurface>);
+    try {
+      const entry = screen.getByRole("button", { name: "打开批注工具" });
+      await waitFor(() => expect(entry).toBeEnabled());
+      expect(host).toContainElement(entry);
+      expect(overlay.querySelector(".review-annotation-entry")).toBeNull();
+      fireEvent.click(entry);
+      expect(overlay).toContainElement(screen.getByRole("toolbar", { name: "批注工具栏" }));
+      expect(screen.getAllByRole("button", { name: "关闭批注工具" })).toHaveLength(1);
+    } finally {
+      view.unmount();
+      host.remove();
+      overlay.remove();
+    }
+  });
+
   beforeEach(() => {
     drafts.clear();
     vi.clearAllMocks();

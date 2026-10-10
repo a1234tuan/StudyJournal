@@ -4,7 +4,7 @@ test.setTimeout(90_000);
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const seedReview = async (page: Page) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { storage } = await import("/src/services/storageAdapter.ts");
     const { db } = await import("/src/db/database.ts");
@@ -36,10 +36,13 @@ test("review board is a centered list dialog preserving queue, focus, and select
   await expect(dialog).toBeVisible();
   await expect(active(page).locator(".review-session")).toBeVisible();
   const box = await dialog.boundingBox();
-  const viewport = page.viewportSize()!;
+  const layoutViewport = await page.evaluate(() => {
+    const bounds = document.documentElement.getBoundingClientRect();
+    return { x: bounds.x, width: bounds.width };
+  });
   expect(box!.x).toBeGreaterThan(4);
   expect(box!.y).toBeGreaterThan(4);
-  expect(Math.abs(box!.x + box!.width / 2 - viewport.width / 2)).toBeLessThan(3);
+  expect(Math.abs(box!.x + box!.width / 2 - layoutViewport.x - layoutViewport.width / 2)).toBeLessThan(3);
   const list = dialog.getByLabel("待复习日志列表", { exact: true });
   expect(await list.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
   expect((await list.boundingBox())!.height / box!.height).toBeGreaterThan(.55);

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TodayPage } from "./TodayPage";
 import type { SubjectConfig } from "../types";
 import type { RecordReviewStats } from "../types";
-import { getDailyMotto } from "../lib/dailyMotto";
+import { formatChineseDate } from "../lib/date";
 
 const stamp = "2026-06-21T00:00:00.000Z";
 
@@ -37,6 +37,21 @@ afterEach(() => {
 });
 
 describe("TodayPage", () => {
+  it("preserves library, search and the existing day-title editor", () => {
+    const onSaveEntry = vi.fn();
+    const onOpenJournal = vi.fn();
+    const onOpenSearch = vi.fn();
+    const entry = { id: "day", createdAt: stamp, updatedAt: stamp, date: "2026-06-21", title: "原有标题", tags: [], pinned: false, favorite: false };
+    render(<TodayPage entry={entry} blocks={[]} examDate="2026-12-27" subjects={subjects} onSaveEntry={onSaveEntry} onCreateRecord={vi.fn()} onOpenFavorites={vi.fn()} onOpenRecord={vi.fn()} onToggleFavorite={vi.fn()} onOpenJournal={onOpenJournal} onOpenSearch={onOpenSearch} />);
+    fireEvent.click(screen.getByRole("button", { name: "日志资料库" }));
+    fireEvent.click(screen.getByRole("button", { name: "全局搜索" }));
+    fireEvent.click(screen.getByText("编辑今日日志标题"));
+    fireEvent.change(screen.getByLabelText("今日日志标题"), { target: { value: "新标题" } });
+    expect(onOpenJournal).toHaveBeenCalledTimes(1);
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+    expect(onSaveEntry).toHaveBeenCalledWith({ ...entry, title: "新标题" });
+  });
+
   it("shows a compact learning status without adding a dashboard", () => {
     const reviewStats: RecordReviewStats = {
       activeCount: 1,
@@ -71,12 +86,13 @@ describe("TodayPage", () => {
     expect(screen.queryByText(/更多学科可到/)).not.toBeInTheDocument();
   });
 
-  it("shows a stable daily motto in the page header", () => {
+  it("keeps the date in a compact content-first header", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-04T09:00:00+08:00"));
     renderPage();
 
-    expect(screen.getByText(getDailyMotto("2026-07-04"))).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "今天" })).toBeInTheDocument();
+    expect(screen.getByText(formatChineseDate("2026-07-04"))).toBeInTheDocument();
   });
 
   it("opens favorites from the compact header action", () => {

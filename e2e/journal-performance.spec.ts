@@ -19,16 +19,22 @@ test("bounds a 92-record journal and restores the list after preview", async ({ 
   await expect(page.locator(".journal-library-records .record-card")).toHaveCount(40);
   const source = page.locator(".journal-library-records .record-card").nth(30);
   await source.scrollIntoViewIfNeeded();
-  const sourceScrollY = await page.evaluate(() => window.scrollY);
+  const list = page.locator(".journal-library-scroll");
+  const sourceScrollY = await list.evaluate(element => element.scrollTop);
   expect(sourceScrollY).toBeGreaterThan(0);
   await source.locator(".record-card-main").click();
+  await expect(page.getByRole("region", { name: "日志预览" })).toBeVisible();
+  await expect(page.locator(".journal-preview-body .tiptap")).toHaveAttribute("contenteditable", "false");
+  await page.getByRole("button", { name: "打开完整日志" }).click();
 
   await expect(page.getByRole("button", { name: "返回", exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(page.getByRole("region", { name: "日志预览" })).toBeVisible();
+  await page.getByRole("button", { name: "返回列表" }).click();
   await expect(page.locator(".journal-library-records .record-card")).toHaveCount(40);
   await expect(page.getByText("已显示 40 / 92", { exact: true })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   expect(errors).toEqual([]);
 });

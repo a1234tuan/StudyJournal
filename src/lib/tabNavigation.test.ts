@@ -3,6 +3,24 @@ import { describe, expect, it } from "vitest";
 import { buildTabPageKey, createInitialTabMemory, getTabDepth, popTabDepth, recordReferenceOpenError, reviewQueueReferenceOpenError } from "./tabNavigation";
 
 describe("tabNavigation", () => {
+  it("keeps the journal workspace mounted and returns full records to their preview", () => {
+    const memory = createInitialTabMemory();
+    const key = buildTabPageKey("journal", memory);
+    memory.journal.previewRecordId = "preview";
+    memory.journal.libraryScrollTop = 420;
+    memory.journal.previewScrollTop = 210;
+    expect(getTabDepth("journal", memory)).toBe(1);
+    expect(buildTabPageKey("journal", memory)).toBe(key);
+    memory.journal.recordId = "full";
+    const preview = popTabDepth(memory, "journal");
+    expect(preview.journal.recordId).toBeUndefined();
+    expect(preview.journal.previewRecordId).toBe("preview");
+    expect(preview.journal.previewScrollTop).toBe(210);
+    const list = popTabDepth(preview, "journal");
+    expect(list.journal.previewRecordId).toBeUndefined();
+    expect(list.journal.libraryScrollTop).toBe(420);
+    expect(getTabDepth("journal", list)).toBe(0);
+  });
   it("treats the voice recall workspace as one review-owned navigation layer", () => {
     const memory = createInitialTabMemory();
     memory.review.currentRecordId = "record-1";

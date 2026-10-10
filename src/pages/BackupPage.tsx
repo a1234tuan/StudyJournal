@@ -319,13 +319,13 @@ export const BackupPage = ({ settings, autoBackupState, onRestored }: BackupPage
   const cancelTransfer = () => transferAbortRef.current?.abort();
 
   return (
-    <main className="page backup-page">
+    <main className="page backup-page primary-workspace-page">
       <PageHeader
-        eyebrow="Backup"
         title="备份与恢复"
         subtitle="完整备份、导入恢复和自动备份都在这里管理。"
-        density="compact"
+        density="workspace"
       />
+      <div className="workspace-content">
 
       <CloudSyncPanel onRestored={onRestored} />
 
@@ -456,6 +456,7 @@ export const BackupPage = ({ settings, autoBackupState, onRestored }: BackupPage
 
       {busy && <p className="status-message">正在处理，请稍等...</p>}
       {message && <p className="status-message">{message}</p>}
+      </div>
     </main>
   );
 };

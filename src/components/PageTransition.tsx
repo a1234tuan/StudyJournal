@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 interface PageTransitionProps {
   pageKey: string;
   motion?: NavigationMotionIntent;
   children: ReactNode;
+  scrollRequest?: { id: number; top: number };
 }
 
 export type NavigationMotionIntent = "tab" | "forward" | "back" | "replace" | "none";
@@ -29,13 +30,21 @@ const prefersReducedMotion = () =>
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export const PageTransition = ({ pageKey, motion = "replace", children }: PageTransitionProps) => {
+export const PageTransition = ({ pageKey, motion = "replace", children, scrollRequest }: PageTransitionProps) => {
+  const appliedScrollRequest = useRef<number>();
   const nextLayerId = useRef(1);
   const activePageKey = useRef(pageKey);
   const cleanupTimer = useRef<number | null>(null);
   const [layers, setLayers] = useState<TransitionLayer[]>([
     { id: 0, pageKey, children, state: "entered", motion: "none" },
   ]);
+
+  useLayoutEffect(() => {
+    if (!scrollRequest || appliedScrollRequest.current === scrollRequest.id) return;
+    if (!layers.some(layer => layer.pageKey === pageKey && layer.state !== "exiting")) return;
+    window.scrollTo(0, scrollRequest.top);
+    appliedScrollRequest.current = scrollRequest.id;
+  }, [layers, pageKey, scrollRequest]);
 
   useEffect(() => {
     if (activePageKey.current === pageKey) {

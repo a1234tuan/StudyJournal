@@ -140,7 +140,7 @@ const submitText = (text: string) => {
   fireEvent.click(screen.getByRole("button", { name: "确认并发送" }));
 };
 
-it("finds a paused checkpoint from the start page after replacing the runtime and preserves its topic", async () => {
+it("finds an empty paused checkpoint in local records after replacing the runtime and preserves its topic", async () => {
   const { repository, runtime, view, sessionFactory } = await openCall();
   const sessionId = runtime.activeSessionId!;
   await act(async () => { await runtime.pause(); });
@@ -153,7 +153,10 @@ it("finds a paused checkpoint from the start page after replacing the runtime an
     return <VoiceRecallWorkspace route={route} blocks={[]} assets={[]} subjects={[]} templates={[]} settings={DEFAULT_SETTINGS} onRouteChange={setRoute} onBack={() => undefined} onCreateJournal={async () => undefined} runtime={replacement} repository={repository} sessionFactory={sessionFactory} playbackSinkFactory={() => ({ play: async () => undefined, stop: () => undefined })} />;
   };
   const restarted = render(<Restarted />);
-  fireEvent.click(await screen.findByRole("button", { name: /恢复暂停通话.*核心概念/ }));
+  expect(screen.queryByRole("region", { name: "上次练习提醒" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "本机记录" }));
+  await screen.findByText("核心概念");
+  fireEvent.click(await screen.findByRole("button", { name: "查看并继续" }));
   await screen.findByRole("button", { name: "继续通话" });
   expect(replacement.activeSessionId).toBe(sessionId);
   expect(replacement.snapshot?.status).toBe("paused");

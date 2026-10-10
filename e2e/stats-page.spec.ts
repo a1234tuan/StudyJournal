@@ -14,7 +14,10 @@ test("stats page prioritizes action and keeps the home status lightweight", asyn
   await expect(page.getByText("近 14 天记录趋势", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "今天", exact: true }).last().click();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "今日状态" })).toBeVisible();
-  await expect(page.locator(".today-status-line")).toHaveCSS("display", "flex");
+  const status = page.locator(".today-study-aside .today-status-line");
+  await expect(status).toBeVisible();
+  await expect(status).not.toBeEmpty();
+  expect(await status.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });

@@ -11,11 +11,12 @@ interface CloudSyncButtonProps {
   /** Called after a sync that restored/replaced local data, so the caller can refresh its view. */
   onRestored: () => Promise<void> | void;
   className?: string;
+  showLabel?: boolean;
 }
 
 const errorMessage = (error: unknown) => formatUiError(error, "cloud-sync");
 
-export const CloudSyncButton = ({ onSignedOut, onRestored, className = "" }: CloudSyncButtonProps) => {
+export const CloudSyncButton = ({ onSignedOut, onRestored, className = "", showLabel = false }: CloudSyncButtonProps) => {
   const { busy, outcome } = useCloudSyncStore();
   const spinning = busy === "sync" || busy === "resolve";
 
@@ -92,6 +93,7 @@ export const CloudSyncButton = ({ onSignedOut, onRestored, className = "" }: Clo
       aria-label="云同步"
     >
       <RefreshCw size={18} />
+      {showLabel && <span>云同步</span>}
     </button>
   );
 };

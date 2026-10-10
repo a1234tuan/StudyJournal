@@ -1,0 +1,54 @@
+:root {
+  --desktop-titlebar-height: 0px;
+  --desktop-content-height: calc(100dvh - var(--desktop-titlebar-height));
+}
+
+:root[data-desktop-chrome="true"] {
+  --desktop-titlebar-height: env(titlebar-area-height, 36px);
+  scroll-padding-top: var(--desktop-titlebar-height);
+}
+
+.desktop-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1000;
+  height: var(--desktop-titlebar-height);
+  display: flex;
+  align-items: center;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  font: 500 12px/1 var(--font-ui);
+  user-select: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.desktop-titlebar > span {
+  width: env(titlebar-area-width, calc(100% - 160px));
+  margin-left: env(titlebar-area-x, 0px);
+  padding-inline: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+:root[data-desktop-chrome="true"] body { padding-top: var(--desktop-titlebar-height); }
+:root[data-desktop-chrome="true"] :is(.app-shell, .loading-screen) { min-height: var(--desktop-content-height); }
+:root[data-desktop-chrome="true"] .sidebar { top: var(--desktop-titlebar-height); height: var(--desktop-content-height); }
+:root[data-desktop-chrome="true"] .record-editor-topbar { top: var(--desktop-titlebar-height); }
+:root[data-desktop-chrome="true"] .record-editor-page .editor-toolbar { top: calc(var(--desktop-titlebar-height) + 58px); }
+:root[data-desktop-chrome="true"] .journal-page.journal-library-workspace,
+:root[data-desktop-chrome="true"] .page.knowledge-shell,
+:root[data-desktop-chrome="true"] .vr-call { height: var(--desktop-content-height); }
+:root[data-desktop-chrome="true"] .app-shell:is(.ai-chat-active, .ai-scope-active) { height: var(--desktop-content-height); min-height: 0; }
+:root[data-desktop-chrome="true"] .knowledge-sidebar-edge { top: calc((100dvh + var(--desktop-titlebar-height)) / 2); }
+:root[data-desktop-chrome="true"] .review-session { min-height: calc(var(--desktop-content-height) - 190px); }
+:root[data-desktop-chrome="true"] :is(.vr-shell, .vr-history, .vr-summary) { min-height: var(--desktop-content-height); }
+:root[data-desktop-chrome="true"] :is(.app-viewport-overlay, .desktop-migration-backdrop, .image-lightbox-presence, .record-reference-presence, .record-reference-picker-backdrop, .ai-action-backdrop, .ai-history-backdrop, .voice-journal-backdrop, .vr-details-layer, .vr-sheet-backdrop) { top: var(--desktop-titlebar-height); }
+:root[data-desktop-chrome="true"] dialog::backdrop { top: var(--desktop-titlebar-height); }
+:root[data-desktop-chrome="true"] dialog { max-height: calc(var(--desktop-content-height) - 32px); }
+
+@media (forced-colors: active) {
+  .desktop-titlebar { background: Canvas; color: CanvasText; border-color: ButtonBorder; }
+}

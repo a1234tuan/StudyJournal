@@ -8,7 +8,7 @@ const capture = async (page: Page, name: string) => {
 };
 const start = async (page: Page) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
 };
 
 test("all 25 due cards keep their progress across reload and undo", async ({ page }, info) => {

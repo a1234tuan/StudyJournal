@@ -34,6 +34,7 @@
     "test": "vitest run --mode test",
     "test:e2e": "playwright test",
     "test:voice-host": "node --test desktop/voiceAsrSocket.test.cjs",
+    "test:desktop": "node --test desktop/*.test.cjs && vitest run --config vitest.desktop.config.ts",
     "test:firebase": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-firebase-emulator.ps1",
     "test:watch": "vitest --mode test",
     "android:add": "cap add android",

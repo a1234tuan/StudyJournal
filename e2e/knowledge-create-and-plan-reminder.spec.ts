@@ -5,7 +5,7 @@ const output = "output/ui-ux-polish-2026-10-03/knowledge-and-reminder";
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const prepareKnowledge = async (page: Page) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -84,7 +84,7 @@ test.describe("daily plan welcome", () => {
     await expect(page.getByRole("dialog", { name: "为今天定个小目标" })).toBeVisible();
     const second = await context.newPage();
     await second.goto("/");
-    await expect(second.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+    await expect(second.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
     await second.waitForTimeout(1100);
     await expect(second.locator(".daily-plan-reminder")).not.toBeVisible();
     await second.close();
@@ -125,7 +125,7 @@ test.describe("daily plan welcome", () => {
     await dialog.getByRole("button", { name: "去制定计划" }).click();
     await expect(active(page).getByRole("heading", { name: "今日计划" })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
     await page.waitForTimeout(1100);
     await expect(dialog).not.toBeVisible();
   });

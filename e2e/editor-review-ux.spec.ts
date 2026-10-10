@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const seedDraft = async (page: Page, changed: boolean) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async different => {
     const { db } = await import("/src/db/database.ts");
     const record = { id: "draft-ux", type: "record", title: "版本核对验收", subject: "读书笔记", date: "2026-10-04", createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-03T00:00:00.000Z", order: 0, contentHtml: "<p>正式正文</p><p></p>", tags: [], assets: [], formulas: [], mistakeRefs: [] };
@@ -13,6 +13,7 @@ const seedDraft = async (page: Page, changed: boolean) => {
   await page.reload();
   await page.getByRole("button", { name: "日志", exact: true }).first().click();
   await active(page).locator(".record-card-main").filter({ hasText: "版本核对验收" }).click();
+  await active(page).getByRole("button", { name: "打开完整日志", exact: true }).click();
   await expect(active(page).getByText("已恢复未保存草稿，点击保存后才会写入正式记录。")).toBeVisible();
 };
 

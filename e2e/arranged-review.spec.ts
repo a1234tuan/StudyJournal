@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 test.setTimeout(90_000);
 const output = "output/review-workspace-2026-10-07/arranged-review";
-const screenshot = async (page: Page, path: string) => { await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0); await page.screenshot({ path, animations: "disabled" }); };
+const screenshot = async (page: Page, path: string) => { await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0); await page.screenshot({ path: test.info().outputPath(path.split("/").at(-1)!), animations: "disabled" }); };
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const seed = async (page: Page) => {
-  await page.goto("/"); await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await page.goto("/"); await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { db } = await import("/src/db/database.ts");
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
@@ -135,7 +135,7 @@ test("failed persistence never checks an item and editor returns to the original
   await expect(active(page).getByText(/复习评分失败/)).toBeVisible();
   expect(await page.evaluate(async () => { const { db } = await import("/src/db/database.ts"); return db.arrangedReviewEvents.count(); })).toBe(0);
   await active(page).getByRole("button", { name: "打开复习更多菜单", exact: true }).click();
-  await active(page).getByRole("menuitem", { name: "编辑", exact: true }).click();
+  await active(page).getByRole("menuitem", { name: /编辑原日志/ }).click();
   await expect(active(page).locator(".record-editor-page")).toBeVisible();
   await active(page).getByRole("button", { name: "返回", exact: true }).click();
   await expect(active(page).getByRole("heading", { name: "冒泡排序流程理解", exact: true })).toBeVisible();

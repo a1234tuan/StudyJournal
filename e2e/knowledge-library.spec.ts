@@ -4,7 +4,7 @@ test.setTimeout(90000);
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const openKnowledge = async (page: Page) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "更多", exact: true }).last().click();
   await expect(active(page).locator(".more-list").getByRole("button", { name: "知识库", exact: true })).toBeVisible();
   await active(page).getByRole("button", { name: "知识库", exact: true }).click();
@@ -47,7 +47,7 @@ test("first use creates one library, edits inline, keeps browsing read-only and 
 
 test("selected details cannot intercept filters, large results stay virtual and selected logs are organized", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -85,7 +85,7 @@ test("selected details cannot intercept filters, large results stay virtual and 
 
 test("keeps same-name libraries distinct and centralizes sync", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     for (const id of ["one", "two", "three"]) await repository.createLibrary("本机知识库", id);
@@ -131,7 +131,7 @@ test("touch editing, IME confirmation, sibling creation and map editing keep int
 
 test("new topic from an unorganized selection preserves the selection through first-library creation", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { db } = await import("/src/db/database.ts");
     await db.blocks.put({ id: "collect-first", type: "record", title: "第一次整理", subject: "读书笔记", date: "2026-09-22", createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z", order: 0, contentHtml: "<p>保留正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] });
@@ -158,6 +158,18 @@ for (const visual of ["reading", "modern"]) for (const theme of ["light", "dark"
     await page.getByRole("dialog").getByRole("textbox", { name: "新建专题", exact: true }).fill("信息密度检查");
     await page.getByRole("dialog").getByRole("button", { name: "创建专题", exact: true }).click();
     await expect(active(page).locator(".knowledge-workspace")).toBeVisible();
+    await expect(active(page).getByRole("heading", { name: "信息密度检查", exact: true })).toBeVisible();
+    const header = active(page).locator(".knowledge-header");
+    await expect(header.locator("button:visible")).toHaveCount(6);
+    for (const label of ["返回", "大纲", "导图", "安排复习", "查找", "更多知识库操作"]) {
+      await expect(header.getByRole("button", { name: label, exact: true })).toBeVisible();
+    }
+    const boxes = await header.locator("button:visible").evaluateAll(buttons => buttons.map(button => { const box = button.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }; }));
+    for (const [index, box] of boxes.entries()) {
+      for (const other of boxes.slice(index + 1)) {
+        expect(box.right <= other.left + 1 || other.right <= box.left + 1 || box.bottom <= other.top + 1 || other.bottom <= box.top + 1).toBe(true);
+      }
+    }
     const geometry = await active(page).locator("main.knowledge-shell").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const workspace = element.querySelector(".knowledge-workspace")!.getBoundingClientRect();
@@ -166,7 +178,7 @@ for (const visual of ["reading", "modern"]) for (const theme of ["light", "dark"
     expect(geometry.ratio).toBeGreaterThan(page.viewportSize()!.width > 920 ? 0.8 : 0.7);
     expect(geometry.top).toBeLessThan(120);
     expect(geometry.width).toBeLessThanOrEqual(geometry.viewport);
-    expect(geometry.headerButtons).toBeLessThanOrEqual(page.viewportSize()!.width > 920 ? 6 : 5);
+    expect(geometry.headerButtons).toBe(6);
     await expect(active(page).getByText("先浏览，再整理", { exact: false })).toHaveCount(0);
     await expect(active(page).getByRole("button", { name: "启用并发现账号知识库" })).toHaveCount(0);
   });

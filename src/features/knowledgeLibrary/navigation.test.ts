@@ -9,6 +9,11 @@ it("resets position on topic/library change and ignores outgoing scroll callback
   expect(patchKnowledgeNavigation(next, { scrollTop: 1200, scrollLibraryId: "library", scrollWorkspaceId: "A" })).toBe(next);
   expect(patchKnowledgeNavigation(scrolled, { libraryId: "other" }).scrollTop).toBe(0);
 });
+it("preserves automatic pane sizing and an explicit saved width", () => {
+  expect(restoreKnowledgeNavigation({}).recordPaneWidth).toBeUndefined();
+  expect(restoreKnowledgeNavigation({ recordPaneWidth: 520 }).recordPaneWidth).toBe(520);
+  expect(restoreKnowledgeNavigation({ recordPaneWidth: 900 }).recordPaneWidth).toBe(560);
+});
 it("restores matching history position and resets old unowned history", () => {
   expect(knowledgeOutlineScroll(restoreKnowledgeNavigation({ libraryId: "library", workspaceId: "A", scrollTop: 100 }), "library", "A")).toBe(0);
   const restored = restoreKnowledgeNavigation({ libraryId: "library", workspaceId: "A", scrollTop: 100, scrollLibraryId: "library", scrollWorkspaceId: "A" });

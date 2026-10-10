@@ -73,11 +73,11 @@ export const MorePage = ({
 }: MorePageProps) => (
   <main className="page more-page primary-workspace-page">
     <PageHeader
-      eyebrow="More"
       title="更多"
       subtitle="备份、AI 工具和应用入口集中在这里，常用信息保持一屏可扫。"
-      density="compact"
+      density="workspace"
     />
+      <div className="workspace-content">
 
     <section className="more-section more-hub-section">
       <h2>工具</h2>
@@ -143,5 +143,6 @@ export const MorePage = ({
         <ListRow icon={<Settings size={19} />} title="设置" trailing={<ChevronRight size={17} />} onClick={onOpenSettings} />
       </div>
     </section>
+    </div>
   </main>
 );

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Search } from "lucide-react";
+import { Search } from "lucide-react";
 
 import type { Asset, Block, DayEntry, SearchResult } from "../types";
 import { searchAllAsync } from "../lib/search";
 import { isDesktopPlatform } from "../lib/platform";
+import { PageHeader, WorkspaceBackButton } from "../components/ui";
 
 interface SearchPageProps {
   entries: DayEntry[];
@@ -74,19 +75,9 @@ export const SearchPage = ({ entries, blocks, assets, query, onQueryChange, onBa
   const hasMoreResults = rawResults.length > SEARCH_RESULT_LIMIT;
 
   return (
-    <main className="page search-page">
-      <section className="section-header">
-        <div>
-          <p className="eyebrow">Search</p>
-          <h1>全文搜索</h1>
-        </div>
-        {onBack && (
-          <button type="button" className="secondary-button" onClick={onBack}>
-            <ArrowLeft size={18} />
-            返回
-          </button>
-        )}
-      </section>
+    <main className="page search-page primary-workspace-page">
+      <PageHeader title="全文搜索" density="workspace" back={onBack && <WorkspaceBackButton onClick={onBack} />} />
+      <div className="workspace-content">
       <label className="search-box">
         <Search size={20} />
         <input
@@ -154,6 +145,7 @@ export const SearchPage = ({ entries, blocks, assets, query, onQueryChange, onBa
           </div>
         )}
       </section>
+      </div>
     </main>
   );
 };

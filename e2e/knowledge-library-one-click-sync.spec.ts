@@ -5,7 +5,7 @@ const active = (page: import("@playwright/test").Page) => page.locator('.page-tr
 
 test("automatically redirects an open local topic to its synchronized copy and keeps old drafts in recovery", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     const { changeKnowledgeOwner } = await import("/src/features/knowledgeLibrary/context.ts");
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");

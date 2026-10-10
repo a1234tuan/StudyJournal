@@ -10,12 +10,14 @@ import { initialKnowledgeNavigation, patchKnowledgeNavigation } from "./features
 import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
-import { Capacitor, SystemBars, SystemBarsStyle } from "@capacitor/core";
+import { systemBarStyleForTheme } from "./lib/systemBarTheme";
+import { Capacitor, SystemBars } from "@capacitor/core";
 import {
   ArrowLeft,
   CalendarDays,
   CalendarCheck,
   BookOpenText,
+  FileText,
   ClipboardCheck,
   Home,
   Layers,
@@ -55,6 +57,7 @@ import { FavoritesPage } from "./pages/FavoritesPage";
 import { TrashPage } from "./pages/TrashPage";
 import { UsageGuidePage } from "./pages/UsageGuidePage";
 import { TemplateLibraryPage } from "./pages/TemplateLibraryPage";
+import { WorkspaceBackContext } from "./components/ui";
 import { PageTransition, type NavigationMotionIntent } from "./components/PageTransition";
 import { CloudSyncButton } from "./components/CloudSyncButton";
 import { CloudSyncConflictDialog } from "./components/CloudSyncConflictDialog";
@@ -254,6 +257,7 @@ type NavigationCommitOptions = {
   knowledgeEntry?: boolean;
   history?: "push" | "replace" | "none";
   scrollToTop?: boolean;
+  restoreScrollY?: number;
   motion?: NavigationMotionIntent;
 };
 
@@ -270,6 +274,8 @@ const navigationMotionBetween = (current: NavigationState, next: NavigationState
 };
 
 export const App = () => {
+  const moreRootScrollRef = useRef(0);
+  const [navigationScrollRequest, setNavigationScrollRequest] = useState<{ id: number; top: number }>();
   const [activeTab, setActiveTab] = useState<TabKey>(() => isVoiceRecallProductionPreview() ? "review" : "today");
   const [tabMemory, setTabMemory] = useState<TabMemory>(() => {
     const memory = createInitialTabMemory();
@@ -434,7 +440,8 @@ export const App = () => {
     const historyMode = options.history ?? "push";
     const sessionId = webNavigationSessionRef.current;
     const webNavigationEnabled = !Capacitor.isNativePlatform() && !isDesktopPlatform() && Boolean(sessionId);
-    const nextScrollY = options.scrollToTop ? 0 : window.scrollY;
+    const requestedScrollY = options.restoreScrollY ?? (options.scrollToTop ? 0 : undefined);
+    const nextScrollY = requestedScrollY ?? window.scrollY;
     const motion = options.motion ?? navigationMotionBetween(current, next);
     let nextNavigationIndex = webNavigationIndexRef.current;
 
@@ -470,8 +477,8 @@ export const App = () => {
     setActiveTab(next.activeTab);
     setTabMemory(next.tabMemory);
     setActiveAiSessionId(next.activeAiSessionId);
-    if (options.scrollToTop) {
-      window.scrollTo(0, 0);
+    if (requestedScrollY !== undefined) {
+      setNavigationScrollRequest(previous => ({ id: (previous?.id ?? 0) + 1, top: requestedScrollY }));
     }
     return true;
   }, []);
@@ -524,6 +531,7 @@ export const App = () => {
       if (current.activeTab === "more" && current.tabMemory.more.subRoute === subRoute && !current.tabMemory.more.recordId) {
         return;
       }
+      if (current.activeTab === "more" && !current.tabMemory.more.subRoute && !current.tabMemory.more.recordId) moreRootScrollRef.current = window.scrollY;
       const nextMemory: TabMemory = {
         ...current.tabMemory,
         more: {
@@ -541,7 +549,7 @@ export const App = () => {
       };
       commitNavigation(
         { ...current, activeTab: "more", tabMemory: nextMemory },
-        { motion: motion ?? (current.activeTab === "more" ? "forward" : "tab"), knowledgeEntry: subRoute === "knowledge" },
+        { motion: motion ?? (current.activeTab === "more" ? "forward" : "tab"), knowledgeEntry: subRoute === "knowledge", scrollToTop: true },
       );
     },
     [clearBackHint, commitNavigation],
@@ -626,7 +634,7 @@ export const App = () => {
       && !isDesktopPlatform()
       && Boolean(sessionId)
       && isCurrentWebNavigationSession(window.history.state, sessionId!);
-    commitNavigation({ ...current, tabMemory: nextMemory }, { history: webNavigationEnabled ? "replace" : "none", motion: "back" });
+    commitNavigation({ ...current, tabMemory: nextMemory }, { history: webNavigationEnabled ? "replace" : "none", motion: "back", restoreScrollY: current.activeTab === "more" && current.tabMemory.more.subRoute && !nextMemory.more.subRoute ? moreRootScrollRef.current : undefined });
   }, [commitNavigation]);
 
   const aiWorkspaceOnBack = useCallback(() => {
@@ -807,7 +815,7 @@ export const App = () => {
   useEffect(() => {
     document.documentElement.dataset.visualTheme = visualTheme;
     writeVisualTheme(visualTheme);
-    if (Capacitor.isNativePlatform()) void SystemBars.setStyle({ style: app.settings?.theme === "dark" ? SystemBarsStyle.Light : SystemBarsStyle.Dark }).catch(() => undefined);
+    if (Capacitor.isNativePlatform()) void SystemBars.setStyle({ style: systemBarStyleForTheme(app.settings?.theme) }).catch(() => undefined);
   }, [visualTheme, app.settings?.theme]);
 
   useEffect(() => {
@@ -1701,6 +1709,11 @@ export const App = () => {
               return created;
             }}
             onOpenFavorites={() => openMoreSubRoute("favorites")}
+            onOpenJournal={() => switchTab("journal")}
+            onOpenSearch={() => {
+              const current = navigationStateRef.current;
+              commitNavigation({ ...current, activeTab: "journal", tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, recordId: undefined, searchOpen: true } } });
+            }}
             onOpenRecord={(record) => openRecordInTab(record, "today")}
             onOpenReview={() => switchTab("review")}
             onOpenDailyPlan={openDailyPlan}
@@ -1750,7 +1763,28 @@ export const App = () => {
             browseMode={tabMemory.journal.browseMode}
             subjectFilter={tabMemory.journal.subjectFilter}
             visibleRecordCount={tabMemory.journal.visibleRecordCount}
+            onOpenCloudSyncSettings={() => openMoreSubRoute("backup")}
+            onCloudSyncRestored={app.refresh}
             restoreListScrollY={tabMemory.journal.listScrollY}
+            previewRecordId={tabMemory.journal.previewRecordId}
+            previewScrollTop={tabMemory.journal.previewScrollTop}
+            libraryScrollTop={tabMemory.journal.libraryScrollTop}
+            onPreviewRecord={(record) => {
+              const current = navigationStateRef.current;
+              if (current.tabMemory.journal.previewRecordId === record.id) return;
+              commitNavigation({ ...current, tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, previewRecordId: record.id, previewScrollTop: 0 } } }, { history: current.tabMemory.journal.previewRecordId ? "replace" : "push", motion: "none", scrollToTop: false });
+            }}
+            onClosePreview={popCurrentTabDepth}
+            onPreviewScroll={(recordId, previewScrollTop) => {
+              const current = navigationStateRef.current;
+              if (current.activeTab !== "journal" || current.tabMemory.journal.recordId || current.tabMemory.journal.searchOpen || current.tabMemory.journal.browseMode !== "library" || current.tabMemory.journal.previewRecordId !== recordId) return;
+              updateNavigationState(state => ({ ...state, tabMemory: { ...state.tabMemory, journal: { ...state.tabMemory.journal, previewScrollTop } } }));
+            }}
+            onLibraryScroll={(libraryScrollTop) => {
+              const current = navigationStateRef.current;
+              if (current.activeTab !== "journal" || current.tabMemory.journal.recordId || current.tabMemory.journal.searchOpen || current.tabMemory.journal.browseMode !== "library") return;
+              updateNavigationState(state => ({ ...state, tabMemory: { ...state.tabMemory, journal: { ...state.tabMemory.journal, libraryScrollTop } } }));
+            }}
             onMonthChange={(month) =>
               updateNavigationState((current) => ({
                 ...current,
@@ -1793,11 +1827,11 @@ export const App = () => {
             }}
             onBrowseModeChange={(browseMode) => updateNavigationState((current) => ({
               ...current,
-              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, browseMode } },
+              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, browseMode, previewRecordId: undefined, previewScrollTop: undefined } },
             }))}
             onSubjectFilterChange={(subjectFilter) => updateNavigationState((current) => ({
               ...current,
-              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, subjectFilter, visibleRecordCount: 20 } },
+              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, subjectFilter, visibleRecordCount: 20, libraryScrollTop: 0, previewRecordId: undefined, previewScrollTop: undefined } },
             }))}
             onVisibleRecordCountChange={(visibleRecordCount) => updateNavigationState((current) => ({
               ...current,
@@ -2030,7 +2064,6 @@ export const App = () => {
   const immersiveTaskActive = Boolean(
     arrangedCardActive ||
     (currentRecord && currentRecordState.recordEditing && !voiceWorkspaceActive)
-    || (activeTab === "review" && !voiceWorkspaceActive && reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
     || (voiceWorkspaceActive && tabMemory.review.voiceRecall?.screen === "call"),
   );
@@ -2054,7 +2087,8 @@ export const App = () => {
     activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !currentRecord && tabMemory.more.knowledge?.sidebarCollapsed ? "knowledge-sidebar-collapsed" : "",
     activeTab === "review" && !voiceWorkspaceActive && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)) ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
-  const showWebNavigationBack = !Capacitor.isNativePlatform()
+  const workspaceBack = activeTab === "more" && !currentRecord && ["settings", "stats", "favorites", "backup"].includes(tabMemory.more.subRoute ?? "") ? popCurrentTabDepth : undefined;
+  const showWebNavigationBack = !workspaceBack && !Capacitor.isNativePlatform()
     && getTabDepth(activeTab, tabMemory) > 0
     && !immersiveTaskActive
     && !voiceWorkspaceActive
@@ -2065,6 +2099,7 @@ export const App = () => {
     // MORE_SUB_ROUTES_WITH_OWN_BACK below).
     && !(activeTab === "today" && tabMemory.today.planOpen && !currentRecord)
     && !(activeTab === "journal" && tabMemory.journal.searchOpen)
+    && !(activeTab === "journal" && tabMemory.journal.previewRecordId)
     && !(activeTab === "journal" && tabMemory.journal.selectedSubject)
     && !(activeTab === "categories" && (tabMemory.categories.activeSubject || tabMemory.categories.managing))
     && !(activeTab === "more" && tabMemory.more.subRoute !== null && MORE_SUB_ROUTES_WITH_OWN_BACK.includes(tabMemory.more.subRoute));
@@ -2075,7 +2110,7 @@ export const App = () => {
     <div className={shellClassName}>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><BookOpenText size={21} strokeWidth={1.8} /></span>
+          <span className="brand-mark" aria-hidden="true"><FileText size={29} strokeWidth={1.25} /></span>
           <div className="brand-copy">
             <strong>学习日志</strong>
           </div>
@@ -2090,7 +2125,7 @@ export const App = () => {
             const Icon = item.icon;
             const active = item.subRoute
               ? activeTab === "more" && tabMemory.more.subRoute === item.subRoute
-              : activeTab === item.tab;
+              : activeTab === item.tab && !(item.tab === "more" && tabMemory.more.subRoute === "knowledge");
             return (
               <button
                 key={`${item.tab}-${item.subRoute ?? "root"}`}
@@ -2137,7 +2172,7 @@ export const App = () => {
             </button>
           </div>
         )}
-        <PageTransition pageKey={pageKey} motion={navigationMotion}>{renderCurrentTab()}</PageTransition>
+        <PageTransition pageKey={pageKey} motion={navigationMotion} scrollRequest={navigationScrollRequest}><WorkspaceBackContext.Provider value={workspaceBack}>{renderCurrentTab()}</WorkspaceBackContext.Provider></PageTransition>
       </div>
       {backToast && (
         <div className="app-toast" role="status" aria-live="polite">

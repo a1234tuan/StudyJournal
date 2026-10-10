@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, ChevronLeft, Circle, CircleDot, Clock3, Layers, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, CheckCircle2, Circle, CircleDot, Clock3, Layers, Plus, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import type {
@@ -13,7 +13,7 @@ import type {
   Subject,
   SubjectConfig,
 } from "../types";
-import { PageHeader } from "../components/ui";
+import { PageHeader, WorkspaceBackButton } from "../components/ui";
 import { SubjectPicker } from "../components/SubjectPicker";
 import { formatChineseDate, formatChineseMonthDay, isISODate } from "../lib/date";
 import { useLocalToday } from "../hooks/useLocalToday";
@@ -315,29 +315,20 @@ export const DailyPlanPage = ({
   return (
     <main className="page daily-plan-page primary-workspace-page">
       <PageHeader
-        eyebrow={view === "history" ? `累计 ${historyGroups.length} 天有计划` : undefined}
+        back={<WorkspaceBackButton onClick={onBack} aria-label="返回今天">返回今天</WorkspaceBackButton>}
         title={view === "today" ? (planDate === todayDate ? "今日计划" : "学习计划") : "计划历史"}
-        density="compact"
+        density="workspace"
         actions={view === "today" && selectedGroup && !scheduled ? (
           <span className="counter-pill" title="所选日期的计划完成度">
             {selectedGroup.doneCount} / {selectedGroup.totalCount} 完成
           </span>
         ) : undefined}
       />
+      <div className="workspace-content">
 
-      {/*
-        The view toggle used to sit in the header's `titleActions` slot, which is
-        not where this app puts view switchers: the journal and review tabs both
-        live in the content area. It shares a row with the back control instead,
-        the same "back on the left, local controls on the right" bar the record
-        editor uses, so the page title stays a title and the toggle reads as a
-        control for the view below it.
-      */}
+
       <div className="daily-plan-topbar">
-        <button type="button" className="daily-plan-back" onClick={onBack} aria-label="返回今天">
-          <ChevronLeft size={17} aria-hidden="true" />
-          今天
-        </button>
+        {view === "history" && <p className="daily-plan-history-count">累计 {historyGroups.length} 天有计划</p>}
         <div className="daily-plan-view-toggle" role="tablist" aria-label="计划视图">
           <button
             type="button"
@@ -517,6 +508,7 @@ export const DailyPlanPage = ({
           </section>
         </>
       )}
+      </div>
     </main>
   );
 };

@@ -4,7 +4,7 @@ test.setTimeout(90000);
 const active = (page: Page) => page.locator('.page-transition-layer:not([aria-hidden="true"])').last();
 const prepare = async (page: Page, datedRecords = false) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   const ids = await page.evaluate(async includeDatedRecords => {
     const { knowledgeRepository: repository } = await import("/src/features/knowledgeLibrary/runtime.ts");
     const { createKnowledgeEntity } = await import("/src/features/knowledgeLibrary/commands.ts");
@@ -108,7 +108,7 @@ test("pans without writes and drags node bodies to reparent branches", async ({ 
   const viewport = active(page).locator(".knowledge-map-viewport");
   const rect = (await viewport.boundingBox())!;
   await page.mouse.move(rect.x + 30, rect.y + 280); await page.mouse.down(); await page.mouse.move(rect.x + 100, rect.y + 300, { steps: 10 }); await page.mouse.up();
-  await active(page).getByRole("button", { name: "查看全貌" }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
   expect(await page.evaluate(async () => { const { db } = await import("/src/db/database.ts"); return db.knowledgeCommands.count(); })).toBe(count);
   const handle = active(page).locator('[data-node-id="' + ids.node + '"] .knowledge-map-label');
   const target = active(page).locator('[data-node-id="' + ids.other + '"]');

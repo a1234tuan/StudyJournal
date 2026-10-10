@@ -37,7 +37,7 @@ test.describe("Stage 9 Review Coach release path", () => {
     await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
     await page.getByRole("textbox", { name: "复习重点 1 本次评论" }).fill("阶段 9：首次发现时应立即标记，避免重复入队。");
     await page.getByRole("button", { name: /忘记了/ }).click();
-    await page.getByRole("button", { name: /^复习/ }).first().click();
+    await expect(page.getByText("本轮复习已完成", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "学习助教", exact: true }).click();
     // M5 removed the per-block analysis checkboxes: the workbench now shows the
     // queued feedback as a read-only item and analyses it in one action.

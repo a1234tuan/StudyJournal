@@ -248,6 +248,25 @@
   background: color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
+.record-review-status {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.record-review-status.due {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+}
+
 .record-review-button {
   min-height: 34px;
   display: inline-flex;

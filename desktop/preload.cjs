@@ -14,6 +14,15 @@ ipcRenderer.on("study-journal:voice-suspend", (_event, payload) => {
 
 contextBridge.exposeInMainWorld("studyJournalDesktop", Object.freeze({
   isDesktop: true,
+  windowChrome: Object.freeze({
+    getState: () => ipcRenderer.invoke("study-journal:window-chrome-state"),
+    setAppearance: (appearance) => ipcRenderer.invoke("study-journal:window-chrome-appearance", appearance),
+    onStateChange: (listener) => {
+      const handler = (_event, state) => listener(state);
+      ipcRenderer.on("study-journal:window-chrome-state", handler);
+      return () => ipcRenderer.removeListener("study-journal:window-chrome-state", handler);
+    },
+  }),
   auth: Object.freeze({
     signInWithGoogle: () => ipcRenderer.invoke("study-journal:google-sign-in"),
   }),

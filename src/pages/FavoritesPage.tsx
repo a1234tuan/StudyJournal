@@ -27,12 +27,13 @@ export const FavoritesPage = ({
   const favoriteRecords = getFavoriteRecords(records);
 
   return (
-    <main className="page favorites-page">
+    <main className="page favorites-page primary-workspace-page">
       <PageHeader
-        eyebrow="Favorites"
+        density="workspace"
         title="收藏夹"
         subtitle="这里收纳你标星的学习记录，按创建日期从新到旧排列。"
       />
+      <div className="workspace-content">
 
       <section className="record-list">
         {favoriteRecords.length === 0 ? (
@@ -56,6 +57,7 @@ export const FavoritesPage = ({
           ))
         )}
       </section>
+      </div>
     </main>
   );
 };

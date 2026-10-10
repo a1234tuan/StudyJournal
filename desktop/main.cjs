@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, session, shell } = require("electron");
 const { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
@@ -8,6 +8,7 @@ const { pathToFileURL } = require("node:url");
 const { recognizePaddleOcr } = require("./ocr.cjs");
 const { safeRepositoryName, assertRepositoryPath } = require("./backupRepositoryPaths.cjs");
 const { buildDesktopContextMenuTemplate } = require("./contextMenu.cjs");
+const { windowChromeOptions, attachWindowChrome, registerWindowChrome } = require("./windowChrome.cjs");
 
 const APP_SCHEME = "study-journal";
 const APP_HOST = "app";
@@ -262,6 +263,7 @@ protocol.registerSchemesAsPrivileged([
 app.setName("学习日志");
 
 let mainWindow;
+registerWindowChrome(ipcMain, () => mainWindow, process.platform);
 let voiceCaptureActive = false;
 /** In-flight TTS syntheses, keyed by the renderer-supplied request id. */
 const desktopTtsRequests = new Map();
@@ -1009,6 +1011,7 @@ const createMainWindow = () => {
     minHeight: 640,
     show: false,
     backgroundColor: "#f7f3ec",
+    ...windowChromeOptions(process.platform, nativeTheme.shouldUseDarkColors),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -1020,6 +1023,7 @@ const createMainWindow = () => {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
+  attachWindowChrome(mainWindow, process.platform);
   mainWindow.webContents.on("context-menu", (event, params) => {
     event.preventDefault();
     const menu = Menu.buildFromTemplate(buildDesktopContextMenuTemplate(params));

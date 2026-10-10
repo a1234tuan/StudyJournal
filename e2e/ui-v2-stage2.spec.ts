@@ -28,14 +28,14 @@ test("stage 2 formal app keeps both visual themes usable across today and librar
     expect(navCentering).toBeLessThanOrEqual(1.5);
   }
   await expect(page.locator("html")).toHaveAttribute("data-visual-theme", "reading");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /新建 .* 记录/ })).toBeVisible();
   await expect(page.locator(".today-page").getByText("BFS Stage3 Preview", { exact: true }).first()).toBeVisible();
   if (testInfo.project.name === "desktop") {
     await page.getByRole("button", { name: "打开置顶日志 BFS Stage3 Preview" }).click();
     await expect(page.getByRole("heading", { name: "BFS Stage3 Preview" })).toBeVisible();
     await page.getByRole("button", { name: "返回", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   }
   await page.waitForTimeout(4_500);
   await assertNoHorizontalOverflow(page);

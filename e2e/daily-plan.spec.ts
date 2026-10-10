@@ -26,7 +26,7 @@ const live = (page: Page) =>
 
 const openDashboard = async (page: Page) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
 };
 
 const openDailyPlan = async (page: Page) => {
@@ -80,7 +80,7 @@ test("case 1: opens the daily plan from the home header and returns to the dashb
   await expect(page.getByRole("button", { name: /添加计划/ })).toBeDisabled();
 
   await page.getByRole("button", { name: "返回今天" }).click();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
 });
 
 test("case 2: writing the log fulfils the plan and shows a done row", async ({ page }) => {
@@ -122,7 +122,7 @@ test("case 3: opening a plan and leaving without typing reclaims the empty log",
   // The empty record is reclaimed, so it never appears as a real log. The plan
   // row keeps its link, which is why the hint must not claim the log was deleted.
   await page.getByRole("button", { name: "返回今天" }).click();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await expect(live(page).locator(".record-card")).toHaveCount(0);
 });
 
@@ -268,7 +268,7 @@ test("case 8: the narrow layout stacks the form and the back chain unwinds layer
   await page.goBack();
   await expect(page.getByRole("heading", { name: "今日计划" })).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
 });
 
 test("case 9: a future plan persists without logs, stays hidden today, and opens only on arrival", async ({ page }, testInfo) => {
@@ -314,7 +314,7 @@ test("case 9: a future plan persists without logs, stays hidden today, and opens
   await expect(planRow(page, "提前制定的计划")).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "今天想记下什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await openDailyPlan(page);
   await expect(planRow(page, "提前制定的计划")).toHaveCount(0);
   await page.getByLabel("计划日期", { exact: true }).fill("2026-09-30");

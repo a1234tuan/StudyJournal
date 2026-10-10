@@ -47,19 +47,20 @@ export const SettingsPage = ({ settings, onSaveSettings, visualTheme, onVisualTh
   };
 
   return (
-    <main className="page settings-page">
-      <PageHeader eyebrow="Settings" title="设置" density="compact" />
+    <main className="page settings-page primary-workspace-page">
+      <PageHeader title="设置" density="workspace" />
+      <div className="workspace-content">
       <section className="settings-panel">
         <fieldset className="visual-theme-fieldset">
           <legend>视觉风格</legend>
           <div className="visual-theme-options">
             <button type="button" aria-pressed={visualTheme === "reading"} onClick={() => onVisualThemeChange("reading")}>
               <span className="visual-theme-preview visual-theme-preview-reading" />
-              <span><strong>温润阅读</strong><small>暖白、舒展排版与陶土强调</small></span>
+              <span><strong>温润阅读</strong><small>暖纸、墨色文字与安静阅读</small></span>
             </button>
             <button type="button" aria-pressed={visualTheme === "modern"} onClick={() => onVisualThemeChange("modern")}>
               <span className="visual-theme-preview visual-theme-preview-modern" />
-              <span><strong>清爽现代</strong><small>中性明亮、紧凑层级与克制绿色</small></span>
+              <span><strong>清爽现代</strong><small>中性灰白、清晰层级与青绿强调</small></span>
             </button>
           </div>
           <small className="settings-hint">仅保存在当前设备，不参与云同步。</small>
@@ -140,6 +141,7 @@ export const SettingsPage = ({ settings, onSaveSettings, visualTheme, onVisualTh
           </div>
         </section>
       )}
+      </div>
     </main>
   );
 };

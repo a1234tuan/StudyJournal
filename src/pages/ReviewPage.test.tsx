@@ -231,6 +231,44 @@ const clickRating = (name: string | RegExp) => {
 };
 
 describe("ReviewPage", () => {
+  it("groups header navigation and keeps one working edit action in the session", async () => {
+    const { handlers } = renderReviewPage({ mode: "queue" });
+    const header = document.querySelector(".review-page-header") as HTMLElement;
+    expect(within(header).getByRole("tablist", { name: "复习视图" })).toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "复习看板" })).not.toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: /编辑|更多|返回/ })).not.toBeInTheDocument();
+    const chrome = screen.getByRole("region", { name: "复习进度" });
+    expect(within(chrome).getByRole("button", { name: "返回卡片库" })).toBeInTheDocument();
+    expect(within(chrome).getByRole("button", { name: "复习看板" })).toBeInTheDocument();
+    await waitFor(() => expect(within(chrome).getByRole("button", { name: "打开批注工具" })).toBeEnabled());
+    expect(within(chrome).getByRole("button", { name: "打开批注工具" })).toHaveTextContent("批注");
+    fireEvent.click(within(chrome).getByRole("button", { name: "打开复习更多菜单" }));
+    const edit = screen.getByRole("menuitem", { name: /编辑原日志/ });
+    expect(edit).toHaveAttribute("aria-keyshortcuts", "E");
+    expect(screen.getAllByRole("menuitem", { name: /编辑/ })).toHaveLength(1);
+    fireEvent.click(edit);
+    expect(handlers.onEditRecord).toHaveBeenCalledWith(records[0]);
+    expect(handlers.onRate).not.toHaveBeenCalled();
+  });
+
+  it("hides session-only tools in the library and coach", () => {
+    renderReviewPage({ mode: "manage" });
+    expect(screen.queryByRole("button", { name: "复习看板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开复习更多菜单" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "学习助教" }));
+    expect(screen.queryByRole("button", { name: "复习看板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开复习更多菜单" })).not.toBeInTheDocument();
+  });
+
+  it("retains board and refresh on an empty queue without a stale edit action", () => {
+    const { handlers } = renderReviewPage({ mode: "queue", currentRecordId: undefined, queueIds: [], dueReviews: [] });
+    expect(screen.getByRole("button", { name: "复习看板" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
+    expect(screen.queryByRole("menuitem", { name: /编辑原日志/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "刷新复习列表" }));
+    expect(handlers.onRefresh).toHaveBeenCalledTimes(1);
+  });
+
   it("opens a standalone board without unmounting the current review", async () => {
     const originalShow = HTMLDialogElement.prototype.showModal;
     const originalClose = HTMLDialogElement.prototype.close;
@@ -481,7 +519,7 @@ describe("ReviewPage", () => {
     });
   });
 
-  it("moves undo, refresh and statistics into the review overflow menu", async () => {
+  it("keeps session actions in overflow without cross-workspace statistics", async () => {
     const { handlers } = renderReviewPage({
       mode: "queue",
       dueReviews: [review("active")],
@@ -496,10 +534,8 @@ describe("ReviewPage", () => {
     await waitFor(() => expect(handlers.onRefresh).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "学习统计" }));
-    expect(handlers.onOpenStats).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
+    expect(screen.queryByRole("menuitem", { name: "学习统计" })).not.toBeInTheDocument();
+    expect(handlers.onOpenStats).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "复习操作" })).not.toBeInTheDocument();
   });
@@ -613,11 +649,11 @@ describe("ReviewPage", () => {
   it("uses a compact card menu for preview, editing and review actions", () => {
     const { handlers } = renderReviewPage();
 
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    expect(screen.getByText("概率笔记")).toBeInTheDocument();
-    expect(screen.getByText("进程同步")).toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.getByText("概率笔记", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.getByText("进程同步", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
 
-    const activeCard = screen.getByText("BFS 队列").closest("article");
+    const activeCard = screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" }).closest("article");
     expect(activeCard).not.toBeNull();
     expect(within(activeCard as HTMLElement).getByText("数据结构")).toBeInTheDocument();
     expect(within(activeCard as HTMLElement).getByText(/到期 2026-07-02/)).toBeInTheDocument();
@@ -636,7 +672,7 @@ describe("ReviewPage", () => {
     expect(handlers.onResetReview).toHaveBeenCalledWith("active");
     expect(handlers.onRemoveReview).toHaveBeenCalledWith("active");
 
-    const newCard = screen.getByText("概率笔记").closest("article");
+    const newCard = screen.getByText("概率笔记", { selector: ".review-library-card strong, .review-session h1" }).closest("article");
     expect(newCard).not.toBeNull();
     expect(within(newCard as HTMLElement).getByText("未加入")).toBeInTheDocument();
     fireEvent.click(within(newCard as HTMLElement).getByRole("button", { name: /打开 概率笔记 的操作菜单/ }));
@@ -659,8 +695,8 @@ describe("ReviewPage", () => {
       onCurrentRecordChange,
     });
 
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("BFS 队列")).toBeInTheDocument());
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
     expect(onQueueChange).not.toHaveBeenCalledWith([]);
     expect(onCurrentRecordChange).not.toHaveBeenCalledWith(undefined);
   });
@@ -728,12 +764,12 @@ describe("ReviewPage", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /^数据结构/ }));
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    expect(screen.queryByText("概率笔记")).not.toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.queryByText("概率笔记", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^队列/ }));
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    expect(screen.queryByText("页表缓存")).not.toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.queryByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "已掌握" }));
@@ -750,8 +786,8 @@ describe("ReviewPage", () => {
     });
 
     fireEvent.change(screen.getByLabelText("搜索标题、学科、标签"), { target: { value: "图论" } });
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    expect(screen.getByText("页表缓存")).toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("搜索标题、学科、标签"), { target: { value: "仅正文命中" } });
     expect(screen.getByText("没有匹配的卡片")).toBeInTheDocument();
@@ -770,10 +806,10 @@ describe("ReviewPage", () => {
       },
     });
 
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
-    expect(screen.queryByText("页表缓存")).not.toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.queryByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^队列/ }));
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
   });
 
   it("keeps suspended cards out of the new-card filter and count", () => {
@@ -788,12 +824,12 @@ describe("ReviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     expect(screen.getByRole("button", { name: /^新卡$/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新卡" }));
-    expect(screen.getByText("概率笔记")).toBeInTheDocument();
-    expect(screen.queryByText("页表缓存")).not.toBeInTheDocument();
+    expect(screen.getByText("概率笔记", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.queryByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "已搁置" }));
-    expect(screen.getByText("页表缓存")).toBeInTheDocument();
-    expect(screen.queryByText("概率笔记")).not.toBeInTheDocument();
+    expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
+    expect(screen.queryByText("概率笔记", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
   });
 
   it("removes an overdue card immediately after a good rating and prevents stale due props from requeueing it", async () => {
@@ -826,12 +862,12 @@ describe("ReviewPage", () => {
       />,
     );
 
-    expect(screen.getByText("BFS 队列")).toBeInTheDocument();
+    expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
     clickRating(/良好/);
 
     expect(onQueueChange).toHaveBeenLastCalledWith([]);
     expect(onCurrentRecordChange).toHaveBeenLastCalledWith(undefined);
-    expect(screen.queryByText("BFS 队列")).not.toBeInTheDocument();
+    expect(screen.queryByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
 
     rerender(
       <ReviewPage
@@ -859,7 +895,7 @@ describe("ReviewPage", () => {
       />,
     );
 
-    expect(screen.queryByText("BFS 队列")).not.toBeInTheDocument();
+    expect(screen.queryByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).not.toBeInTheDocument();
     await waitFor(() => expect(onRate).toHaveBeenCalledWith("active", "good"));
   });
 
@@ -1029,13 +1065,13 @@ describe("ReviewPage", () => {
     });
 
     clickRating(/良好/);
-    expect(screen.getByText("页表缓存")).toBeInTheDocument();
+    expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /良好/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /模糊/ }));
     expect(onRate).toHaveBeenCalledTimes(1);
 
     pending.resolve();
-    await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
   });
 
   it("rolls the current card back into the queue when rating fails", async () => {
@@ -1055,7 +1091,7 @@ describe("ReviewPage", () => {
 
     clickRating(/良好/);
 
-    await waitFor(() => expect(screen.getByText("BFS 队列")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
     expect(screen.getByText(/复习评分失败/)).toBeInTheDocument();
     expect(onQueueChange).toHaveBeenLastCalledWith(["active"]);
     expect(onCurrentRecordChange).toHaveBeenLastCalledWith("active");
@@ -1086,19 +1122,19 @@ describe("ReviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
     await waitFor(() => expect(screen.getByRole("menuitem", { name: /撤回上次评分/ })).toBeEnabled());
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
 
     clickRating(/良好/);
     await waitFor(() => expect(screen.getByText("本轮复习已完成")).toBeInTheDocument());
 
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
     await waitFor(() => expect(onUndo).toHaveBeenCalledWith(expect.objectContaining({ recordId: "second" })));
-    await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /撤回上次评分/ }));
     await waitFor(() => expect(onUndo).toHaveBeenCalledWith(expect.objectContaining({ recordId: "active" })));
-    await waitFor(() => expect(screen.getByText("BFS 队列")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
     await waitFor(() => expect(screen.getByLabelText("复习重点 1 本次评论")).toHaveValue("要重新理解 BFS 层序边界"));
     expect(onQueueChange).toHaveBeenLastCalledWith(["active", "second"]);
     expect(onCurrentRecordChange).toHaveBeenLastCalledWith("active");
@@ -1153,14 +1189,14 @@ describe("ReviewPage", () => {
     render(<ReviewQueueHarness />);
 
     clickRating(/良好/);
-    await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "打开复习更多菜单" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /撤回上次评分/ }));
     await waitFor(() => expect(screen.getByTestId("review-queue")).toHaveTextContent("second"));
 
     undoRefresh.resolve(undefined);
 
-    await waitFor(() => expect(screen.getByText("BFS 队列")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("BFS 队列", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId("review-queue")).toHaveTextContent("active|second"));
   });
 
@@ -1181,6 +1217,6 @@ describe("ReviewPage", () => {
 
     expect(onQueueChange).toHaveBeenLastCalledWith(["second"]);
     expect(onCurrentRecordChange).toHaveBeenLastCalledWith("second");
-    await waitFor(() => expect(screen.getByText("页表缓存")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("页表缓存", { selector: ".review-library-card strong, .review-session h1" })).toBeInTheDocument());
   });
 });

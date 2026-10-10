@@ -8,6 +8,22 @@ import {
 } from "./webNavigationHistory";
 
 describe("web navigation history snapshots", () => {
+  it("round-trips journal browsing, pagination and both pane positions", () => {
+    const memory = createInitialTabMemory();
+    Object.assign(memory.journal, { browseMode: "library", subjectFilter: "数学", visibleRecordCount: 60, listScrollY: 12, libraryScrollTop: 980, previewRecordId: "record-a", previewScrollTop: 300 });
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(createWebNavigationSnapshot("session", "journal", memory, null, 0))));
+    expect(restored?.tabMemory.journal).toEqual(memory.journal);
+  });
+  it("rejects invalid pane positions and restores missing browsing defaults", () => {
+    const memory = createInitialTabMemory();
+    const snapshot = createWebNavigationSnapshot("session", "journal", memory, null, 0);
+    Object.assign(snapshot.tabMemory.journal, { libraryScrollTop: -1, previewScrollTop: "bad", visibleRecordCount: -10, browseMode: "bad" });
+    const restored = restoreWebNavigationSnapshot(snapshot);
+    expect(restored?.tabMemory.journal.libraryScrollTop).toBeUndefined();
+    expect(restored?.tabMemory.journal.previewScrollTop).toBeUndefined();
+    expect(restored?.tabMemory.journal.visibleRecordCount).toBe(20);
+    expect(restored?.tabMemory.journal.browseMode).toBe("library");
+  });
   it("round-trips tab state, reference navigation and scroll position through browser-safe JSON", () => {
     const memory = createInitialTabMemory();
     memory.journal.month = new Date("2026-07-01T00:00:00.000Z");

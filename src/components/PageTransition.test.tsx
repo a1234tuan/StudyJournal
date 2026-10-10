@@ -5,6 +5,23 @@ import { PAGE_TRANSITION_DURATION_MS, PageTransition } from "./PageTransition";
 import { MotionPresence } from "./MotionPresence";
 
 describe("PageTransition", () => {
+
+  it("applies an explicit scroll request only after the destination mounts", () => {
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const observations: boolean[] = [];
+    scroll.mockImplementation(() => { observations.push(Boolean(screen.queryByText("设置目标页"))); });
+    const { rerender } = render(<PageTransition pageKey="more"><main>更多来源页</main></PageTransition>);
+    rerender(<PageTransition pageKey="settings" scrollRequest={{ id: 1, top: 0 }}><main>设置目标页</main></PageTransition>);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith(0, 0);
+    expect(observations).toEqual([true]);
+    rerender(<PageTransition pageKey="settings" scrollRequest={{ id: 1, top: 0 }}><main>设置目标页更新</main></PageTransition>);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    rerender(<PageTransition pageKey="more" scrollRequest={{ id: 2, top: 180 }}><main>更多来源页</main></PageTransition>);
+    expect(scroll).toHaveBeenLastCalledWith(0, 180);
+    scroll.mockRestore();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();

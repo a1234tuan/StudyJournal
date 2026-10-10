@@ -8,8 +8,6 @@ import { CardCoach } from "../features/arrangedReview/CardCoach";
 import { saveCardFeedback } from "../features/arrangedReview/cardFeedback";
 import { db } from "../db/database";
 import {
-  ArrowLeft,
-  BarChart3,
   Bot,
   ChevronDown,
   Edit3,
@@ -45,7 +43,7 @@ import { RichTextEditor } from "../components/RichTextEditor";
 import { MotionPresence } from "../components/MotionPresence";
 import { usePageTransitionLayerState } from "../components/PageTransition";
 import { RecordTagChips } from "../components/RecordTagChips";
-import { PageHeader } from "../components/ui";
+import { PageHeader, WorkspaceBackButton } from "../components/ui";
 import { normalizeRecordContent } from "../lib/recordContent";
 import { formatUiError } from "../lib/uiError";
 import { newId } from "../lib/entity";
@@ -309,7 +307,6 @@ export const ReviewPage = ({
   onUpdateAnalysisQueueItemNote,
   onLinkLegacyReviewFeedback,
   onRefresh,
-  onOpenStats,
   onOpenRecord,
   onEditRecord,
   onAskAiRecord,
@@ -341,6 +338,7 @@ export const ReviewPage = ({
   const pageLayerState = usePageTransitionLayerState();
   const touchStartYRef = useRef<number | null>(null);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
+  const [annotationEntryHost, setAnnotationEntryHost] = useState<HTMLDivElement | null>(null);
   const [pullReady, setPullReady] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [openActionRecordId, setOpenActionRecordId] = useState<string>();
@@ -931,6 +929,35 @@ export const ReviewPage = ({
     }
   };
 
+  const sessionActions = (
+              <div className="review-session-actions">
+                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={18} /><span>看板</span></button>}
+                {currentRecord && <div className="review-annotation-entry-slot" ref={setAnnotationEntryHost} />}
+                <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
+                <button
+                  type="button"
+                  className="review-header-menu-trigger"
+                  onClick={() => setHeaderMenuOpen((open) => !open)}
+                  aria-expanded={headerMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="打开复习更多菜单"
+                  title="更多复习操作"
+                >
+                  <MoreHorizontal size={19} />
+                </button>
+                <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
+                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
+                    <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}><RefreshCw size={16} /><span>刷新复习列表</span></button>
+                  {currentRecord && <button type="button" role="menuitem" aria-keyshortcuts="E" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord!); }}><Edit3 size={16} /><span>编辑原日志</span><small aria-hidden="true">E</small></button>}
+                  {currentRecord && onAskAiRecord && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onAskAiRecord(currentRecord); }}><Bot size={16} /><span>AI 问答</span></button>}
+                  {currentRecord && onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
+                </MotionPresence>
+                </div>
+              </div>
+  );
+
   if (cardCoachOpen && currentRecord) return <CardCoach record={currentRecord} inputs={cardFeedbackInputs()} scope={standalone?.roundId ?? feedbackDraftKey} origin={standalone ? { id: standalone.roundId, title: standalone.title } : undefined} snapshot={reviewCoachSnapshot} onAnalyze={onAnalyzeCardFeedback} onResume={onResumeDeepAnalysis} onRefresh={onRefresh} onOpenTask={onOpenCardTask ?? onOpenAdaptiveTask} onSwitchTask={onSwitchAdaptiveTask} onClose={() => setCardCoachOpen(false)} />;
 
   return (
@@ -940,102 +967,13 @@ export const ReviewPage = ({
       onTouchMove={(event) => touchMove(event.touches[0]?.clientY ?? 0)}
       onTouchEnd={touchEnd}
     >
-      {(!currentRecord || mode !== "queue" || coachOpen) && <PageHeader
-        title={coachOpen ? "学习助教" : "间隔复习"}
-        subtitle={coachOpen ? "分析卡点、完成针对性训练，并在稍后验证是否真正掌握。" : `今日到期 ${todayCount} 条，已过期 ${overdueCount} 条`}
-        density="compact"
+      {!standalone && <PageHeader
+        back={null}
+        title="复习"
+        density="workspace"
         className="review-page-header"
         actions={(
-          <div className="review-header-actions">
-            {!standalone && !coachOpen && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={17} /><span>看板</span></button>}
-            <div className="review-header-menu" ref={headerMenuRef}>
-            {!coachOpen && mode === "queue" && currentRecord && (
-              <button type="button" className="secondary-button review-direct-edit" title="编辑（E）" aria-keyshortcuts="E" onClick={() => onEditRecord(currentRecord)}>
-                <Edit3 size={16} />编辑
-              </button>
-            )}
-            <button
-              type="button"
-              className="review-header-menu-trigger"
-              onClick={() => setHeaderMenuOpen((open) => !open)}
-              aria-expanded={headerMenuOpen}
-              aria-haspopup="menu"
-              aria-label="打开复习更多菜单"
-              title="更多复习操作"
-            >
-              <MoreHorizontal size={19} />
-            </button>
-            <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }}
-                  disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}
-                  aria-keyshortcuts="Control+Z Meta+Z"
-                >
-                  <Undo2 size={16} />
-                  <span>撤回上次评分</span>
-                  <small>Ctrl+Z</small>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}
-                >
-                  <RefreshCw size={16} />
-                  <span>刷新复习列表</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }}
-                  disabled={!onOpenStats}
-                >
-                  <BarChart3 size={16} />
-                  <span>学习统计</span>
-                </button>
-                {mode === "queue" && currentRecord && (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}
-                    >
-                      <Edit3 size={16} />
-                      <span>编辑</span>
-                    </button>
-                    {onAskAiRecord && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setHeaderMenuOpen(false); onAskAiRecord(currentRecord); }}
-                      >
-                        <Bot size={16} />
-                        <span>AI 问答</span>
-                      </button>
-                    )}
-                    {onOpenVoiceRecall && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}
-                      >
-                        <Mic size={16} />
-                        <span>语音复述当前卡片</span>
-                      </button>
-                    )}
-                  </>
-                )}
-            </MotionPresence>
-            </div>
-          </div>
-        )}
-      />}
-      {pullReady && <p className="status-message">松手刷新复习列表</p>}
-      {ratingError && <p className="status-message">{ratingError}</p>}
-      {!standalone && checkpointError && <p className="status-message" role="status">{checkpointError}</p>}
-
-      {(!currentRecord || mode !== "queue" || coachOpen) && <div className="review-mode-tabs" role="tablist" aria-label="复习视图">
+      <div className="review-mode-tabs" role="tablist" aria-label="复习视图">
         <button type="button" className={!coachOpen && mode === "queue" ? "active" : ""} onClick={() => { setCoachOpen(false); onModeChange("queue"); }}>
           日志复习
         </button>
@@ -1048,7 +986,13 @@ export const ReviewPage = ({
         {onOpenVoiceRecall && <button type="button" onClick={() => onOpenVoiceRecall()}>
           <Mic size={16} />语音复述
         </button>}
-      </div>}
+      </div>
+        )}
+      />}
+      <div className="workspace-content review-workspace-content">
+      {pullReady && <p className="status-message">松手刷新复习列表</p>}
+      {ratingError && <p className="status-message">{ratingError}</p>}
+      {!standalone && checkpointError && <p className="status-message" role="status">{checkpointError}</p>}
 
       {coachOpen && reviewCoachSnapshot && onRunDeepAnalysis && onResumeDeepAnalysis && onSwitchAdaptiveTask && onDeferAdaptiveTask && (
         <ReviewCoachWorkbench
@@ -1069,6 +1013,7 @@ export const ReviewPage = ({
       {!coachOpen && (mode === "queue" ? (
         !currentRecord ? (
           <section className="empty-state review-empty-state">
+            {sessionActions}
             <h2>{reviewTotal > 0 ? completedReviewCount === reviewTotal ? "本轮复习已完成" : "本轮暂无待复习" : "今天暂无待复习"}</h2>
             {reviewTotal > 0 && <p>已完成 {completedReviewCount}/{reviewTotal} 条</p>}
             <p>
@@ -1086,14 +1031,8 @@ export const ReviewPage = ({
         ) : (
           <section className="review-session">
             <section className="review-session-chrome" aria-label="复习进度">
-              <button
-                type="button"
-                className="review-session-exit"
-                onClick={exitReviewSession}
-              >
-                <ArrowLeft size={18} />
-                {standalone ? "返回看板" : reviewExitLabel}
-              </button>
+              <WorkspaceBackButton className="review-session-exit" onClick={exitReviewSession}>{standalone ? "返回看板" : reviewExitLabel}</WorkspaceBackButton>
+              <div className="review-session-progress">
               <div className="review-progress-meta">
                 <span>第 {standalone?.index ?? currentIndex}/{standalone?.total ?? reviewTotal} 条</span>
                 <span>已完成 {displayedCompleted}/{displayedTotal}</span>
@@ -1109,32 +1048,8 @@ export const ReviewPage = ({
               >
                 <span style={{ width: `${displayedPercent}%` }} />
               </div>
-              <div className="review-session-actions">
-                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={18} /><span>看板</span></button>}
-                <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
-                <button
-                  type="button"
-                  className="review-header-menu-trigger"
-                  onClick={() => setHeaderMenuOpen((open) => !open)}
-                  aria-expanded={headerMenuOpen}
-                  aria-haspopup="menu"
-                  aria-label="打开复习更多菜单"
-                  title="更多复习操作"
-                >
-                  <MoreHorizontal size={19} />
-                </button>
-                <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
-                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
-                    <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onRefresh(); }}><RefreshCw size={16} /><span>刷新复习列表</span></button>
-                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenStats?.(); }} disabled={!onOpenStats}><BarChart3 size={16} /><span>学习统计</span></button>
-                  <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onEditRecord(currentRecord); }}><Edit3 size={16} /><span>编辑</span><small aria-hidden="true">E</small></button>
-                  {onAskAiRecord && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void onAskAiRecord(currentRecord); }}><Bot size={16} /><span>AI 问答</span></button>}
-                  {onOpenVoiceRecall && <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); onOpenVoiceRecall(currentRecord); }}><Mic size={16} /><span>语音复述当前卡片</span></button>}
-                </MotionPresence>
-                </div>
               </div>
+              {sessionActions}
             </section>
             <article className={`review-record-card ${currentDecisionBlocks.length > 0 ? "has-decision-blocks" : ""}`}>
               <header className="record-view-header">
@@ -1152,6 +1067,7 @@ export const ReviewPage = ({
                   open={annotationOpen}
                   onOpenChange={setAnnotationOpen}
                   viewportOverlayHost={viewportOverlayHost}
+                  entryHost={annotationEntryHost}
                 >
                   <RichTextEditor
                     value={normalizeRecordContent(currentRecord)}
@@ -1648,6 +1564,7 @@ export const ReviewPage = ({
         </section>
       ))}
       {!standalone && !onOpenReviewBoard && <ReviewBoardDialog open={dueBoardOpen} onClose={() => setDueBoardOpen(false)}><DueReviewBoard records={records} due={dueReviews} onStart={ids => { onReviewRuntimeChange(current => ({ ...current, showAllDue: true, selectedQueueIds: ids, sessionRecordIds: ids, ratedRecordIds: [], undoHistory: [] })); onQueueChange(ids); onCurrentRecordChange(ids[0]); updateSessionProgress({ total: ids.length, completed: 0 }); onModeChange("queue"); setDueBoardOpen(false); }} /></ReviewBoardDialog>}
+      </div>
     </main>
   );
 };

@@ -269,6 +269,13 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
       selectedSubject: optionalString(value.journal.selectedSubject),
       searchOpen: optionalBoolean(value.journal.searchOpen) ?? false,
       searchQuery: optionalString(value.journal.searchQuery) ?? "",
+      browseMode: value.journal.browseMode === "calendar" ? "calendar" : "library",
+      subjectFilter: optionalString(value.journal.subjectFilter) ?? "全部",
+      visibleRecordCount: Math.max(20, Math.floor(optionalScrollY(value.journal.visibleRecordCount) ?? 20)),
+      listScrollY: optionalScrollY(value.journal.listScrollY),
+      previewRecordId: optionalString(value.journal.previewRecordId),
+      previewScrollTop: optionalScrollY(value.journal.previewScrollTop),
+      libraryScrollTop: optionalScrollY(value.journal.libraryScrollTop),
     },
     categories: {
       ...categoriesBase,

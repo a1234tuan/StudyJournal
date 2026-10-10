@@ -128,6 +128,9 @@ export type TabMemory = {
     subjectFilter: Subject | "全部";
     visibleRecordCount: number;
     listScrollY?: number;
+    previewRecordId?: string;
+    previewScrollTop?: number;
+    libraryScrollTop?: number;
   };
   categories: RecordTabState & {
     activeSubject: Subject | null;
@@ -269,7 +272,7 @@ export const getTabDepth = (tab: TabKey, memory: TabMemory): number => {
             ? 1
             : 0;
     case "journal":
-      return memory.journal.recordId ? 2 + referenceDepth(memory.journal) : memory.journal.searchOpen || memory.journal.selectedDate ? 1 : 0;
+      return memory.journal.recordId ? 2 + referenceDepth(memory.journal) : memory.journal.searchOpen || memory.journal.selectedDate || memory.journal.previewRecordId ? 1 : 0;
     case "categories":
       return memory.categories.recordId ? 2 + referenceDepth(memory.categories) : memory.categories.activeSubject || memory.categories.managing ? 1 : 0;
     case "review":
@@ -320,7 +323,7 @@ export const buildTabPageKey = (tab: TabKey, memory: TabMemory, activeAiSessionI
   const depth = getTabDepth(tab, memory);
   const recordPart = getRecordState(tab, memory).recordId ?? "root";
   if (tab === "journal") {
-    return `${tab}-${depth}-${recordPart}-${memory.journal.searchOpen ? "search" : "browse"}`;
+    return `${tab}-${!memory.journal.recordId && !memory.journal.searchOpen && !memory.journal.selectedDate ? 0 : depth}-${recordPart}-${memory.journal.searchOpen ? "search" : "browse"}`;
   }
   if (tab === "categories") {
     return `${tab}-${depth}-${recordPart}-${memory.categories.managing ? "manage" : memory.categories.activeSubject ?? "all"}`;
@@ -402,6 +405,9 @@ export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
           ...memory,
           journal: { ...memory.journal, searchOpen: false },
         };
+      }
+      if (memory.journal.previewRecordId) {
+        return { ...memory, journal: { ...memory.journal, previewRecordId: undefined, previewScrollTop: undefined } };
       }
       if (memory.journal.selectedSubject) {
         return {

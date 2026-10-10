@@ -29,6 +29,25 @@ const assertNoOverlap = (state: KnowledgeState) => {
   }
 };
 describe("knowledge presentation model", () => {
+  it("keeps references as counts rather than extra geometry at large cardinalities", () => {
+    for (const count of [0, 1, 10, 100, 1000]) {
+      const { state, add } = fixture();
+      add("compact", "node", "beta", "队列");
+      for (let index = 0; index < count; index += 1) add("reference-" + index, "reference", "compact");
+      for (const scale of [1, 1.25]) {
+        const layout = layoutKnowledgeMap(state, "topic", new Set(), {}, undefined, title => Array.from(title).length * 16 * scale);
+        const node = layout.nodes.find(item => item.id === "compact")!;
+        expect(node.count).toBe(count);
+        expect(node.width).toBeLessThanOrEqual(144);
+        expect(node.height).toBe(44);
+        expect(layout.nodes).toHaveLength(9);
+        expect(layout.nodes.some(item => item.id.startsWith("reference-"))).toBe(false);
+        for (const other of layout.nodes.filter(item => item.id !== node.id)) {
+          expect(node.x + node.width <= other.x || other.x + other.width <= node.x || node.y + node.height <= other.y || other.y + other.height <= node.y).toBe(true);
+        }
+      }
+    }
+  });
   it("centers the topic and distributes branches across both sides without overlaps", () => {
     const { state } = fixture(); const layout = layoutKnowledgeMap(state, "topic", new Set());
     const center = layout.nodes[0]; expect(center.id).toBe(ROOT_NODE); expect(center.x + center.width / 2).toBe(0); expect(center.y + center.height / 2).toBe(0);

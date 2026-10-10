@@ -33,6 +33,15 @@ const record = (id: string, date: string): Block => ({
 });
 
 describe("JournalPage", () => {
+  it("filters through a compact select and keeps an archived current filter visible", () => {
+    const onSubjectFilterChange = vi.fn();
+    render(<JournalPage blocks={[]} subjects={subjects} month={new Date("2026-06-01")} subjectFilter="历史学科" onMonthChange={vi.fn()} onSelectedDateChange={vi.fn()} onSelectedSubjectChange={vi.fn()} onOpenRecord={vi.fn()} onOpenSearch={vi.fn()} onAskAi={vi.fn()} onToggleFavorite={vi.fn()} onSubjectFilterChange={onSubjectFilterChange} />);
+    expect(screen.getByRole("combobox", { name: "按学科筛选" })).toHaveValue("历史学科");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "OS" } });
+    expect(onSubjectFilterChange).toHaveBeenCalledWith("OS");
+    expect(screen.getByText("按日志日期")).toBeInTheDocument();
+    expect(screen.queryByText("最近更新")).not.toBeInTheDocument();
+  });
   it("opens full-text search from the compact header action", () => {
     const onOpenSearch = vi.fn();
 
