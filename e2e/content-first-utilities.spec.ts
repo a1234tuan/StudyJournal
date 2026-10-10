@@ -13,7 +13,7 @@ const checkHeader = async (page: Page, selector: string) => {
     return { fontSize: parseFloat(getComputedStyle(title).fontSize), left: box.left, right: box.right,
       controls: controls.map(button => { const rect = button.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; }) };
   });
-  expect(metrics.fontSize).toBeLessThanOrEqual(18);
+  expect(metrics.fontSize).toBeLessThanOrEqual(await page.locator("html").getAttribute("data-mobile-ui") === "true" ? 22 : 18);
   expect(metrics.left).toBeGreaterThanOrEqual(0);
   expect(metrics.right).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
   for (const [index, control] of metrics.controls.entries()) {

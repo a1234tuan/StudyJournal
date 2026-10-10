@@ -6,6 +6,7 @@ import { App } from "./App";
 import { DesktopTitleBar } from "./components/DesktopTitleBar";
 import { cleanupNativeServiceWorker } from "./lib/nativeServiceWorker";
 import { isDesktopPlatform, isNativePlatform } from "./lib/platform";
+import { initializePresentation } from "./lib/mobilePresentation";
 import { ReviewCoachPreviewApp } from "./preview/ReviewCoachPreviewApp";
 import { isVoiceRecallPrototypeRequest, VoiceRecallPrototypeApp } from "./preview/VoiceRecallPrototypeApp";
 import { isUiV2PrototypeRequest, UiV2PrototypeApp } from "./preview/UiV2PrototypeApp";
@@ -24,6 +25,10 @@ import "./styles/subject-radial-picker.css";
 import "./styles/ai-chat.css";
 import "./styles/desktop-chrome.css";
 import "./styles/sidebar-layout.css";
+import "./styles/mobile.css";
+
+const disposePresentation = initializePresentation();
+if (import.meta.hot) import.meta.hot.dispose(disposePresentation);
 
 const startApplication = async () => {
   if (isVoiceRecallPrototypeRequest()) {

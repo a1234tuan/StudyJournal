@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("compact review tools stay usable across widths, themes and workspace switches", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "Mobile task chrome and edit return are covered by mobile-presentation.spec.ts");
   await page.goto("/?preview=stage3");
   await page.getByRole("button", { name: /^复习/ }).first().click();
   await expect(page.locator(".review-record-card h1")).toHaveText("BFS Stage3 Preview");

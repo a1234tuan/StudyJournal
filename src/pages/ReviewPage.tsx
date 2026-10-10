@@ -44,6 +44,7 @@ import { MotionPresence } from "../components/MotionPresence";
 import { usePageTransitionLayerState } from "../components/PageTransition";
 import { RecordTagChips } from "../components/RecordTagChips";
 import { PageHeader, WorkspaceBackButton } from "../components/ui";
+import { useMobilePresentation } from "../lib/mobilePresentation";
 import { normalizeRecordContent } from "../lib/recordContent";
 import { formatUiError } from "../lib/uiError";
 import { newId } from "../lib/entity";
@@ -384,6 +385,17 @@ export const ReviewPage = ({
   );
   const sessionDayRef = useRef(today);
   const exitReviewSession = standalone?.onBack ?? onExitReviewSession ?? (() => onModeChange("manage"));
+  const mobilePresentation = useMobilePresentation();
+  const switchMobileMode = async (target: "manage" | "coach") => {
+    try {
+      await pendingReviewNavigation();
+      setHeaderMenuOpen(false);
+      setCoachOpen(target === "coach");
+      if (target === "manage") onModeChange("manage");
+    } catch (error) {
+      setRatingError(formatUiError(error, "review-annotation"));
+    }
+  };
   const openDueReviewBoard = () => {
     void (async () => {
       try {
@@ -931,7 +943,7 @@ export const ReviewPage = ({
 
   const sessionActions = (
               <div className="review-session-actions">
-                {!standalone && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={18} /><span>看板</span></button>}
+                {!standalone && !mobilePresentation && <button type="button" className="review-board-entry" onClick={openDueReviewBoard} aria-label="复习看板" title="复习看板"><ListChecks size={18} /><span>看板</span></button>}
                 {currentRecord && <div className="review-annotation-entry-slot" ref={setAnnotationEntryHost} />}
                 <div className="review-header-menu review-session-menu" ref={headerMenuRef}>
                 <button
@@ -946,6 +958,11 @@ export const ReviewPage = ({
                   <MoreHorizontal size={19} />
                 </button>
                 <MotionPresence present={headerMenuOpen} variant="popover" portal={false} className="review-header-menu-popover" role="menu" aria-label="复习操作">
+                  {mobilePresentation && !standalone && <>
+                    <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); openDueReviewBoard(); }}><ListChecks size={18} /><span>复习看板</span></button>
+                    <button type="button" role="menuitem" onClick={() => void switchMobileMode("manage")}><SlidersHorizontal size={18} /><span>卡片库</span></button>
+                    <button type="button" role="menuitem" onClick={() => void switchMobileMode("coach")}><Bot size={18} /><span>学习助教</span></button>
+                  </>}
                   <button type="button" role="menuitem" onClick={() => { setHeaderMenuOpen(false); void undoLastRating(); }} disabled={undoHistory.length === 0 || Boolean(ratingRecordId) || undoing || Boolean(pendingUndoRestore)}>
                     <Undo2 size={16} /><span>撤回上次评分</span><small>Ctrl+Z</small>
                   </button>
@@ -967,7 +984,7 @@ export const ReviewPage = ({
       onTouchMove={(event) => touchMove(event.touches[0]?.clientY ?? 0)}
       onTouchEnd={touchEnd}
     >
-      {!standalone && <PageHeader
+      {!standalone && !(mobilePresentation && !coachOpen && mode === "queue" && currentRecord) && <PageHeader
         back={null}
         title="复习"
         density="workspace"

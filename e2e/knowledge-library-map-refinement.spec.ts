@@ -338,6 +338,14 @@ test("record dock returns one level, preserves full-page return and adapts its w
   await detail.getByRole("button", { name: ids.labels[0], exact: true }).click();
   const pane = active(page).getByRole("complementary", { name: "日志浏览" });
   await expect(pane).toContainText("保留原日志正文");
+  if (info.project.name === "android-narrow") {
+    const initialHeight = (await pane.boundingBox())!.height;
+    await pane.getByRole("button", { name: "展开日志预览" }).click();
+    expect((await pane.boundingBox())!.height).toBeGreaterThan(initialHeight);
+    await expect(pane.getByRole("button", { name: "收起日志预览" })).toHaveAttribute("aria-expanded", "true");
+    await pane.getByRole("button", { name: "收起日志预览" }).click();
+    expect((await pane.boundingBox())!.height).toBeCloseTo(initialHeight, 0);
+  }
   await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
   await expect(detail).not.toBeVisible();
   if (info.project.name === "desktop") {

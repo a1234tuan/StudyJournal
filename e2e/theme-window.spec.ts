@@ -7,7 +7,7 @@ test("scrollbars remain discoverable without shifting journal tabs", async ({ pa
   await expect(page.locator(".page-transition-layer-entering, .page-transition-layer-exiting")).toHaveCount(0);
   const root = page.locator("html");
   const list = page.locator(".journal-library-scroll");
-  await expect(root).toHaveCSS("scrollbar-gutter", "stable");
+  await expect(root).toHaveCSS("scrollbar-gutter", info.project.name === "android-narrow" ? "auto" : "stable");
   await expect(root).toHaveCSS("scrollbar-width", "thin");
   await expect(list).toHaveCSS("scrollbar-width", "thin");
   const header = await page.locator(".journal-page > .page-header").boundingBox();

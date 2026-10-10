@@ -1,8 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecordBlock } from "../../types";
 import { KnowledgeRecordPane } from "./KnowledgeRecordPane";
 const renderer = vi.hoisted(() => ({ props: {} as Record<string, any> }));
+const presentation = vi.hoisted(() => ({ mobile: false }));
+vi.mock("../../lib/mobilePresentation", () => ({ useMobilePresentation: () => presentation.mobile }));
+afterEach(() => { presentation.mobile = false; });
 vi.mock("../../components/RichTextEditor", () => ({ RichTextEditor: (props: Record<string, any>) => { renderer.props = props; return <div data-testid="reader" />; } }));
 const record = { id: "log", title: "测试日志", date: "2026-09-29", subject: "算法", contentHtml: "<p>正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] } as unknown as RecordBlock;
 const setup = (available = true) => {
@@ -12,6 +15,20 @@ const setup = (available = true) => {
   return { ...callbacks, ...view };
 };
 describe("knowledge record reader", () => {
+  it("expands the mobile reader without remounting or writing the saved desktop width", () => {
+    presentation.mobile = true;
+    const handlers = setup();
+    const reader = screen.getByTestId("reader");
+    const body = handlers.container.querySelector(".knowledge-record-pane-body")!;
+    body.scrollTop = 220;
+    fireEvent.click(screen.getByRole("button", { name: "展开日志预览" }));
+    expect(screen.getByRole("complementary", { name: "日志浏览" })).toHaveClass("is-expanded");
+    expect(screen.getByTestId("reader")).toBe(reader);
+    expect(body.scrollTop).toBe(220);
+    expect(handlers.onWidthChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "收起日志预览" }));
+    expect(screen.getByRole("complementary", { name: "日志浏览" })).not.toHaveClass("is-expanded");
+  });
   it("renders read-only content, excludes deleted references and routes valid references", () => {
     const handlers = setup();
     expect(renderer.props.readOnly).toBe(true);

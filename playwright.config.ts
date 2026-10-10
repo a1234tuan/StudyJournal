@@ -27,7 +27,7 @@ export default defineConfig({
   webServer: {
     command: "npm run dev:review-coach-v2 -- --port 4190 --strictPort",
     url: "http://127.0.0.1:4190",
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === "1",
     timeout: 120_000,
   },
 });

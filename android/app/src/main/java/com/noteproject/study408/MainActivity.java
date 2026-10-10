@@ -8,6 +8,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(android.os.Bundle savedInstanceState) {
+        registerPlugin(NativeAppearancePlugin.class);
         registerPlugin(NativeAudioRecorderPlugin.class);
         registerPlugin(NativeVoiceCapturePlugin.class);
         registerPlugin(NativeOcrPlugin.class);
@@ -21,10 +22,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeMediaPlaybackPlugin.class);
         super.onCreate(savedInstanceState);
         WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
-        getWindow().setStatusBarColor(Color.rgb(247, 244, 238));
-        getWindow().setNavigationBarColor(Color.rgb(247, 244, 238));
+        android.content.SharedPreferences appearance = getSharedPreferences("mobile-appearance", MODE_PRIVATE);
+        getWindow().setStatusBarColor(appearance.getInt("status", Color.rgb(250, 248, 244)));
+        getWindow().setNavigationBarColor(appearance.getInt("navigation", Color.rgb(255, 253, 250)));
         WindowInsetsControllerCompat insets = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
-        insets.setAppearanceLightStatusBars(true);
-        insets.setAppearanceLightNavigationBars(true);
+        insets.setAppearanceLightStatusBars(!appearance.getBoolean("dark", false));
+        insets.setAppearanceLightNavigationBars(!appearance.getBoolean("dark", false));
     }
 }

@@ -116,6 +116,7 @@ test("preview changes records, retains filtering and reports a deleted source", 
   await expect(page.getByRole("status").filter({ hasText: "原日志暂不可用" })).toBeVisible();
   await expect(page.getByRole("button", { name: "打开完整日志" })).toBeDisabled();
   await page.getByRole("button", { name: "返回列表" }).click();
+  await expect(page.locator(".page-transition-layer-exiting, .page-transition-layer-entering")).toHaveCount(0);
   await expect(page.getByLabel("按学科筛选", { exact: true })).toHaveValue("数据结构");
   await page.getByRole("tab", { name: "按日期", exact: true }).click();
   await expect(page.getByRole("heading", { name: "本月有记录日期" })).toBeVisible();

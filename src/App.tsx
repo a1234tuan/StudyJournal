@@ -82,6 +82,8 @@ import { createDraftFlushTracker } from "./lib/draftFlushTracker";
 import { createReviewSessionRuntime } from "./features/reviewSession/runtime";
 import { clearReviewCheckpoint } from "./features/reviewSession/checkpoint";
 import { isDesktopPlatform } from "./lib/platform";
+import { useMobilePresentation } from "./lib/mobilePresentation";
+import { syncNativeAppearance } from "./services/nativeAppearance";
 import { isKeyboardViewportVisible, nextKeyboardBaselineHeight, resolveViewportHeight } from "./lib/viewport";
 import { getCurrentAiProvider } from "./lib/aiProviders";
 import { onAppBackgroundAutoBackup } from "./services/autoBackupService";
@@ -275,6 +277,7 @@ const navigationMotionBetween = (current: NavigationState, next: NavigationState
 };
 
 export const App = () => {
+  const mobilePresentation = useMobilePresentation();
   const moreRootScrollRef = useRef(0);
   const [navigationScrollRequest, setNavigationScrollRequest] = useState<{ id: number; top: number }>();
   const [activeTab, setActiveTab] = useState<TabKey>(() => isVoiceRecallProductionPreview() ? "review" : "today");
@@ -816,7 +819,16 @@ export const App = () => {
   useEffect(() => {
     document.documentElement.dataset.visualTheme = visualTheme;
     writeVisualTheme(visualTheme);
-    if (Capacitor.isNativePlatform()) void SystemBars.setStyle({ style: systemBarStyleForTheme(app.settings?.theme) }).catch(() => undefined);
+    if (!Capacitor.isNativePlatform()) return;
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateSystemBars = () => {
+      const dark = app.settings?.theme === "dark" || (app.settings?.theme !== "light" && systemTheme.matches);
+      void SystemBars.setStyle({ style: systemBarStyleForTheme(dark ? "dark" : "light") })
+        .then(() => syncNativeAppearance(dark)).catch(() => undefined);
+    };
+    updateSystemBars();
+    systemTheme.addEventListener("change", updateSystemBars);
+    return () => systemTheme.removeEventListener("change", updateSystemBars);
   }, [visualTheme, app.settings?.theme]);
 
   useEffect(() => {
@@ -2062,8 +2074,11 @@ export const App = () => {
     && tabMemory.review.voiceRecall?.screen === "scope";
   const voiceWorkspaceActive = activeTab === "review" && Boolean(tabMemory.review.voiceRecall);
   const arrangedCardActive = activeTab === "review" && !voiceWorkspaceActive && reviewHubRoute.mode === "arranged" && Boolean(reviewHubRoute.recordId);
+  const mobileReviewSessionActive = mobilePresentation && activeTab === "review"
+    && reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue"
+    && Boolean(tabMemory.review.currentRecordId) && !currentRecord && !voiceWorkspaceActive && !reviewCoachOpen;
   const immersiveTaskActive = Boolean(
-    arrangedCardActive ||
+    arrangedCardActive || mobileReviewSessionActive ||
     (currentRecord && currentRecordState.recordEditing && !voiceWorkspaceActive)
     || (activeTab === "today" && tabMemory.today.adaptiveTaskId)
     || (voiceWorkspaceActive && tabMemory.review.voiceRecall?.screen === "call"),
