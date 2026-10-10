@@ -116,7 +116,7 @@
 .journal-reading-workspace { container-type: inline-size; display: flex; min-width: 0; min-height: 0; flex: 1; margin-inline: 24px; }
 .journal-library-scroll { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; flex: 1; scrollbar-gutter: stable; }
 .journal-reading-workspace:not(.has-preview) .journal-library-scroll { max-width: 900px; margin-inline: auto; }
-.journal-reading-workspace.has-preview .journal-library-scroll { flex: 0 0 260px; padding-right: 12px; }
+.journal-reading-workspace.has-preview .journal-library-scroll { flex: 0 0 clamp(220px, 26cqw, 260px); padding-right: 12px; }
 .journal-page .journal-library-records { border-top: 0; }
 .journal-page .record-card-menu { display: grid; grid-template-columns: minmax(0, 1fr) 44px; }
 .journal-page .record-card-index { display: grid; grid-template-columns: minmax(0, 1fr) 44px; min-height: 72px; align-items: start; border-bottom-color: color-mix(in srgb, var(--color-border) 70%, transparent); border-radius: 8px; margin-bottom: 3px; }
@@ -144,7 +144,7 @@
 .journal-preview-body .rich-editor > p, .journal-preview-body .rich-editor > h1, .journal-preview-body .rich-editor > h2, .journal-preview-body .rich-editor > h3, .journal-preview-body .rich-editor > ul, .journal-preview-body .rich-editor > ol { max-width: 720px; margin-inline: auto; }
 .journal-reading-workspace.has-preview .journal-load-more { flex-direction: column; align-items: stretch; }
 .journal-page > .record-list-panel, .journal-page > .journal-day-summary, .journal-page > .day-log-list, .journal-page > .monthly-heatmap-panel { margin: 20px 24px; }
-@container (max-width: 859px) {
+@container (max-width: 639px) {
   .journal-reading-workspace.has-preview .journal-library-scroll { display: none; }
   .journal-record-preview { border-left: 0; }
   .journal-preview-body { padding: 8px 16px 24px; }

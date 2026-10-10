@@ -77,6 +77,8 @@ test("failed annotation writes block leaving and can be retried without losing s
     repository.upsertDraft = async () => { throw new DOMException("Simulated quota", "QuotaExceededError"); };
   });
   await drawRectangle(page);
+  await page.getByRole("button", { name: "收起左侧导航" }).click();
+  expect((await page.locator(".sidebar").boundingBox())!.width).toBe(64);
   await nav(page, "日志").click();
   await expect(page.getByRole("alert")).toContainText("未保存批注仍保留");
   await expect(page.locator(".review-record-card")).toBeVisible();

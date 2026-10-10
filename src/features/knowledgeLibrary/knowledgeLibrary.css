@@ -1,11 +1,7 @@
 .knowledge-library { --knowledge-on-primary: var(--color-on-primary, #fff); min-width: 0; color: var(--color-text); }
-.knowledge-sidebar-edge { position: fixed; z-index: 25; left: calc(var(--sidebar-width) - 22px); top: 50dvh; transform: translateY(-50%); display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--color-muted); cursor: pointer; }
-.knowledge-sidebar-edge::before { content: ""; width: 4px; height: 28px; border-radius: 3px; background: currentColor; opacity: .5; }
-.knowledge-sidebar-edge:hover::before, .knowledge-sidebar-edge:focus-visible::before { opacity: 1; }
-.knowledge-sidebar-edge:hover, .knowledge-sidebar-edge:focus-visible { color: var(--color-primary); outline: 2px solid var(--color-primary-soft); }
-.knowledge-sidebar-edge.is-collapsed { left: 0; }
+
 .knowledge-library .knowledge-back-button { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
-@media (max-width: 920px) { .knowledge-sidebar-edge { display: none; } }
+
 .app-shell:has(.knowledge-library.is-map-fullscreen) { grid-template-columns: minmax(0, 1fr); }
 .app-shell:has(.knowledge-library.is-map-fullscreen) > .sidebar,
 .app-shell:has(.knowledge-library.is-map-fullscreen) .bottom-nav,
@@ -16,11 +12,8 @@
 .knowledge-library.is-map-fullscreen > .knowledge-contextbar { display: none; }
 .knowledge-library.is-map-fullscreen > .knowledge-workspace { border: 0; border-radius: 0; }
 .knowledge-library.is-map-fullscreen .knowledge-map-controls { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
-@media (min-width: 921px) {
-  .app-shell.knowledge-sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
-  .app-shell.knowledge-sidebar-collapsed > .sidebar { display: none; }
-}
-@media (max-width: 920px) { .knowledge-library .knowledge-header .knowledge-sidebar-toggle { display: none; } }
+
+
 .knowledge-library *, .knowledge-library *::before, .knowledge-library *::after { box-sizing: border-box; }
 .page.knowledge-shell { width: 100%; max-width: none; height: 100dvh; min-height: 420px; padding: 16px 24px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 .knowledge-library button { font: inherit; cursor: pointer; color: var(--color-text); }

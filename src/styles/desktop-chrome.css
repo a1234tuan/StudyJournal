@@ -42,7 +42,6 @@
 :root[data-desktop-chrome="true"] .page.knowledge-shell,
 :root[data-desktop-chrome="true"] .vr-call { height: var(--desktop-content-height); }
 :root[data-desktop-chrome="true"] .app-shell:is(.ai-chat-active, .ai-scope-active) { height: var(--desktop-content-height); min-height: 0; }
-:root[data-desktop-chrome="true"] .knowledge-sidebar-edge { top: calc((100dvh + var(--desktop-titlebar-height)) / 2); }
 :root[data-desktop-chrome="true"] .review-session { min-height: calc(var(--desktop-content-height) - 190px); }
 :root[data-desktop-chrome="true"] :is(.vr-shell, .vr-history, .vr-summary) { min-height: var(--desktop-content-height); }
 :root[data-desktop-chrome="true"] :is(.app-viewport-overlay, .desktop-migration-backdrop, .image-lightbox-presence, .record-reference-presence, .record-reference-picker-backdrop, .ai-action-backdrop, .ai-history-backdrop, .voice-journal-backdrop, .vr-details-layer, .vr-sheet-backdrop) { top: var(--desktop-titlebar-height); }

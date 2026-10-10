@@ -37,15 +37,17 @@ test("knowledge handle stays centered with a slim visible grip", async ({ page }
   test.skip(info.project.name !== "desktop", "Desktop sidebar only");
   await page.goto("/?preview=stage3");
   await page.locator(".sidebar nav").getByRole("button", { name: "知识库", exact: true }).click();
-  const handle = page.locator(".knowledge-sidebar-edge");
+  const handle = page.locator(".sidebar-edge");
   for (const height of [1000, 720]) {
     await page.setViewportSize({ width: 1440, height });
     for (const collapsed of [false, true]) {
       await expect(handle).toHaveAttribute("aria-expanded", String(!collapsed));
-      const rect = await box(page, ".knowledge-sidebar-edge");
+      const rect = await box(page, ".sidebar-edge");
       expect(Math.abs(rect.y + rect.height / 2 - height / 2)).toBeLessThanOrEqual(1);
-      const sidebarWidth = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width")));
-      expect(rect.x).toBe(collapsed ? 0 : sidebarWidth - rect.width / 2);
+      const sidebarWidth = await page.locator(".app-shell").evaluate(element => parseFloat(getComputedStyle(element).getPropertyValue("--sidebar-width")));
+      expect(rect.x).toBe(sidebarWidth);
+      await expect(page.locator(".sidebar")).toBeVisible();
+      if (collapsed) expect(sidebarWidth).toBe(64);
       expect(await handle.locator("svg").count()).toBe(0);
       expect(await handle.evaluate(element => ({ width: getComputedStyle(element, "::before").width, height: getComputedStyle(element, "::before").height }))).toEqual({ width: "4px", height: "28px" });
       await handle.click();

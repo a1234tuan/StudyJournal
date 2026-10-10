@@ -74,7 +74,8 @@ test("fullscreen fills the workspace and exits without losing map state", async 
   await expect(page.locator(".app-shell > .sidebar")).toBeHidden();
   await expect(page.locator(".bottom-nav")).toBeHidden();
   const canvas = active(page).locator(".knowledge-map-viewport");
-  await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(page.viewportSize()!.width);
+  const layoutWidth = await page.evaluate(() => document.documentElement.getBoundingClientRect().width);
+  await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(layoutWidth);
   await expect.poll(async () => (await canvas.boundingBox())!.height).toBe(page.viewportSize()!.height);
   await expect(active(page).locator(".knowledge-map-controls output")).toHaveText(zoom);
   await expect(node(page, ids.first)).toHaveClass(/selected/);
@@ -359,7 +360,7 @@ test("record dock returns one level, preserves full-page return and adapts its w
   await expect(detail).toBeVisible(); await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
 });
 
-test("knowledge sidebar collapses without losing map or dock and is scoped to this page", async ({ page }, info) => {
+test("knowledge sidebar rail and resizing preserve the map, dock and global preference", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop", "Desktop sidebar only");
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
@@ -370,15 +371,29 @@ test("knowledge sidebar collapses without losing map or dock and is scoped to th
   await active(page).getByRole("complementary", { name: "节点详情" }).getByRole("button", { name: ids.labels[0], exact: true }).click();
   const viewport = active(page).locator(".knowledge-map-viewport");
   const before = (await viewport.boundingBox())!.width;
+  const zoom = await active(page).locator(".knowledge-map-controls output").innerText();
   await page.getByRole("button", { name: "收起左侧导航" }).click();
-  await expect(page.locator(".sidebar")).not.toBeVisible();
-  expect((await viewport.boundingBox())!.width).toBeGreaterThan(before + 180);
+  await expect(page.locator(".sidebar")).toBeVisible();
+  expect((await page.locator(".sidebar").boundingBox())!.width).toBe(64);
+  expect((await viewport.boundingBox())!.width).toBeGreaterThan(before + 100);
   await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
   await capture(page, "collapsed-sidebar-record-dock.png");
   await active(page).getByRole("button", { name: "打开完整日志" }).click(); await expect(page.locator(".sidebar")).toBeVisible();
   await active(page).getByRole("button", { name: "返回", exact: true }).first().click();
-  await expect(page.locator(".sidebar")).not.toBeVisible();
+  expect((await page.locator(".sidebar").boundingBox())!.width).toBe(64);
   await page.getByRole("button", { name: "展开左侧导航" }).click(); await expect(page.locator(".sidebar")).toBeVisible();
+  await page.getByRole("separator", { name: "调整导航栏宽度" }).press("End");
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toContainText(ids.labels[0]);
+  await expect(active(page).locator(".knowledge-map-controls output")).toHaveText(zoom);
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await page.getByRole("button", { name: "全屏显示", exact: true }).click();
+  await expect(page.locator(".sidebar-edge")).toBeHidden();
+  await expect(page.locator(".sidebar-resize")).toBeHidden();
+  await page.getByRole("button", { name: "退出全屏", exact: true }).click();
+  await expect.poll(async () => (await page.locator(".sidebar").boundingBox())!.width).toBe(320);
+  await page.locator(".sidebar nav").getByRole("button", { name: "今天", exact: true }).click();
+  await expect(page.locator(".today-page")).toBeVisible();
+  expect((await page.locator(".sidebar").boundingBox())!.width).toBe(320);
 });
 
 test("browser Back from full log restores preview and the next Back restores node details", async ({ page }) => {

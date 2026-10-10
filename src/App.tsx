@@ -60,6 +60,7 @@ import { TemplateLibraryPage } from "./pages/TemplateLibraryPage";
 import { WorkspaceBackContext } from "./components/ui";
 import { PageTransition, type NavigationMotionIntent } from "./components/PageTransition";
 import { CloudSyncButton } from "./components/CloudSyncButton";
+import { SidebarLayout, SidebarPins } from "./components/SidebarLayout";
 import { CloudSyncConflictDialog } from "./components/CloudSyncConflictDialog";
 import { CloudSyncStatusToast } from "./components/CloudSyncStatusToast";
 import { MotionPresence, ViewportOverlayProvider } from "./components/MotionPresence";
@@ -2084,7 +2085,6 @@ export const App = () => {
     immersiveTaskActive ? "immersive-task-active" : "",
     desktopReviewSessionActive ? "desktop-review-session" : "",
     arrangedCardActive ? "arranged-review-card-active" : "",
-    activeTab === "more" && tabMemory.more.subRoute === "knowledge" && !currentRecord && tabMemory.more.knowledge?.sidebarCollapsed ? "knowledge-sidebar-collapsed" : "",
     activeTab === "review" && !voiceWorkspaceActive && (arrangedCardActive || (reviewHubRoute.mode === "ordinary" && tabMemory.review.mode === "queue" && tabMemory.review.currentRecordId)) ? "review-session-active" : "",
   ].filter(Boolean).join(" ");
   const workspaceBack = activeTab === "more" && !currentRecord && ["settings", "stats", "favorites", "backup"].includes(tabMemory.more.subRoute ?? "") ? popCurrentTabDepth : undefined;
@@ -2107,7 +2107,7 @@ export const App = () => {
   return (
     <PlaybackProvider>
     <ViewportOverlayProvider host={viewportOverlayHost}>
-    <div className={shellClassName}>
+    <SidebarLayout className={shellClassName} legacyCollapsed={tabMemory.more.knowledge?.sidebarCollapsed} navigationKey={pageKey}>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><FileText size={29} strokeWidth={1.25} /></span>
@@ -2131,36 +2131,21 @@ export const App = () => {
                 key={`${item.tab}-${item.subRoute ?? "root"}`}
                 type="button"
                 className={active ? "active" : ""}
+                aria-label={item.label}
+                title={item.label}
+                aria-current={active ? "page" : undefined}
                 onClick={() => item.subRoute ? openMoreSubRoute(item.subRoute) : item.tab === "more" ? openMoreRoot() : switchTab(item.tab)}
               >
                 <Icon size={19} />
-                <span>{item.label}</span>
+                <span className="sidebar-label">{item.label}</span>
               </button>
             );
           })}
         </nav>
-        <section className="pinned-panel">
-          <p className="eyebrow">置顶日志</p>
-          {favoriteRecords.length === 0 ? (
-            <small>收藏的日志会出现在这里。</small>
-          ) : (
-            favoriteRecords.slice(0, 5).map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                className="pinned-record-link"
-                title={record.title || "未命名日志"}
-                aria-label={`打开置顶日志 ${record.title || "未命名日志"}`}
-                onClick={() => openRecordInTab(record, activeTab)}
-              >
-                <span>{record.title || "未命名日志"}</span>
-              </button>
-            ))
-          )}
-        </section>
+        <SidebarPins records={favoriteRecords} onOpen={record => openRecordInTab(record, activeTab)} />
         <div className="sidebar-utility-nav">
-          <button type="button" onClick={() => switchTab("categories")}><Layers size={18} /><span>分类管理</span></button>
-          <button type="button" onClick={() => openMoreSubRoute("settings")}><Settings size={18} /><span>设置</span></button>
+          <button type="button" aria-label="分类管理" title="分类管理" aria-current={activeTab === "categories" ? "page" : undefined} onClick={() => switchTab("categories")}><Layers size={19} /><span className="sidebar-label">分类管理</span></button>
+          <button type="button" aria-label="设置" title="设置" aria-current={activeTab === "more" && tabMemory.more.subRoute === "settings" ? "page" : undefined} onClick={() => openMoreSubRoute("settings")}><Settings size={19} /><span className="sidebar-label">设置</span></button>
         </div>
       </aside>
       <div className="content-area">
@@ -2243,7 +2228,7 @@ export const App = () => {
         })}
       </nav>
       <div ref={setViewportOverlayHost} className="app-viewport-overlay" />
-    </div>
+    </SidebarLayout>
     </ViewportOverlayProvider>
     </PlaybackProvider>
   );

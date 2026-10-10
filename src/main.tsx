@@ -23,6 +23,7 @@ import "./styles/scrollbars.css";
 import "./styles/subject-radial-picker.css";
 import "./styles/ai-chat.css";
 import "./styles/desktop-chrome.css";
+import "./styles/sidebar-layout.css";
 
 const startApplication = async () => {
   if (isVoiceRecallPrototypeRequest()) {
