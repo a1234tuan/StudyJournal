@@ -234,19 +234,40 @@ test("map structure and line choices persist and keep panels inside the viewport
   await expect(panel.getByLabel("分支线型")).toHaveValue("elbow");
 });
 
-test("selection is immediate and details preserve the chosen zoom", async ({ page }) => {
+test("node body opens details while selected, including unlinked nodes and returning from log preview", async ({ page }) => {
   const ids = await prepare(page);
-  await active(page).getByRole("button", { name: "导图", exact: true }).click();
-  for (let index = 0; index < 4; index += 1) await active(page).getByRole("button", { name: "缩小导图" }).click();
+  const detail = active(page).getByRole("complementary", { name: "节点详情" });
+  const preview = active(page).getByRole("complementary", { name: "日志浏览" });
+  const canvas = active(page).locator(".knowledge-map-viewport");
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  const before = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
   const zoom = active(page).locator(".knowledge-map-controls output");
-  const before = await zoom.innerText();
+  const beforeZoom = await zoom.innerText();
   await node(page, ids.first).locator(".knowledge-map-label").click();
   await expect(node(page, ids.first)).toHaveClass(/selected/);
-  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toHaveCount(0);
-  await expect(zoom).toHaveText(before);
-  await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
-  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
-  await expect(zoom).toHaveText(before);
+  await expect(detail).toBeVisible();
+  await expect(detail.locator(".knowledge-reference-link")).toHaveCount(3);
+  await expect(detail.getByRole("button", { name: "添加日志", exact: true })).toBeVisible();
+  await expect(zoom).toHaveText(beforeZoom);
+  await node(page, ids.first).locator(".knowledge-map-count").click();
+  await expect(preview).toContainText(ids.labels[0]);
+  await expect(detail).toHaveCount(0);
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(detail).toBeVisible(); await expect(preview).toHaveCount(0);
+  await detail.getByRole("button", { name: "关闭节点详情" }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  await node(page, ids.second).click({ position: { x: 2, y: 2 } });
+  await expect(node(page, ids.second)).toHaveClass(/selected/);
+  await expect(detail.getByRole("heading", { name: "链表", exact: true })).toBeVisible();
+  await expect(detail).toContainText("还没有关联日志");
+  await detail.locator(".knowledge-node-note summary").click();
+  await expect(detail.getByRole("button", { name: "添加说明", exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "添加日志", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("textbox", { name: "查找要关联的日志" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count())).toBe(before);
 });
 
 test("map log count opens the first available record in the right preview", async ({ page }) => {
@@ -634,4 +655,45 @@ test("record dock remains readable at intermediate widths and preserves reading 
   await expect(pane.locator(".tiptap")).toHaveAttribute("contenteditable", "false");
   await pane.getByRole("button", { name: "返回节点说明" }).click();
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
+});
+
+test("space renames selected map nodes without hijacking inputs, root, modifiers or log buttons", async ({ page }) => {
+  const ids = await prepare(page);
+  const canvas = active(page).locator(".knowledge-map-viewport");
+  const rename = active(page).getByRole("textbox", { name: "节点标题", exact: true });
+  const label = node(page, ids.first).locator(".knowledge-map-label");
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  await label.click(); await expect(label).toBeFocused();
+  for (const options of [{ isComposing: true }, { repeat: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
+    await label.evaluate((element, options) => element.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true, ...options })), options);
+    await expect(rename).toHaveCount(0);
+  }
+  const before = await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count());
+  const scroll = await page.evaluate(() => scrollY);
+  await page.keyboard.press("Space");
+  await expect(rename).toBeFocused(); await expect(rename).toHaveValue("队列与栈");
+  await rename.fill("Space"); await rename.press("End"); await rename.press("Space"); await rename.press("a");
+  await expect(rename).toHaveValue("Space a");
+  await rename.press("Enter");
+  await expect(label).toHaveText("Space a"); await expect(label).toBeFocused();
+  expect(await page.evaluate(() => scrollY)).toBe(scroll);
+  await expect.poll(() => page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count())).toBe(before + 1);
+  await canvas.focus(); await page.keyboard.press("Space"); await expect(rename).toBeFocused();
+  await rename.press("Escape"); await expect(rename).toHaveCount(0);
+  await active(page).getByRole("button", { name: "回到中心", exact: true }).click();
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  await active(page).locator("[data-map-root]").click(); await canvas.focus(); await page.keyboard.press("Space");
+  await expect(rename).toHaveCount(0);
+  await active(page).getByRole("button", { name: "适应画布", exact: true }).click();
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  await label.click();
+  await active(page).getByRole("button", { name: "查找", exact: true }).click();
+  const search = page.getByRole("dialog").getByRole("textbox", { name: "检索知识库", exact: true });
+  await search.fill("Space"); await search.press("End"); await search.press("Space"); await search.press("a");
+  await expect(search).toHaveValue("Space a"); await expect(rename).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await node(page, ids.first).locator(".knowledge-map-count").focus(); await page.keyboard.press("Space");
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await expect(rename).toHaveCount(0);
 });
