@@ -26,6 +26,17 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); vi.restoreAllMocks(); await db.delete(); });
 
 describe("permanent review-only surface", () => {
+  it("shows actionable selection errors instead of claiming storage failed", async () => {
+    mount(); selectText();
+    await waitFor(() => expect(screen.getByRole("button", { name: "标记选中文字" })).toBeEnabled());
+    const paragraph = document.querySelector(".ProseMirror p")!;
+    paragraph.insertAdjacentHTML("beforeend", '<span class="record-inline-math" data-latex="x">x</span><img src="real.png" alt="题图">');
+    selectText();
+    expect(await screen.findByRole("alert")).toHaveTextContent("这个选区含暂不支持的内容");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("无法读取或保存");
+    expect(screen.getByRole("button", { name: "标记选中文字" })).toBeDisabled();
+    expect(await db.reviewMarkEvents.count()).toBe(0);
+  });
   it("does not add tools or marks outside ordinary review", async () => {
     await db.reviewMarkEvents.put(markTestEvent()); const view = mount(false);
     expect(screen.queryByRole("button", { name: "永久复习印记" })).not.toBeInTheDocument();

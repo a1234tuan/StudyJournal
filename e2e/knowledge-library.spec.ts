@@ -17,6 +17,8 @@ test("first use creates one library, edits inline, keeps browsing read-only and 
   await page.getByRole("dialog").getByRole("textbox", { name: "新建专题", exact: true }).fill("数据结构");
   await page.getByRole("dialog").getByRole("button", { name: "创建专题", exact: true }).click();
   await expect(active(page).getByRole("heading", { name: "数据结构", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("button", { name: "导图", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await active(page).getByRole("button", { name: "大纲", exact: true }).click();
   await expect(active(page).getByRole("button", { name: "返回", exact: true })).toHaveCount(1);
   await expect(active(page).getByRole("button", { name: "整理", exact: true })).toHaveCount(0);
   await active(page).getByRole("button", { name: "添加节点", exact: true }).first().click();
@@ -61,6 +63,7 @@ test("selected details cannot intercept filters, large results stay virtual and 
   });
   await openKnowledge(page);
   await active(page).getByRole("button", { name: "筛选专题", exact: true }).click();
+  await active(page).getByRole("button", { name: "大纲", exact: true }).click();
   await active(page).locator(".knowledge-row-title").click();
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
   await active(page).getByRole("button", { name: "更多知识库操作" }).click();

@@ -6,13 +6,13 @@ const html = '<p>能量关系 <record-inline-math data-latex="E=mc^2"></record-i
   + '<pre><code class="language-typescript">const example = "' + 'long_segment_'.repeat(18) + '";\nfunction solve(value: number) {\n  return value + 1;\n}</code></pre>'
   + '<p>这段背景知识不应被误标。</p>';
 
-const open = async (page: Page) => {
+const open = async (page: Page, contentHtml = html) => {
   await page.goto("/?preview=stage3"); await expect(page.locator(".today-page")).toBeVisible();
   await page.evaluate(async ({ recordId, html }) => {
     const { db } = await import("/src/db/database.ts"); const { storage } = await import("/src/services/storageAdapter.ts");
     const record = await db.blocks.get(recordId); if (record?.type !== "record") throw new Error("Missing fixture");
     await storage.saveBlock({ ...record, contentHtml: html });
-  }, { recordId, html });
+  }, { recordId, html: contentHtml });
   await page.getByRole("button", { name: /^复习/ }).first().click();
   await expect(page.locator(".review-mark-content .formula-editor-card")).toBeVisible();
   await page.getByRole("button", { name: "永久复习印记", exact: true }).click();
@@ -101,4 +101,51 @@ test("formula source changes require relocation and never mark literal LaTeX ins
   await page.getByRole("button", { name: "移到所选文字" }).click();
   await expect.poll(async () => (await events(page)).length).toBe(2);
   await expect(page.locator(".review-mark-paint [data-mark-id]")).toHaveCount(1);
+});
+
+
+test("terminal inline formula mixed selection ignores actual editor separator and survives reload", async ({ page }, info) => {
+  const latex = "\\lim_{x\\to+\\infty}(x^3\\ln\\frac{x+2}{x-2}-4x^2)=\\underline{\\quad}";
+  await open(page, html + '<p>求下列极限：<record-inline-math data-latex="' + latex + '"></record-inline-math></p><p>注意展开时的系数变化。</p>');
+  const original = await source(page);
+  const paragraph = page.locator(".review-mark-content .ProseMirror > p").filter({ hasText: "求下列极限：" });
+  await expect(paragraph.locator("img.ProseMirror-separator")).toHaveCount(1);
+  await expect(paragraph.locator(".katex-html")).toBeVisible();
+  await paragraph.scrollIntoViewIfNeeded();
+  for (const backwards of [false, true]) {
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await paragraph.evaluate(element => element.scrollIntoView({ block: "center", behavior: "instant" }));
+    if (info.project.name === "desktop") {
+      const points = await paragraph.evaluate(element => {
+        const start = document.createRange(); start.setStart(element.firstChild!, 1); start.setEnd(element.firstChild!, 2);
+        const text = start.getBoundingClientRect(); const formula = element.querySelector(".record-inline-math")!.getBoundingClientRect();
+        return [{ x: text.left + 1, y: text.top + text.height / 2 }, { x: formula.right - 4, y: formula.top + formula.height / 2 }];
+      });
+      const [start, end] = backwards ? points.reverse() : points;
+      await page.mouse.move(start.x, start.y); await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 16 }); await page.mouse.up();
+    } else {
+      await paragraph.evaluate((element, backwards) => {
+        const glyph = element.querySelector(".katex-html .mord.mathnormal")!.firstChild!;
+        const selection = window.getSelection()!;
+        if (backwards) selection.setBaseAndExtent(glyph, 1, element.firstChild!, 1);
+        else selection.setBaseAndExtent(element.firstChild!, 1, glyph, 1);
+        document.dispatchEvent(new Event("selectionchange"));
+      }, backwards);
+    }
+    await expect(page.locator(".review-mark-selection")).toContainText("极限：$");
+    await expect(page.locator(".review-mark-selection")).toContainText(latex);
+    await expect(page.getByRole("button", { name: "标记选中内容", exact: true })).toBeEnabled();
+    await expect(page.locator(".review-mark-error")).toHaveCount(0);
+  }
+  await save(page, 1);
+  expect((await events(page))[0].value?.anchor.structured?.target).toBe("range");
+  await page.getByLabel("选择公式或代码块", { exact: true }).selectOption("3"); await save(page, 2);
+  expect(await source(page)).toBe(original);
+  await closeTools(page); await page.reload();
+  await page.getByRole("button", { name: /^复习/ }).first().click();
+  await expect.poll(() => page.locator(".review-mark-paint [data-mark-id]").evaluateAll(nodes => new Set(nodes.map(node => node.getAttribute("data-mark-id"))).size)).toBe(2);
+  await expect(page.getByRole("button", { name: /部分印记需要确认/ })).toHaveCount(0);
+  await paragraph.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("terminal-formula.png"), animations: "disabled" });
 });

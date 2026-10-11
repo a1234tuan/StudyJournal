@@ -240,6 +240,7 @@ test("resets outline position when changing topics and does not reuse a stale re
   await expect(page.getByRole("heading", { name: "今天", exact: true })).toBeVisible();
   await home(page);
   await active(page).getByRole("button", { name: "长专题", exact: true }).click();
+  await active(page).getByRole("button", { name: "大纲", exact: true }).click();
   await active(page).locator(".knowledge-outline").evaluate(element => { element.scrollTop = 900; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
   await expect.poll(() => active(page).locator(".knowledge-outline").evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   await active(page).getByRole("button", { name: "返回", exact: true }).click();

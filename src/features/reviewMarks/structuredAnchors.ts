@@ -24,6 +24,7 @@ export const readStructuredBlock = (block: HTMLElement): StructuredBlock | null 
   const visit = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) { append(["text", node.textContent ?? ""], node, false); return; }
     if (!(node instanceof HTMLElement)) { if (node instanceof Element) unsupported = true; return; }
+    if (node.matches("img.ProseMirror-separator")) return;
     if (node.matches(formulaSelector)) {
       const latex = node.getAttribute("data-latex") ?? "";
       if (!latex.trim()) { unsupported = true; return; }

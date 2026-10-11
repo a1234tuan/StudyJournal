@@ -6,7 +6,7 @@ import { useDailyPlanReminder } from "./hooks/useDailyPlanReminder";
 import { useCloudSyncStore } from "./services/cloudSyncStore";
 import { isRestoreInProgress, subscribeRestoreLock, useRestoreInProgress } from "./services/restoreLockService";
 import { currentKnowledgeOwner } from "./features/knowledgeLibrary/context";
-import { initialKnowledgeNavigation, patchKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
+import { initialKnowledgeNavigation, loadKnowledgeNavigation, patchKnowledgeNavigation } from "./features/knowledgeLibrary/navigation";
 import { startKnowledgeRuntime } from "./features/knowledgeLibrary/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
@@ -542,6 +542,7 @@ export const App = () => {
           ...current.tabMemory.more,
           subRoute,
           aiScreen: subRoute === "ai" ? "chat" : current.tabMemory.more.aiScreen,
+          knowledge: subRoute === "knowledge" ? current.tabMemory.more.knowledge ?? loadKnowledgeNavigation(currentKnowledgeOwner()) : current.tabMemory.more.knowledge,
           recordId: undefined,
           highlightAssetId: undefined,
           recordEditing: undefined,

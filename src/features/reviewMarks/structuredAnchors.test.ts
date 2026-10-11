@@ -15,6 +15,29 @@ const capture = (root: HTMLElement, from: Node, start: number, to: Node, end: nu
 afterEach(() => { document.body.innerHTML = ""; window.getSelection()?.removeAllRanges(); vi.restoreAllMocks(); });
 
 describe("source-based formula and code anchors", () => {
+  it("captures text and a terminal formula despite the editor separator image", () => {
+    const root = setup('<p>求下列极限：' + inline + '<img class="ProseMirror-separator" alt=""><br class="ProseMirror-trailingBreak"></p>');
+    const paragraph = root.querySelector("p")!;
+    const glyph = root.querySelector(".katex > span")!.firstChild!;
+    const anchor = capture(root, paragraph.firstChild!, 1, glyph, 2)!;
+    expect(anchor.quote).toBe("下列极限：$x^2$");
+    expect(anchor.structured?.target).toBe("range");
+    expect(() => validateReviewMarkEvents([markTestEvent("terminal-mixed", [], { ...markTestValue, anchor })])).not.toThrow();
+    expect(anchorForObject(root, root.querySelector<HTMLElement>(".record-inline-math")!)?.quote).toBe("$x^2$");
+    paragraph.querySelector(".ProseMirror-separator")!.remove();
+    expect(resolveMarkAnchor(root, anchor)?.block).toBe(paragraph);
+  });
+  it("keeps existing trailing-break anchors and rejects actual images", () => {
+    const root = setup('<p>求极限：' + inline + '<br class="ProseMirror-trailingBreak"></p>');
+    const formula = root.querySelector<HTMLElement>(".record-inline-math")!;
+    const anchor = anchorForObject(root, formula)!;
+    const paragraph = root.querySelector("p")!;
+    paragraph.insertAdjacentHTML("beforeend", '<img class="ProseMirror-separator" alt="">');
+    expect(resolveMarkAnchor(root, anchor)?.block).toBe(paragraph);
+    paragraph.insertAdjacentHTML("beforeend", '<img src="real.png" alt="题图">');
+    expect(readStructuredBlock(paragraph)).toBeNull();
+    expect(resolveMarkAnchor(root, anchor)).toBeNull();
+  });
   it("selects an entire inline formula using LaTeX, not KaTeX text", () => {
     const root = setup('<p>公式' + inline + '结论</p>'); const formula = root.querySelector<HTMLElement>(".record-inline-math")!;
     const anchor = anchorForObject(root, formula)!;

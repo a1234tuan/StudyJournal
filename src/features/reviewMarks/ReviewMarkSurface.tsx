@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { liveQuery } from "dexie";
 import { Bookmark, ChevronLeft, ChevronRight, Undo2, X } from "lucide-react";
 import { db } from "../../db/database";
-import { formatUiError } from "../../lib/uiError";
+import { formatActionableError, formatUiError } from "../../lib/uiError";
 import { usePageTransitionLayerState } from "../../components/PageTransition";
 import { registerReviewNavigationCheck } from "../reviewSession/navigationGuard";
 import { markColors, markKinds, projectReviewMarks, type MarkColor, type MarkKind, type ReviewMarkAnchor, type ReviewMarkEvent, type ReviewMarkValue } from "./domain";
@@ -72,7 +72,7 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
     const capture = () => {
       if (!content.current) return;
       try { const selected = window.getSelection(); if (selected && !selected.isCollapsed && selected.anchorNode && content.current.contains(selected.anchorNode)) { setSelection(captureMarkSelection(content.current, selected)); setError(""); } }
-      catch (reason) { setSelection(null); setError(formatUiError(reason, "review-marks")); }
+      catch (reason) { setSelection(null); setError(formatActionableError(reason, "review-marks")); }
     };
     document.addEventListener("selectionchange", capture);
     return () => document.removeEventListener("selectionchange", capture);
@@ -176,7 +176,7 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
       const anchor = anchorForObject(content.current, element);
       if (!anchor) { setSelection(null); setError("此内容暂不能整体标记，请尝试选中文字。"); return; }
       window.getSelection()?.removeAllRanges(); setSelection(anchor); setError("");
-    } catch (reason) { setSelection(null); setError(formatUiError(reason, "review-marks")); }
+    } catch (reason) { setSelection(null); setError(formatActionableError(reason, "review-marks")); }
   };
   const parents = active?.heads.map(head => head.id) ?? [];
   const entry = <button type="button" className="review-mark-entry" aria-label="永久复习印记" aria-expanded={open} title="永久复习印记，仅在普通间隔复习显示" onClick={() => onOpenChange(!open)}><Bookmark size={17} /><span>印记{count > 0 ? " " + count : ""}</span></button>;

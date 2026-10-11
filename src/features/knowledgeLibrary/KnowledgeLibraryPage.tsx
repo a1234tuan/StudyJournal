@@ -23,7 +23,7 @@ import { createKnowledgeEntity, editKnowledgeEntity } from "./commands";
 import { emptyKnowledgeState, ROOT_NODE, type KnowledgeCommand, type KnowledgeContext, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeLibraryMigration, type KnowledgePosition, type KnowledgeState, type KnowledgeSyncFailure, type KnowledgeUnit } from "./domain";
 import { isKnowledgeVisible, revisionValue, valueOf } from "./protocol";
 import { knowledgeLabel, knowledgeChildren, type KnowledgeHit } from "./query";
-import type { KnowledgeNavigation } from "./navigation";
+import { loadKnowledgeNavigation, rememberKnowledgeTopic, type KnowledgeNavigation } from "./navigation";
 import { KnowledgeMap } from "./KnowledgeMap";
 import { KnowledgeDetails } from "./KnowledgeDetails";
 import { KnowledgeRecordPane } from "./KnowledgeRecordPane";
@@ -90,8 +90,12 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
   const copyingTarget = migrations.some(migration => migration.targetLibraryId === library?.id && migration.phase === "local-copying");
   const scope = library?.cloudLibraryId ?? library?.id ?? "";
   const selected = navigation.selectedNodeId ? state.entities[navigation.selectedNodeId] : undefined;
-  const workspace = navigation.workspaceId ? state.entities[navigation.workspaceId] : undefined;
   const topics = useMemo(() => Object.values(state.entities).filter(entity => entity.kind === "workspace" && isKnowledgeVisible(state, entity)), [state]);
+  const workspace = (!navigation.libraryId || navigation.libraryId === library?.id) ? topics.find(topic => topic.id === navigation.workspaceId) : undefined;
+  useEffect(() => {
+    if (loading || layerState === "exiting" || !library || !workspace || library.ownerScope !== owner || currentKnowledgeOwner() !== owner || library.detached || library.restoreSessionId || navigation.recoveryView || recoveryProtected || preservedSource || copyingTarget) return;
+    rememberKnowledgeTopic(owner, library.id, workspace.id);
+  }, [loading, layerState, library, workspace, owner, navigation.recoveryView, recoveryProtected, preservedSource, copyingTarget]);
   const recordMap = useMemo(() => new Map(records.map(record => [record.id, record])), [records]);
   const previewRecord = navigation.recordPreviewId ? recordMap.get(navigation.recordPreviewId) : undefined;
   const references = useMemo(() => Object.values(state.entities).filter(entity => entity.kind === "reference" && entity.nodeId === selected?.id && isKnowledgeVisible(state, entity)), [state, selected]);
@@ -120,7 +124,7 @@ export const KnowledgeLibraryPage = ({ records, assets = [], subjects = [], navi
     setMessage(result);
   };
   useEffect(() => {
-    const changed = () => { setOwner(currentKnowledgeOwner()); setPanel(undefined); setPicker(false); setEditing(undefined); setTopicTitle(undefined); setNextAction(undefined); setMoveNode(undefined); setSelectedRecords([]); onNavigation({ recordPreviewId: undefined }); setMessage("账号已变化，请在当前账号下重新打开知识库。"); };
+    const changed = () => { setOwner(currentKnowledgeOwner()); setPanel(undefined); setPicker(false); setEditing(undefined); setTopicTitle(undefined); setNextAction(undefined); setMoveNode(undefined); setSelectedRecords([]); const remembered = loadKnowledgeNavigation(currentKnowledgeOwner()); onNavigation({ ...remembered, libraryId: remembered.libraryId, workspaceId: remembered.workspaceId, selectedNodeId: undefined, recordPreviewId: undefined, recoveryView: false, addRecordId: undefined, detailsOpen: false, mapWorkspaceId: undefined, mapSides: {} }); setMessage("账号已变化，已切换到当前账号的知识库。"); };
     window.addEventListener("knowledge-owner-changed", changed);
     return () => window.removeEventListener("knowledge-owner-changed", changed);
   }, []);
