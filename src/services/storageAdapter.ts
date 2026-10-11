@@ -1,4 +1,4 @@
-import { validateReviewMarkEvents } from "../features/reviewMarks/domain";
+import { reviewMarksBackupVersion, validateReviewMarkEvents } from "../features/reviewMarks/domain";
 import { validateArrangedReviews } from "../features/arrangedReview/domain";
 import { capturePortableKnowledge, restorePortableKnowledge, validateKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
 import { initialKnowledgeScope, knowledgeTables } from "../features/knowledgeLibrary/repository";
@@ -2395,7 +2395,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       payload: {
         manifest: {
           format: "study-journal",
-          version: includeKnowledge ? (snapshot.reviewMarkEvents.length ? 8 : 7) : 6,
+          version: includeKnowledge ? reviewMarksBackupVersion(snapshot.reviewMarkEvents) : 6,
           exportedAt: nowISO(),
           appVersion: "0.1.0",
           counts: {
@@ -2482,7 +2482,7 @@ export class DexieStorageAdapter implements StorageAdapter {
       payload: {
         manifest: {
           format: "study-journal",
-          version: includeKnowledge ? (snapshot.reviewMarkEvents.length ? 8 : 7) : 6,
+          version: includeKnowledge ? reviewMarksBackupVersion(snapshot.reviewMarkEvents) : 6,
           exportedAt: nowISO(),
           appVersion: "0.1.0",
           counts: {

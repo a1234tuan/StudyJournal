@@ -1,7 +1,8 @@
 import { ActionableError } from "../../lib/uiError";
+import { captureStructuredRange, clipMarkRect, formulaSelector, resolveStructuredAnchor, sourceBlocks, structuredRects, type StructuredResolution } from "./structuredAnchors";
 import type { ReviewMarkAnchor } from "./domain";
 
-export interface ResolvedMarkAnchor { block: HTMLElement; start: number; end: number }
+export interface ResolvedMarkAnchor { block: HTMLElement; start: number; end: number; units?: StructuredResolution["units"]; target?: StructuredResolution["target"] }
 export const reviewTextBlocks = (root: HTMLElement): HTMLElement[] => Array.from(root.querySelectorAll<HTMLElement>(".ProseMirror > *")).filter(block => Boolean(block.textContent?.trim()));
 
 export const anchorForText = (blockText: string, start: number, end: number): ReviewMarkAnchor => {
@@ -24,6 +25,7 @@ export const resolveTextAnchor = (texts: readonly string[], anchor: ReviewMarkAn
 };
 
 export const resolveMarkAnchor = (root: HTMLElement, anchor: ReviewMarkAnchor): ResolvedMarkAnchor | null => {
+  if (anchor.structured) return resolveStructuredAnchor(root, anchor);
   const blocks = reviewTextBlocks(root);
   const found = resolveTextAnchor(blocks.map(block => block.textContent ?? ""), anchor);
   return found ? { block: blocks[found.index], start: found.start, end: found.end } : null;
@@ -32,8 +34,10 @@ export const resolveMarkAnchor = (root: HTMLElement, anchor: ReviewMarkAnchor): 
 export const captureMarkSelection = (root: HTMLElement, selection: Selection | null): ReviewMarkAnchor | null => {
   if (!selection?.rangeCount || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
-  const block = reviewTextBlocks(root).find(node => node.contains(range.startContainer) && node.contains(range.endContainer));
+  const blocks = sourceBlocks(root).filter(node => range.intersectsNode(node));
+  const block = blocks.length === 1 ? blocks[0] : undefined;
   if (!block) return null;
+  if (block.matches("pre") || block.matches(formulaSelector) || block.querySelector(formulaSelector)) return captureStructuredRange(root, block, range);
   if (range.cloneContents().querySelector("img, video, audio, .katex, [contenteditable=false]")) return null;
   const before = document.createRange(); before.selectNodeContents(block); before.setEnd(range.startContainer, range.startOffset);
   const through = document.createRange(); through.selectNodeContents(block); through.setEnd(range.endContainer, range.endOffset);
@@ -53,4 +57,10 @@ export const rangeForMark = ({ block, start, end }: ResolvedMarkAnchor): Range |
     consumed += length; text = walker.nextNode();
   }
   return null;
+};
+
+export const rectanglesForMark = (root: HTMLElement, anchor: ResolvedMarkAnchor, paragraph: boolean): DOMRect[] => {
+  if (anchor.units && anchor.target) return structuredRects(root, { ...anchor, units: anchor.units, target: anchor.target }, paragraph);
+  const bounds = paragraph ? [anchor.block.getBoundingClientRect()] : Array.from(rangeForMark(anchor)?.getClientRects() ?? []);
+  return bounds.map(rect => clipMarkRect(rect, anchor.block, root)).filter((rect): rect is DOMRect => rect !== null);
 };

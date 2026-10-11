@@ -305,17 +305,19 @@ describe('W-01 values() soft-delete retention scope', () => {
 
 
 describe("review mark protocol and multi-device facts", () => {
-  it("upgrades protocol 2 under lock and keeps offline erase/edit branches across devices", async () => {
+  it.each([2, 3])("upgrades protocol %s and synchronizes formula marks including offline erase/edit branches", async protocol => {
     const devices = await boot();
     try {
       const { ReviewMarkRepository } = await import("../features/reviewMarks/repository");
-      const { markTestValue } = await import("../features/reviewMarks/fixtures");
+      remote.documents.set(`users/${UID}/syncState/current`, { ...stateDoc(1), protocolVersion: protocol });
+      const { structuredMarkTestValue: markTestValue } = await import("../features/reviewMarks/fixtures");
       const { projectReviewMarks } = await import("../features/reviewMarks/domain");
       await use(0, devices, () => new ReviewMarkRepository(devices[0]).write("one", stamp, markTestValue, "mark", [], "first-mark"));
       expect((await sync(devices, 0)).kind).toBe("synced");
-      expect(remote.documents.get(`users/${UID}/syncState/current`).protocolVersion).toBe(3);
+      expect(remote.documents.get(`users/${UID}/syncState/current`).protocolVersion).toBe(4);
       expect((await sync(devices, 1)).kind).toBe("synced");
       expect(await devices[1].reviewMarkEvents.count()).toBe(1);
+      expect((await devices[1].reviewMarkEvents.toArray())[0].value?.anchor).toEqual(markTestValue.anchor);
       await use(0, devices, () => new ReviewMarkRepository(devices[0]).write("one", stamp, null, "mark", ["first-mark"], "erase-mark"));
       await use(1, devices, () => new ReviewMarkRepository(devices[1]).write("one", stamp, { ...markTestValue, color: "blue" }, "mark", ["first-mark"], "edit-mark"));
       expect((await sync(devices, 0)).kind).toBe("synced");
@@ -331,7 +333,7 @@ describe("review mark protocol and multi-device facts", () => {
   it("rejects a future protocol before writes or local restore", async () => {
     const devices = await boot();
     try {
-      remote.documents.set(`users/${UID}/syncState/current`, { ...stateDoc(2), protocolVersion: 4 });
+      remote.documents.set(`users/${UID}/syncState/current`, { ...stateDoc(2), protocolVersion: 5 });
       await expect(sync(devices, 0)).rejects.toThrow("协议版本不兼容");
       expect(remote.writes).toBe(0);
       expect(await devices[0].blocks.count()).toBe(2);

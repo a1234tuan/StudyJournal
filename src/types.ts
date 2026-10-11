@@ -810,7 +810,7 @@ export interface AppSettings {
 
 export interface BackupManifest {
   format: "408-study-journal" | "study-journal";
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   exportedAt: ISODateTime;
   appVersion: string;
   counts: {

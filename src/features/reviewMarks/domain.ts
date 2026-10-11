@@ -1,10 +1,11 @@
+import { validStructuredAnchor, type StructuredMarkTarget } from "./structuredModel";
 import type { BaseEntity } from "../../types";
 
 export const markColors = ["amber", "green", "blue", "rose"] as const;
 export const markKinds = ["highlight", "underline", "outline", "paragraph"] as const;
 export type MarkColor = typeof markColors[number];
 export type MarkKind = typeof markKinds[number];
-export interface ReviewMarkAnchor { quote: string; prefix: string; suffix: string; blockText: string }
+export interface ReviewMarkAnchor { quote: string; prefix: string; suffix: string; blockText: string; structured?: StructuredMarkTarget }
 export interface ReviewMarkValue { anchor: ReviewMarkAnchor; kind: MarkKind; color: MarkColor; label: string }
 export interface ReviewMarkEvent extends BaseEntity { recordId: string; markId: string; parents: string[]; value: ReviewMarkValue | null }
 export interface ReviewMarkProjection { markId: string; heads: ReviewMarkEvent[]; value: ReviewMarkValue | null; conflict: boolean }
@@ -37,7 +38,8 @@ export const validateReviewMarkEvents = (events: unknown): void => {
       const value = event.value;
       if (!value || !markColors.includes(value.color) || !markKinds.includes(value.kind) || typeof value.label !== "string" || value.label.length > 160) return invalid();
       const anchor = value.anchor;
-      if (!anchor || typeof anchor.quote !== "string" || !anchor.quote.trim() || anchor.quote.length > 16000 || typeof anchor.blockText !== "string" || anchor.blockText.length > 100000 || !anchor.blockText.includes(anchor.quote) || typeof anchor.prefix !== "string" || anchor.prefix.length > 64 || typeof anchor.suffix !== "string" || anchor.suffix.length > 64) return invalid();
+      if (!anchor || typeof anchor.quote !== "string" || !anchor.quote.trim() || anchor.quote.length > 16000 || typeof anchor.blockText !== "string" || anchor.blockText.length > 100000 || typeof anchor.prefix !== "string" || anchor.prefix.length > 64 || typeof anchor.suffix !== "string" || anchor.suffix.length > 64) return invalid();
+      if (anchor.structured !== undefined ? !validStructuredAnchor(anchor) : !anchor.blockText.includes(anchor.quote)) return invalid();
     }
     if (owners.has(event.markId) && owners.get(event.markId) !== event.recordId) return invalid();
     owners.set(event.markId, event.recordId);
@@ -64,3 +66,5 @@ export const validateReviewMarkEvents = (events: unknown): void => {
   }
   if (ready.length !== rows.size) return invalid();
 };
+
+export const reviewMarksBackupVersion = (events: readonly ReviewMarkEvent[]): 7 | 8 | 9 => events.some(event => event.value?.anchor.structured) ? 9 : events.length ? 8 : 7;

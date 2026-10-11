@@ -7,7 +7,8 @@ import { formatUiError } from "../../lib/uiError";
 import { usePageTransitionLayerState } from "../../components/PageTransition";
 import { registerReviewNavigationCheck } from "../reviewSession/navigationGuard";
 import { markColors, markKinds, projectReviewMarks, type MarkColor, type MarkKind, type ReviewMarkAnchor, type ReviewMarkEvent, type ReviewMarkValue } from "./domain";
-import { captureMarkSelection, rangeForMark, resolveMarkAnchor, reviewTextBlocks } from "./anchors";
+import { captureMarkSelection, rectanglesForMark, resolveMarkAnchor, reviewTextBlocks } from "./anchors";
+import { anchorForObject, markObjectSelector } from "./structuredAnchors";
 import { reviewMarkRepository } from "./repository";
 import "./reviewMarks.css";
 
@@ -28,6 +29,8 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
   const mounted = useRef(true);
   const pending = useRef<Promise<void> | null>(null);
   const pageState = usePageTransitionLayerState();
+  const [objects, setObjects] = useState<HTMLElement[]>([]);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
   const [events, setEvents] = useState<ReviewMarkEvent[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -68,8 +71,8 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
     if (!open) { setSelection(null); setFocus(false); return; }
     const capture = () => {
       if (!content.current) return;
-      try { const selected = window.getSelection(); if (selected && !selected.isCollapsed) setSelection(captureMarkSelection(content.current, selected)); }
-      catch (reason) { setError(formatUiError(reason, "review-marks")); }
+      try { const selected = window.getSelection(); if (selected && !selected.isCollapsed && selected.anchorNode && content.current.contains(selected.anchorNode)) { setSelection(captureMarkSelection(content.current, selected)); setError(""); } }
+      catch (reason) { setSelection(null); setError(formatUiError(reason, "review-marks")); }
     };
     document.addEventListener("selectionchange", capture);
     return () => document.removeEventListener("selectionchange", capture);
@@ -83,6 +86,8 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const origin = root.getBoundingClientRect();
+        const available = Array.from(root.querySelectorAll<HTMLElement>(markObjectSelector));
+        setObjects(current => current.length === available.length && current.every((item, index) => item === available[index]) ? current : available);
         const next: Paint[] = [];
         const blocks = reviewTextBlocks(root);
         const located: { markId: string; blockIndex: number; start: number }[] = [];
@@ -91,7 +96,7 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
           const anchor = resolveMarkAnchor(root, mark.value.anchor);
           if (!anchor) continue;
           located.push({ markId: mark.markId, blockIndex: blocks.indexOf(anchor.block), start: anchor.start });
-          const bounds = mark.value.kind === "paragraph" ? [anchor.block.getBoundingClientRect()] : Array.from(rangeForMark(anchor)?.getClientRects() ?? []);
+          const bounds = rectanglesForMark(root, anchor, mark.value.kind === "paragraph");
           for (const rect of bounds) {
             if (rect.width <= 0 || rect.height <= 0) continue;
             next.push({ markId: mark.markId, kind: mark.value.kind, color: mark.value.color, left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height });
@@ -103,7 +108,7 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
     const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure); resize?.observe(root);
     const editor = root.querySelector(".ProseMirror");
     const changes = new MutationObserver(measure);
-    if (editor) { changes.observe(editor, { subtree: true, childList: true, characterData: true }); resize?.observe(editor); }
+    if (editor) { changes.observe(editor, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-latex"] }); resize?.observe(editor); }
     let disposed = false;
     void document.fonts?.ready.then(() => { if (!disposed) measure(); });
     root.addEventListener("load", measure, true); root.addEventListener("scroll", measure, true); window.addEventListener("resize", measure);
@@ -165,20 +170,29 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
     const target = resolvedIds[index < 0 ? direction > 0 ? 0 : resolvedIds.length - 1 : (index + direction + resolvedIds.length) % resolvedIds.length];
     if (target) jump(target);
   };
+  const chooseObject = (element: HTMLElement) => {
+    if (!content.current) return;
+    try {
+      const anchor = anchorForObject(content.current, element);
+      if (!anchor) { setSelection(null); setError("此内容暂不能整体标记，请尝试选中文字。"); return; }
+      window.getSelection()?.removeAllRanges(); setSelection(anchor); setError("");
+    } catch (reason) { setSelection(null); setError(formatUiError(reason, "review-marks")); }
+  };
   const parents = active?.heads.map(head => head.id) ?? [];
   const entry = <button type="button" className="review-mark-entry" aria-label="永久复习印记" aria-expanded={open} title="永久复习印记，仅在普通间隔复习显示" onClick={() => onOpenChange(!open)}><Bookmark size={17} /><span>印记{count > 0 ? " " + count : ""}</span></button>;
 
   const tools = <section ref={toolsRef} className={viewportOverlayHost ? "review-mark-tools review-mark-dock review-viewport-dock" : "review-mark-tools"} aria-label="印记工具">
       <div className="review-mark-tools-heading"><strong>永久印记</strong><span>仅复习可见 · 自动保存</span><button type="button" aria-label="关闭印记工具" onClick={() => onOpenChange(false)}><X size={17} /></button></div>
-      <p className="review-mark-hint">选中文字后标记；手机可长按选字。</p>
+      <p className="review-mark-hint">选字或点选公式、代码块后标记。</p>
       <div className="review-mark-options">
         <label>样式<select aria-label="印记样式" value={kind} onChange={event => setKind(event.target.value as MarkKind)}>{markKinds.map(item => <option key={item} value={item}>{kindLabels[item]}</option>)}</select></label>
         <div className="review-mark-colors" role="group" aria-label="印记颜色">{markColors.map(item => <button type="button" key={item} data-color={item} aria-label={colorLabels[item] + "印记"} aria-pressed={color === item} onClick={() => setColor(item)}><span /></button>)}</div>
         <label>提示<select aria-label="印记提示" value={label} onChange={event => setLabel(event.target.value)}><option>重点</option><option>易混</option><option>已熟悉</option></select></label>
       </div>
+      {objects.length > 0 && <label className="review-mark-object-picker">整体选择<select aria-label="选择公式或代码块" value="" onChange={event => { const element = objects[Number(event.target.value)]; if (element) chooseObject(element); }}><option value="" disabled>公式 / 代码块…</option>{objects.map((element, index) => <option key={index} value={index}>{index + 1}. {element.matches("pre") ? "代码块：" + (element.textContent ?? "").slice(0, 36) : "公式：" + (element.getAttribute("data-latex") ?? "").slice(0, 36)}</option>)}</select></label>}
       {selection && <p className="review-mark-selection">已选：{selection.quote.slice(0, 80)}{selection.quote.length > 80 ? "…" : ""}</p>}
       <div className="review-mark-actions">
-        <button type="button" className="primary-button" disabled={!selection || busy || !ready} onClick={() => selection && write({ anchor: selection, kind, color, label })}>标记选中文字</button>
+        <button type="button" className="primary-button" disabled={!selection || busy || !ready} onClick={() => selection && write({ anchor: selection, kind, color, label })}>{selection?.structured ? "标记选中内容" : "标记选中文字"}</button>
         <button type="button" disabled={!history.length || busy} onClick={undoLast}><Undo2 size={15} />撤销印记</button>
         <button type="button" disabled={!resolvedIds.length} aria-label="上一处印记" onClick={() => step(-1)}><ChevronLeft size={16} /></button>
         <button type="button" disabled={!resolvedIds.length} aria-label="下一处印记" onClick={() => step(1)}><ChevronRight size={16} /></button>
@@ -197,7 +211,7 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
         <button type="button" disabled={!selection || busy} onClick={() => selection && write({ anchor: selection, kind, color, label }, active.markId, parents)}>移到所选文字</button>
         <button type="button" disabled={busy} onClick={() => write(null, active.markId, parents)}>{active.conflict ? "确认擦除此印记" : "擦除印记"}</button>
       </div>}
-      <details className="review-mark-help"><summary>说明与同步</summary><p className="review-mark-hint">“已熟悉”只是阅读提示，不改变评分或复习间隔。印记参与云同步与备份；同步设备需全部升级。请在同一段内选字，图片、公式及跨段圈画暂不支持。</p></details>
+      <details className="review-mark-help"><summary>说明与同步</summary><p className="review-mark-hint">“已熟悉”只是阅读提示，不改变评分或复习间隔。印记参与云同步与备份；同步设备需全部升级。支持公式整体、代码片段/整块，以及同段文字夹公式；公式按源码定位。图片、跨段圈画和公式内部局部标记暂不支持。</p></details>
       {error && <p role="alert" className="review-mark-error">{error}</p>}
       {busy && <span className="review-mark-hint" role="status">正在保存印记…</span>}
     </section>;
@@ -208,7 +222,19 @@ function ActiveReviewMarks({ recordId, contentRevision, children, open, onOpenCh
     {!open && error && <p role="alert" className="review-mark-error">{error}</p>}
     {!open && busy && <span className="review-mark-hint" role="status">正在保存印记…</span>}
     {!open && visible.some(mark => mark.conflict || (mark.value && !resolvedIds.includes(mark.markId))) && ready && <button type="button" className="review-mark-warning" onClick={() => { onOpenChange(true); setFocus(true); }}>部分印记需要确认定位或并发修改</button>}
-    <div className="review-mark-content" ref={content}>
+    <div className={open ? "review-mark-content selecting-objects" : "review-mark-content"} ref={content}
+      onPointerDownCapture={event => { pointerStart.current = { x: event.clientX, y: event.clientY }; }}
+      onClickCapture={event => {
+        if (!open || !(event.target instanceof Element)) return;
+        const element = event.target.closest<HTMLElement>(markObjectSelector);
+        if (!element || !content.current?.contains(element)) return;
+        if (pointerStart.current && Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 6) return;
+        const selected = window.getSelection();
+        if (selected && !selected.isCollapsed && selected.rangeCount && selected.getRangeAt(0).intersectsNode(element)) {
+          if (element.matches("pre") || !element.contains(selected.anchorNode) || !element.contains(selected.focusNode)) return;
+        }
+        event.preventDefault(); event.stopPropagation(); chooseObject(element);
+      }}>
       {children}
       <div className="review-mark-paint" aria-hidden="true">{paint.map((rect, index) => <span key={rect.markId + ":" + index} data-mark-id={rect.markId} data-kind={rect.kind} data-color={rect.color} data-active={rect.markId === activeId || undefined} style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }} />)}</div>
     </div>

@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../../db/defaults";
 import type { RecordBlock } from "../../types";
 import { projectReviewMarks, validateReviewMarkEvents } from "./domain";
-import { markTestEvent, markTestStamp as stamp, markTestValue as value } from "./fixtures";
+import { markTestEvent, markTestStamp as stamp, markTestValue as value, structuredMarkTestValue } from "./fixtures";
 vi.mock("../../services/autoBackupService", () => ({ markAutoBackupDirty: vi.fn(), setAutoBackupSuspended: vi.fn() }));
 Dexie.dependencies.indexedDB = indexedDB; Dexie.dependencies.IDBKeyRange = IDBKeyRange;
 const { db } = await import("../../db/database");
@@ -59,6 +59,27 @@ describe("permanent review mark facts", () => {
     expect(projections.find(mark => mark.markId === "mark")).toMatchObject({ conflict: true, value: null });
     await repository.write(record.id, stamp, value, "mark", [changed.id, erased.id]);
     expect(projectReviewMarks(await db.reviewMarkEvents.toArray()).find(mark => mark.markId === "mark")).toMatchObject({ conflict: false, value });
+  });
+  it("round trips structured mark history through version9 ZIP and stream restore", async () => {
+    await repository.write(record.id, stamp, structuredMarkTestValue, "formula", [], "formula-first");
+    await repository.write(record.id, stamp, null, "formula", ["formula-first"], "formula-erase");
+    const snapshot = await storage.createSnapshot(); const stream = await storage.createStreamableSnapshot();
+    expect(snapshot.payload.manifest.version).toBe(9); expect(stream.payload.manifest.version).toBe(9);
+    const archive = await snapshotToZip(snapshot);
+    const restored = await zipToSnapshot(new File([archive], "formula.zip", { type: "application/zip" }));
+    await db.reviewMarkEvents.clear(); await storage.restoreSnapshot(restored);
+    expect(await db.reviewMarkEvents.toArray()).toEqual(snapshot.payload.reviewMarkEvents);
+    await db.reviewMarkEvents.clear(); await storage.restoreStreamableSnapshot(stream, async () => undefined);
+    expect(await db.reviewMarkEvents.toArray()).toEqual(snapshot.payload.reviewMarkEvents);
+    expect(await db.blocks.get(record.id)).toMatchObject({ type: "record", contentHtml: record.contentHtml });
+  });
+  it("rejects incomplete version9 marks before replacing local data", async () => {
+    const snapshot = await storage.createSnapshot(); snapshot.payload.manifest.version = 9;
+    delete snapshot.payload.reviewMarkEvents;
+    await expect(storage.restoreSnapshot(snapshot)).rejects.toThrow("印记");
+    snapshot.payload.reviewMarkEvents = [markTestEvent("bad", [], { ...structuredMarkTestValue, anchor: { ...structuredMarkTestValue.anchor, structured: { ...structuredMarkTestValue.anchor.structured!, end: 200 } } })];
+    await expect(storage.restoreSnapshot(snapshot)).rejects.toThrow("印记");
+    expect(await db.blocks.get(record.id)).toEqual(record);
   });
   it("round trips version 8 zip including erasure history", async () => {
     await db.reviewMarkEvents.bulkPut([markTestEvent(), markTestEvent("erase", ["mark-event"], null)]);

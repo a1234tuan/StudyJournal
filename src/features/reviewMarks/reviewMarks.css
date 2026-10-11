@@ -61,3 +61,9 @@
   .review-mark-dock .review-mark-options { gap: 4px 6px; }
   .review-mark-dock .review-mark-tools-heading > span { font-size: .68rem; }
 }
+
+.review-mark-object-picker { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: .8rem; min-width: 0; }
+.review-mark-object-picker select { min-width: 0; max-width: 300px; width: 100%; min-height: 36px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.review-mark-content.selecting-objects :is(.record-inline-math, .formula-editor-card, pre) { cursor: pointer; }
+.review-mark-content.selecting-objects :is(.record-inline-math, .formula-editor-card, pre):hover { outline: 1px dashed var(--primary); outline-offset: 2px; }
+@media (max-width: 600px) { .review-mark-object-picker select { min-height: 44px; } }

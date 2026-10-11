@@ -195,7 +195,7 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
   if (
     !payload?.manifest ||
     !["408-study-journal", "study-journal"].includes(payload.manifest.format) ||
-    ![1, 2, 3, 4, 5, 6, 7, 8].includes(payload.manifest.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(payload.manifest.version)
   ) {
     throw new Error("自动备份仓库快照格式不兼容或已损坏。");
   }
