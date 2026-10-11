@@ -1,3 +1,4 @@
+import { validateReviewMarkEvents } from "../features/reviewMarks/domain";
 import type {
   AppSettings,
   Asset,
@@ -316,6 +317,7 @@ export const exportCloudSync = async (snapshot: StorageSnapshot): Promise<CloudS
     // Plans carry `deletedAt` through the ordinary entity path, exactly like
     // blocks: the tombstone is what lets a deletion reach the other devices.
     mapEntities("daily-plan", snapshot.payload.dailyPlans ?? []),
+    mapEntities("review-mark-event", snapshot.payload.reviewMarkEvents ?? []),
     mapEntities("arranged-review", snapshot.payload.arrangedReviews ?? []),
     mapEntities("arranged-review-event", snapshot.payload.arrangedReviewEvents ?? []),
     mapEntities("draft", snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? []),
@@ -350,6 +352,7 @@ export const exportCloudSync = async (snapshot: StorageSnapshot): Promise<CloudS
       return entity("asset", { ...meta, id: asset.id, contentHash: assetHash } as Asset & { contentHash: string });
     }),
   );
+  validateReviewMarkEvents(snapshot.payload.reviewMarkEvents ?? []);
   const reviewEvents = await Promise.all(
     (snapshot.payload.recordReviewLogs ?? []).map(async (log) => ({
       id: log.id,
@@ -461,6 +464,7 @@ export const materializeCloudSyncSnapshot = (
       studySessions: values<StudySession>(entities, "study-session"),
       settings,
       dailyPlans: values<DailyPlan>(entities, "daily-plan"),
+      reviewMarkEvents: values<import("../features/reviewMarks/domain").ReviewMarkEvent>(entities, "review-mark-event"),
       arrangedReviews: values<import("../features/arrangedReview/domain").ArrangedReview>(entities, "arranged-review"),
       arrangedReviewEvents: values<import("../features/arrangedReview/domain").ArrangedReviewEvent>(entities, "arranged-review-event"),
       reviewCoach,

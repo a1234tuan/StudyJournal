@@ -1,11 +1,13 @@
+import { DEFAULT_NODE_APPEARANCE, DEFAULT_MAP_APPEARANCE, type NodeAppearance, type MapAppearance } from "./appearance";
+import { layoutDirectedMap } from "./directedLayout";
 import { ROOT_NODE, type KnowledgePosition, type KnowledgeState } from "./domain";
 import { isKnowledgeVisible, valueOf } from "./protocol";
 import { knowledgeChildren, knowledgeLabel, layoutKnowledgeTree } from "./query";
 
-export interface MapNode { id: string; parentId: string; x: number; y: number; width: number; height: number; side: -1 | 0 | 1; branch: number; depth: number; count: number; hasChildren: boolean }
+export interface MapNode { appearance?: NodeAppearance; direction?: "left" | "right" | "top" | "bottom"; id: string; parentId: string; x: number; y: number; width: number; height: number; side: -1 | 0 | 1; branch: number; depth: number; count: number; hasChildren: boolean }
 export interface MapDrop { targetId: string; parentId: string; beforeId?: string; mode: "child" | "before" | "after" | "invalid" }
 export type MapDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
-export function mapDropPreview(nodes: MapNode[], sourceId: string, drop: MapDrop) {
+export function mapDropPreview(nodes: MapNode[], sourceId: string, drop: MapDrop, line: MapAppearance["line"] = "curve") {
   const source = nodes.find(node => node.id === sourceId);
   const target = nodes.find(node => node.id === drop.targetId);
   const parent = nodes.find(node => node.id === drop.parentId);
@@ -23,7 +25,13 @@ export function mapDropPreview(nodes: MapNode[], sourceId: string, drop: MapDrop
   const descendants = nodes.filter(node => node.id !== target.id && descendsFrom(node.id, target.id) && !descendsFrom(node.id, sourceId));
   const childTop = descendants.length ? Math.max(...descendants.map(node => node.y + node.height)) + 20 : target.y + (target.height - source.height) / 2;
   const slot: MapNode = { ...source, side, x: drop.mode === "child" || drop.mode === "invalid" ? side === 1 ? target.x + target.width + 64 : target.x - 64 - source.width : target.x, y: drop.mode === "before" ? target.y - source.height - 20 : drop.mode === "after" ? target.y + target.height + 20 : childTop };
-  return { slot, path: knowledgeMapPath(parent, slot), x: side === 1 ? slot.x : slot.x + slot.width, y: slot.y + slot.height / 2 };
+  slot.direction = target.direction ?? source.direction;
+  if (target.direction === "top" || target.direction === "bottom") {
+    const below = target.direction === "bottom";
+    slot.x = drop.mode === "child" || drop.mode === "invalid" ? target.x + (target.width - source.width) / 2 : drop.mode === "before" ? target.x - source.width - 28 : target.x + target.width + 28;
+    slot.y = drop.mode === "child" || drop.mode === "invalid" ? below ? target.y + target.height + 64 : target.y - source.height - 64 : target.y;
+  }
+  return { slot, path: knowledgeMapPath(parent, slot, line), x: side === 1 ? slot.x : slot.x + slot.width, y: slot.y + slot.height / 2 };
 }
 export interface OutlineRow { id: string; nodeId: string; depth: number; kind: "node" | "reference"; count: number; expandable: boolean }
 
@@ -81,14 +89,14 @@ export function flattenKnowledgeOutline(state: KnowledgeState, workspaceId: stri
   }
   return rows;
 }
-const dimensions = (title: string, count = 0, center = false, measure?: (title: string) => number) => {
-  const textWidth = measure ? measure(title) * (center ? 1.125 : 1) : Array.from(title).reduce((sum, character) => sum + (/[^\x00-\xff]/.test(character) ? 16 : 9), 0);
+const dimensions = (title: string, count = 0, center = false, measure?: (title: string, bold?: boolean) => number, bold = false) => {
+  const textWidth = measure ? measure(title, bold) * (center ? 1.125 : 1) : Array.from(title).reduce((sum, character) => sum + (/[^\x00-\xff]/.test(character) ? 16 : 9), 0) * (bold ? 1.12 : 1);
   const reserve = count ? 86 + Math.max(0, String(count).length - 2) * 9 : 28;
   const width = Math.min(center ? 264 : 240, Math.max(center ? 176 : 108, textWidth + reserve));
   const height = Math.max(center ? 60 : 44, Math.ceil(textWidth / (width - reserve)) * 24 + 20);
   return { width, height };
 };
-export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}, draft?: { id: string; parentId: string; afterId?: string }, measure?: (title: string) => number) {
+export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, collapsed: ReadonlySet<string>, preferredSides: Record<string, number> = {}, draft?: { id: string; parentId: string; afterId?: string; appearance?: NodeAppearance }, measure?: (title: string, bold?: boolean) => number, styleOverride?: { id: string; appearance: NodeAppearance }) {
   const rows = layoutKnowledgeTree(state, workspaceId, draft ? new Set([...collapsed].filter(id => id !== draft.parentId)) : collapsed);
   if (draft && !rows.some(row => row.id === draft.id)) {
     const parent = rows.find(row => row.id === draft.parentId);
@@ -109,8 +117,11 @@ export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, c
     const siblings = children.get(row.parentNodeId) ?? [];
     siblings.push(row.id); children.set(row.parentNodeId, siblings);
     const count = references.get(row.id)?.length ?? 0;
-    nodes.set(row.id, { id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...(row.id === draft?.id ? { width: 300, height: 48 } : dimensions(knowledgeLabel(state, state.entities[row.id]), count, false, measure)), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
+    const appearance = row.id === styleOverride?.id ? styleOverride.appearance : row.id === draft?.id && draft.appearance ? draft.appearance : (state.entities[row.id] ? valueOf(state, state.entities[row.id], "style") as NodeAppearance | undefined : undefined) ?? DEFAULT_NODE_APPEARANCE;
+    nodes.set(row.id, { appearance, id: row.id, parentId: row.parentNodeId, x: 0, y: 0, ...(row.id === draft?.id || row.id === styleOverride?.id ? { width: 300, height: 48 } : dimensions(knowledgeLabel(state, state.entities[row.id]), count, false, measure, appearance.bold)), side: 1, branch: 0, depth: row.depth, count, hasChildren: allParents.has(row.id) });
   }
+  const configuration = (valueOf(state, state.entities[workspaceId], "map") as MapAppearance | undefined) ?? DEFAULT_MAP_APPEARANCE;
+  if (configuration.structure !== "balanced") return layoutDirectedMap(center, nodes, children, configuration.structure, preferredSides);
   const spans = new Map<string, number>();
   for (const row of [...rows].reverse()) {
     const descendants = children.get(row.id) ?? [];
@@ -146,11 +157,19 @@ export function layoutKnowledgeMap(state: KnowledgeState, workspaceId: string, c
   }
   return { nodes: [center, ...rows.map(row => nodes.get(row.id)!)], sides };
 }
-export function knowledgeMapPath(parent: MapNode, child: MapNode) {
-  const startX = child.side === 1 ? parent.x + parent.width : parent.x;
-  const endX = child.side === 1 ? child.x : child.x + child.width;
-  const middle = (startX + endX) / 2;
-  return "M " + startX + " " + (parent.y + parent.height / 2) + " C " + middle + " " + (parent.y + parent.height / 2) + ", " + middle + " " + (child.y + child.height / 2) + ", " + endX + " " + (child.y + child.height / 2);
+export function knowledgeMapPath(parent: MapNode, child: MapNode, line: MapAppearance["line"] = "curve") {
+  const direction = child.direction ?? (child.side === 1 ? "right" : "left");
+  const vertical = direction === "top" || direction === "bottom";
+  const positive = direction === "right" || direction === "bottom";
+  const startX = vertical ? parent.x + parent.width / 2 : parent.x + (positive ? parent.width : 0);
+  const startY = vertical ? parent.y + (positive ? parent.height : 0) : parent.y + parent.height / 2;
+  const endX = vertical ? child.x + child.width / 2 : child.x + (positive ? 0 : child.width);
+  const endY = vertical ? child.y + (positive ? 0 : child.height) : child.y + child.height / 2;
+  const start = "M " + startX + " " + startY;
+  if (line === "straight") return start + " L " + endX + " " + endY;
+  const middle = vertical ? (startY + endY) / 2 : (startX + endX) / 2;
+  if (line === "elbow") return start + (vertical ? " V " + middle + " H " + endX + " V " + endY : " H " + middle + " V " + endY + " H " + endX);
+  return start + " C " + (vertical ? startX + " " + middle + ", " + endX + " " + middle : middle + " " + startY + ", " + middle + " " + endY) + ", " + endX + " " + endY;
 }
 export function knowledgeMapDrop(state: KnowledgeState, workspaceId: string, nodes: MapNode[], sourceId: string, point: { x: number; y: number }): MapDrop | undefined {
   const target = nodes.find(node => point.x >= node.x - 12 && point.x <= node.x + node.width + 12 && point.y >= node.y - 8 && point.y <= node.y + node.height + 8);
@@ -162,7 +181,8 @@ export function knowledgeMapDrop(state: KnowledgeState, workspaceId: string, nod
     if (!entity) return undefined;
     ancestor = (valueOf(state, entity, "position") as KnowledgePosition).parentNodeId;
   }
-  const fraction = (point.y - target.y) / target.height;
+  const vertical = target.direction === "top" || target.direction === "bottom";
+  const fraction = vertical ? (point.x - target.x) / target.width : (point.y - target.y) / target.height;
   const mode = target.id === ROOT_NODE || (fraction > .25 && fraction < .75) ? "child" : fraction <= .25 ? "before" : "after";
   if (mode === "child") return { targetId: target.id, parentId: target.id, mode };
   const siblings = knowledgeChildren(state, workspaceId, target.parentId).filter(entity => entity.id !== sourceId);

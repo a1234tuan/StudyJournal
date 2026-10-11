@@ -303,6 +303,42 @@ describe('W-01 values() soft-delete retention scope', () => {
     });
 });
 
+
+describe("review mark protocol and multi-device facts", () => {
+  it("upgrades protocol 2 under lock and keeps offline erase/edit branches across devices", async () => {
+    const devices = await boot();
+    try {
+      const { ReviewMarkRepository } = await import("../features/reviewMarks/repository");
+      const { markTestValue } = await import("../features/reviewMarks/fixtures");
+      const { projectReviewMarks } = await import("../features/reviewMarks/domain");
+      await use(0, devices, () => new ReviewMarkRepository(devices[0]).write("one", stamp, markTestValue, "mark", [], "first-mark"));
+      expect((await sync(devices, 0)).kind).toBe("synced");
+      expect(remote.documents.get(`users/${UID}/syncState/current`).protocolVersion).toBe(3);
+      expect((await sync(devices, 1)).kind).toBe("synced");
+      expect(await devices[1].reviewMarkEvents.count()).toBe(1);
+      await use(0, devices, () => new ReviewMarkRepository(devices[0]).write("one", stamp, null, "mark", ["first-mark"], "erase-mark"));
+      await use(1, devices, () => new ReviewMarkRepository(devices[1]).write("one", stamp, { ...markTestValue, color: "blue" }, "mark", ["first-mark"], "edit-mark"));
+      expect((await sync(devices, 0)).kind).toBe("synced");
+      expect((await sync(devices, 1)).kind).toBe("synced");
+      expect((await sync(devices, 0)).kind).toBe("synced");
+      for (const database of devices) {
+        const marks = projectReviewMarks(await database.reviewMarkEvents.toArray());
+        expect(marks[0]).toMatchObject({ conflict: true, value: null });
+        expect(await database.recordReviewLogs.count()).toBe(0);
+      }
+    } finally { await close(devices); }
+  });
+  it("rejects a future protocol before writes or local restore", async () => {
+    const devices = await boot();
+    try {
+      remote.documents.set(`users/${UID}/syncState/current`, { ...stateDoc(2), protocolVersion: 4 });
+      await expect(sync(devices, 0)).rejects.toThrow("协议版本不兼容");
+      expect(remote.writes).toBe(0);
+      expect(await devices[0].blocks.count()).toBe(2);
+    } finally { await close(devices); }
+  });
+});
+
 describe('W-02 dirty remote payload robustness', () => {
     it('does not let one malformed remote document break the whole materialisation', async () => {
         const devices = await boot();

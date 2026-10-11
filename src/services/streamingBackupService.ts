@@ -126,10 +126,10 @@ export const writeNativeStreamableBackupSnapshot = async (
       })),
     };
     const archivePayload = { ...payload, assets: portableSnapshot.assets };
-    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
+    await writeTextEntry(session.sessionId, "manifest.json", JSON.stringify(payload.manifest.version >= 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
     await writeTextEntry(
       session.sessionId,
-      payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
+      payload.manifest.version >= 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
       JSON.stringify({ ...payload, assets: portableSnapshot.assets }, null, 2),
     );
 
@@ -227,7 +227,7 @@ export const importNativeStreamableBackupAndRestore = async (
     );
     validateBackupPayloadVersion(data);
     if (versioned) validateBackupContainer(await readJsonEntry(session.sessionId, "manifest.json"), data);
-    else if (data.manifest.version === 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
+    else if (data.manifest.version >= 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
     const declarations = archiveAssetDeclarations(data.assetChecksums);
     const blocks = migrateBlocksToRecords(data.blocks ?? []);
     const recordBlocks = blocks.filter((block): block is RecordBlock => block.type === "record");
@@ -256,6 +256,7 @@ export const importNativeStreamableBackupAndRestore = async (
         // written before daily plans existed still means "leave local plans
         // alone" instead of "this device has none". See backup.ts `zipToSnapshot`.
         ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
+        ...(data.reviewMarkEvents !== undefined ? { reviewMarkEvents: data.reviewMarkEvents } : {}),
         ...(data.arrangedReviews !== undefined || data.arrangedReviewEvents !== undefined ? { arrangedReviews: data.arrangedReviews, arrangedReviewEvents: data.arrangedReviewEvents } : {}),
       },
       assets: data.assets ?? [],

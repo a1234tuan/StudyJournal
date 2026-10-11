@@ -6,7 +6,7 @@ import { initialKnowledgeScope, readKnowledgeState, writeKnowledgeStateDelta } f
 import { detachedLibraryIdentity, emptyDetachedLibrary } from "./scope";
 
 export interface PortableKnowledgeLibrary { archiveLibraryId: string; title: string; entities: KnowledgeEntity[]; revisions: KnowledgeRevision[]; candidates: KnowledgeCandidate[]; groups: KnowledgeGroup[] }
-export interface KnowledgeEnvelope { version: 1; scope: "current-identity-local-libraries" | "selected-libraries"; libraries: PortableKnowledgeLibrary[]; checksum: string }
+export interface KnowledgeEnvelope { version: 1 | 2; scope: "current-identity-local-libraries" | "selected-libraries"; libraries: PortableKnowledgeLibrary[]; checksum: string }
 const validIdentifier = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_:@.-]{1,200}$/.test(value) && !["__proto__", "prototype", "constructor"].includes(value);
 const exactKeys = (value: unknown, keys: string[]) => {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== keys.sort().join(",")) throw new KnowledgeError("invalid", "知识备份字段不完整或包含未知字段");
@@ -31,20 +31,22 @@ export const portableKnowledgeState = (library: PortableKnowledgeLibrary): Knowl
 export const validateKnowledgeEnvelope = (input: unknown): KnowledgeEnvelope => {
   exactKeys(input, ["version", "scope", "libraries", "checksum"]);
   const envelope = input as KnowledgeEnvelope;
-  if (envelope.version !== 1 || !["current-identity-local-libraries", "selected-libraries"].includes(envelope.scope) || !Array.isArray(envelope.libraries) || envelope.checksum !== knowledgeHash({ version: envelope.version, scope: envelope.scope, libraries: envelope.libraries })) throw new KnowledgeError("invalid", "知识备份版本、范围或校验和无效");
+  if (![1, 2].includes(envelope.version) || !["current-identity-local-libraries", "selected-libraries"].includes(envelope.scope) || !Array.isArray(envelope.libraries) || envelope.checksum !== knowledgeHash({ version: envelope.version, scope: envelope.scope, libraries: envelope.libraries })) throw new KnowledgeError("invalid", "知识备份版本、范围或校验和无效");
   const libraryIds = new Set<string>();
   for (const library of envelope.libraries) {
     exactKeys(library, ["archiveLibraryId", "title", "entities", "revisions", "candidates", "groups"]);
     if (!validIdentifier(library.archiveLibraryId) || libraryIds.has(library.archiveLibraryId)) throw new KnowledgeError("invalid", "知识备份库身份无效");
     libraryIds.add(library.archiveLibraryId);
     validateKnowledgeValue("title", library.title);
+    if (envelope.version === 1 && library.entities.some(entity => entity.units?.style || entity.units?.map)) throw new KnowledgeError("invalid", "新版样式不能使用旧版备份标记");
     const state = portableKnowledgeState(library);
     validateKnowledgeState(state);
   }
   return envelope;
 };
 export const createKnowledgeEnvelope = (libraries: PortableKnowledgeLibrary[], scope: KnowledgeEnvelope["scope"] = "current-identity-local-libraries"): KnowledgeEnvelope => {
-  const payload = { version: 1 as const, scope, libraries };
+  const version = libraries.some(library => library.entities.some(entity => entity.units.style || entity.units.map)) ? 2 as const : 1 as const;
+  const payload = { version, scope, libraries };
   return validateKnowledgeEnvelope({ ...payload, checksum: knowledgeHash(payload) });
 };
 export const capturePortableKnowledge = async (database: StudyJournalDatabase, ownerScope: KnowledgeOwner): Promise<KnowledgeEnvelope> => {

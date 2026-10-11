@@ -33,14 +33,14 @@ export const createKnowledgeTransport = (database: Firestore, uid: string): Know
     async head(libraryId) {
       const snapshot = await withKnowledgeTimeout(getDocFromServer(doc(database, root(libraryId) + "/state/head")));
       const head = snapshot.data();
-      if (!head || head.protocolVersion !== 1 || !Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new KnowledgeError("missing", "账号知识库提交头缺失或版本不兼容，未新建替代库");
+      if (!head || ![1, 2].includes(head.protocolVersion) || !Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new KnowledgeError("missing", "账号知识库提交头缺失或版本不兼容，未新建替代库");
       return head.sequence as number;
     },
     async receipt(libraryId, commandId) {
       const snapshot = await withKnowledgeTimeout(getDocFromServer(doc(database, root(libraryId) + "/receipts/" + commandId)));
       if (!snapshot.exists()) return null;
       const receipt = snapshot.data() as KnowledgeCloudReceipt;
-      if (receipt.protocolVersion !== 1 || receipt.registration !== false || receipt.commandId !== commandId || !Number.isSafeInteger(receipt.sequence) || receipt.sequence < 1 || !/^[a-f0-9]{64}$/.test(receipt.commandHash)) throw new KnowledgeError("receipt", "知识命令回执格式不兼容");
+      if (![1, 2].includes(receipt.protocolVersion) || receipt.registration !== false || receipt.commandId !== commandId || !Number.isSafeInteger(receipt.sequence) || receipt.sequence < 1 || !/^[a-f0-9]{64}$/.test(receipt.commandHash)) throw new KnowledgeError("receipt", "知识命令回执格式不兼容");
       return receipt;
     },
     async commits(libraryId, after, through) {
@@ -48,7 +48,7 @@ export const createKnowledgeTransport = (database: Firestore, uid: string): Know
       const packets: KnowledgeCloudPacket[] = [];
       for (const document of documents.docs) {
         const commit = document.data() as KnowledgeCloudCommit;
-        if (commit.protocolVersion !== 1 || !Array.isArray(commit.slots) || commit.slots.length > 15) throw new KnowledgeError("invalid", "知识提交版本或范围无效");
+        if (![1, 2].includes(commit.protocolVersion) || !Array.isArray(commit.slots) || commit.slots.length > 15) throw new KnowledgeError("invalid", "知识提交版本或范围无效");
         const rows: KnowledgeCloudPacket["rows"] = [];
         for (const [slot, rawItem] of commit.slots.entries()) {
           const item = normalizeKnowledgeCloudSlot(rawItem);
@@ -59,10 +59,10 @@ export const createKnowledgeTransport = (database: Firestore, uid: string): Know
             if (data.kind !== "revisions") throw new KnowledgeError("invalid", "知识版本行类型不一致，请重新同步");
             rows.push({ collection: item.collection, id: item.id, data });
           } else {
-            rows.push({ collection: item.collection, id: item.id, data: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId, slot, payload: item.payload, hash: item.hash, kind: item.kind } });
+            rows.push({ collection: item.collection, id: item.id, data: { protocolVersion: commit.protocolVersion, sequence: commit.sequence, commandId: commit.commandId, slot, payload: item.payload, hash: item.hash, kind: item.kind } });
           }
         }
-        packets.push({ commit, rows, head: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId }, receipt: { protocolVersion: 1, sequence: commit.sequence, commandId: commit.commandId, commandHash: commit.commandHash, registration: false } });
+        packets.push({ commit, rows, head: { protocolVersion: commit.protocolVersion, sequence: commit.sequence, commandId: commit.commandId }, receipt: { protocolVersion: commit.protocolVersion, sequence: commit.sequence, commandId: commit.commandId, commandHash: commit.commandHash, registration: false } });
       }
       return packets;
     },
@@ -76,12 +76,14 @@ export const createKnowledgeTransport = (database: Firestore, uid: string): Know
         }
         const headRef = doc(database, root(libraryId) + "/state/head");
         const head = await transaction.get(headRef);
-        if (!head.exists() || head.data().protocolVersion !== 1 || head.data().sequence !== expectedHead || packet.head.sequence !== expectedHead + 1) throw new KnowledgeError("stale", "知识库云端已更新，正在重新核对");
-        transaction.set(headRef, packet.head);
-        transaction.set(receiptRef, packet.receipt);
-        transaction.set(doc(database, root(libraryId) + "/commits/" + packet.commit.commandId), packet.commit);
-        for (const row of packet.rows) transaction.set(doc(database, root(libraryId) + "/" + row.collection + "/" + row.id), row.data);
-        return packet.receipt;
+        if (!head.exists() || ![1, 2].includes(head.data().protocolVersion) || head.data().sequence !== expectedHead || packet.head.sequence !== expectedHead + 1) throw new KnowledgeError("stale", "知识库云端已更新，正在重新核对");
+        const published = head.data().protocolVersion === 2 && packet.head.protocolVersion === 1
+          ? { ...packet, head: { ...packet.head, protocolVersion: 2 as const }, commit: { ...packet.commit, protocolVersion: 2 as const }, receipt: { ...packet.receipt, protocolVersion: 2 as const }, rows: packet.rows.map(row => ({ ...row, data: { ...row.data, protocolVersion: 2 as const } })) } : packet;
+        transaction.set(headRef, published.head);
+        transaction.set(receiptRef, published.receipt);
+        transaction.set(doc(database, root(libraryId) + "/commits/" + published.commit.commandId), published.commit);
+        for (const row of published.rows) transaction.set(doc(database, root(libraryId) + "/" + row.collection + "/" + row.id), row.data);
+        return published.receipt;
       }));
     },
   };

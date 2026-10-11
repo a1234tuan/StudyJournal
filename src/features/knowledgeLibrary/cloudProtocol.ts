@@ -5,10 +5,10 @@ import { knowledgeWrites, validateKnowledgeState, type KnowledgeWrite } from "./
 export type KnowledgeCloudKind = "entities" | "revisions" | "candidates" | "groups";
 export type KnowledgeCloudCollection = "entities" | "revisions" | "conflicts";
 export interface KnowledgeCloudSlot { collection: KnowledgeCloudCollection; kind: KnowledgeCloudKind; id: string; hash: string; bytes: number; payload: string }
-export interface KnowledgeCloudRow { protocolVersion: 1; sequence: number; commandId: string; slot: number; payload: string; hash: string; kind: KnowledgeCloudKind }
-export interface KnowledgeCloudCommit { protocolVersion: 1; sequence: number; commandId: string; commandHash: string; slots: KnowledgeCloudSlot[]; budget: number }
-export interface KnowledgeCloudReceipt { protocolVersion: 1; sequence: number; commandId: string; commandHash: string; registration: boolean }
-export interface KnowledgeCloudHead { protocolVersion: 1; sequence: number; commandId: string }
+export interface KnowledgeCloudRow { protocolVersion: 1 | 2; sequence: number; commandId: string; slot: number; payload: string; hash: string; kind: KnowledgeCloudKind }
+export interface KnowledgeCloudCommit { protocolVersion: 1 | 2; sequence: number; commandId: string; commandHash: string; slots: KnowledgeCloudSlot[]; budget: number }
+export interface KnowledgeCloudReceipt { protocolVersion: 1 | 2; sequence: number; commandId: string; commandHash: string; registration: boolean }
+export interface KnowledgeCloudHead { protocolVersion: 1 | 2; sequence: number; commandId: string }
 export interface KnowledgeCloudPacket { head: KnowledgeCloudHead; commit: KnowledgeCloudCommit; receipt: KnowledgeCloudReceipt; rows: Array<{ collection: string; id: string; data: KnowledgeCloudRow }> }
 const wireObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 export const normalizeKnowledgeCloudSlot = (input: unknown): KnowledgeCloudSlot => {
@@ -38,7 +38,8 @@ export const knowledgeCloudPacket = (before: KnowledgeState, after: KnowledgeSta
     return { collection: write.collection === "groups" || write.collection === "candidates" ? "conflicts" : write.collection, kind: write.collection, id: write.id, hash: knowledgeHash(write.value), bytes: new TextEncoder().encode(payload).byteLength, payload: write.collection === "revisions" ? "" : payload };
   });
   const budget = 16384 + slots.reduce((total, slot) => total + slot.bytes * (slot.collection === "revisions" ? 2 : 4), 0);
-  const head: KnowledgeCloudHead = { protocolVersion: 1, sequence: after.sequence, commandId: command.id };
+  const protocolVersion = command.protocolVersion === 2 || Object.values(after.entities).some(entity => entity.units.style || entity.units.map) ? 2 : 1;
+  const head: KnowledgeCloudHead = { protocolVersion, sequence: after.sequence, commandId: command.id };
   const commit: KnowledgeCloudCommit = { ...head, commandHash: knowledgeHash(command), slots, budget };
   const receipt: KnowledgeCloudReceipt = { ...head, commandHash: commit.commandHash, registration: false };
   const rows = writes.map((write, slot) => ({ collection: slots[slot].collection, id: write.id, data: { ...head, slot, payload: canonicalKnowledge(write.value), hash: slots[slot].hash, kind: write.collection } }));
@@ -50,9 +51,9 @@ export const applyKnowledgeCloudPacket = (before: KnowledgeState, packet: Knowle
   if (!packet || !wireObject(packet.head) || !wireObject(packet.commit) || !wireObject(packet.receipt) || !Array.isArray(packet.commit.slots) || !Array.isArray(packet.rows)) throw new KnowledgeError("invalid", "知识提交结构无效");
   const slots = packet.commit.slots.map(normalizeKnowledgeCloudSlot);
   if (!Number.isSafeInteger(packet.commit.sequence) || packet.commit.sequence < 1 || typeof packet.commit.commandId !== "string" || !/^[A-Za-z0-9_:@.-]{1,180}$/.test(packet.commit.commandId) || ["__proto__", "prototype", "constructor"].includes(packet.commit.commandId) || typeof packet.commit.commandHash !== "string" || !/^[a-f0-9]{64}$/.test(packet.commit.commandHash) || packet.rows.some(row => !wireObject(row) || !wireObject(row.data))) throw new KnowledgeError("invalid", "知识提交身份或版本无效");
-  if (packet.head.protocolVersion !== 1 || packet.commit.sequence !== before.sequence + 1 || packet.head.sequence !== packet.commit.sequence || packet.receipt.sequence !== packet.commit.sequence || packet.receipt.commandHash !== packet.commit.commandHash || packet.head.commandId !== packet.commit.commandId || packet.receipt.commandId !== packet.commit.commandId || packet.commit.slots.length !== packet.rows.length || packet.commit.slots.length > 15 || packet.commit.budget > KNOWLEDGE_LIMITS.commandBytes) throw new KnowledgeError("invalid", "知识提交不完整或不连续");
+  if (![1, 2].includes(packet.head.protocolVersion) || packet.commit.sequence !== before.sequence + 1 || packet.head.sequence !== packet.commit.sequence || packet.receipt.sequence !== packet.commit.sequence || packet.receipt.commandHash !== packet.commit.commandHash || packet.head.commandId !== packet.commit.commandId || packet.receipt.commandId !== packet.commit.commandId || packet.commit.slots.length !== packet.rows.length || packet.commit.slots.length > 15 || packet.commit.budget > KNOWLEDGE_LIMITS.commandBytes) throw new KnowledgeError("invalid", "知识提交不完整或不连续");
   const expectedBudget = 16384 + packet.commit.slots.reduce((total, slot) => total + slot.bytes * (slot.collection === "revisions" ? 2 : 4), 0);
-  if (packet.commit.protocolVersion !== 1 || packet.receipt.protocolVersion !== 1 || packet.receipt.registration !== false || packet.commit.budget !== expectedBudget || knowledgeBytes(packet) > KNOWLEDGE_LIMITS.commandBytes || new Set(packet.rows.map(row => row.collection + ":" + row.id)).size !== packet.rows.length) throw new KnowledgeError("invalid", "知识提交预算、回执或槽位无效");
+  if (packet.commit.protocolVersion !== packet.head.protocolVersion || packet.receipt.protocolVersion !== packet.head.protocolVersion || packet.receipt.registration !== false || packet.commit.budget !== expectedBudget || knowledgeBytes(packet) > KNOWLEDGE_LIMITS.commandBytes || new Set(packet.rows.map(row => row.collection + ":" + row.id)).size !== packet.rows.length) throw new KnowledgeError("invalid", "知识提交预算、回执或槽位无效");
   const state = structuredClone(before);
   for (let index = 0; index < packet.rows.length; index += 1) {
     const row = packet.rows[index];
@@ -62,7 +63,7 @@ export const applyKnowledgeCloudPacket = (before: KnowledgeState, packet: Knowle
     try { value = JSON.parse(row.data.payload) as { id: string }; } catch { throw new KnowledgeError("invalid", "知识提交正文不是有效 JSON"); }
     if (!wireObject(value)) throw new KnowledgeError("invalid", "知识提交正文必须是对象");
     const collection = slot.kind;
-    if (slot.id !== row.id || value.id !== row.id || slot.collection !== row.collection || row.data.kind !== slot.kind || slot.hash !== knowledgeHash(value) || slot.hash !== row.data.hash || row.data.sequence !== packet.commit.sequence || row.data.commandId !== packet.commit.commandId || row.data.slot !== index || row.data.protocolVersion !== 1 || !Number.isSafeInteger(slot.bytes) || slot.bytes < 0 || new TextEncoder().encode(row.data.payload).byteLength !== slot.bytes || (slot.collection !== "revisions" && slot.payload !== row.data.payload) || (slot.collection === "revisions" && slot.payload !== "") || canonicalKnowledge(value) !== row.data.payload) throw new KnowledgeError("invalid", "知识提交正文或哈希不一致");
+    if (slot.id !== row.id || value.id !== row.id || slot.collection !== row.collection || row.data.kind !== slot.kind || slot.hash !== knowledgeHash(value) || slot.hash !== row.data.hash || row.data.sequence !== packet.commit.sequence || row.data.commandId !== packet.commit.commandId || row.data.slot !== index || row.data.protocolVersion !== packet.head.protocolVersion || !Number.isSafeInteger(slot.bytes) || slot.bytes < 0 || new TextEncoder().encode(row.data.payload).byteLength !== slot.bytes || (slot.collection !== "revisions" && slot.payload !== row.data.payload) || (slot.collection === "revisions" && slot.payload !== "") || canonicalKnowledge(value) !== row.data.payload) throw new KnowledgeError("invalid", "知识提交正文或哈希不一致");
     if ((collection === "groups" || collection === "candidates" ? "conflicts" : collection) !== row.collection) throw new KnowledgeError("invalid", "知识提交存储类型不一致");
     const store = state[collection] as Record<string, unknown>;
     if (collection === "entities" && store[row.id] && canonicalKnowledge({ ...(store[row.id] as Record<string, unknown>), units: {} }) !== canonicalKnowledge({ ...value, units: {} })) throw new KnowledgeError("invalid", "知识实体身份不可修改");
@@ -72,6 +73,7 @@ export const applyKnowledgeCloudPacket = (before: KnowledgeState, packet: Knowle
   state.sequence = packet.commit.sequence;
   state.receipts[packet.receipt.commandId] = { id: packet.receipt.commandId, hash: packet.receipt.commandHash, sequence: packet.receipt.sequence };
   validateKnowledgeState(state);
+  if (packet.head.protocolVersion === 1 && Object.values(state.entities).some(entity => entity.units.style || entity.units.map)) throw new KnowledgeError("invalid", "新版导图样式不能通过旧版云提交传入");
   for (const group of Object.values(state.groups)) {
     const previous = before.groups[group.id];
     if (previous && canonicalKnowledge(previous) === canonicalKnowledge(group)) continue;

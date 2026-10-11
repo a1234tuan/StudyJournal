@@ -162,9 +162,9 @@ export const snapshotToZip = async (snapshot: StorageSnapshot, options: ExportOp
 
   validateBackupPayloadVersion(payload);
   const archivePayload = { ...payload, recordDrafts: snapshot.payload.recordDrafts ?? snapshot.recordDrafts ?? [], assets: portableAssets.map(serializeAssetMeta) };
-  zip.file("manifest.json", JSON.stringify(payload.manifest.version === 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
+  zip.file("manifest.json", JSON.stringify(payload.manifest.version >= 7 ? containerForPayload(archivePayload) : payload.manifest, null, 2));
   zip.file(
-    payload.manifest.version === 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
+    payload.manifest.version >= 7 ? KNOWLEDGE_PAYLOAD_ENTRY : "data.json",
     JSON.stringify(
       {
         ...payload,
@@ -284,7 +284,7 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
   if (
     !data.manifest ||
     !["408-study-journal", "study-journal"].includes(data.manifest.format) ||
-    ![1, 2, 3, 4, 5, 6, 7].includes(data.manifest.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8].includes(data.manifest.version)
   ) {
     const format = data.manifest?.format ?? "未知";
     const version = data.manifest?.version ?? "未知";
@@ -296,7 +296,7 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
     const manifest = zip.file("manifest.json");
     if (!manifest) throw new Error("新版备份缺少外层校验清单。");
     validateBackupContainer(JSON.parse(await manifest.async("string")), data);
-  } else if (data.manifest.version === 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
+  } else if (data.manifest.version >= 7) throw new Error("新版完整备份不能使用旧 data.json 入口。");
 
   const migratedBlocks = migrateBlocksToRecords(data.blocks ?? []);
   const recordBlocks = migratedBlocks.filter((block) => block.type === "record");
@@ -368,6 +368,7 @@ export const zipToSnapshot = async (file: File, options: ImportOptions = {}): Pr
        * keeps the distinction intact end to end.
        */
       ...(data.dailyPlans !== undefined ? { dailyPlans: data.dailyPlans } : {}),
+      ...(data.reviewMarkEvents !== undefined ? { reviewMarkEvents: data.reviewMarkEvents } : {}),
       ...(data.arrangedReviews !== undefined || data.arrangedReviewEvents !== undefined ? { arrangedReviews: data.arrangedReviews, arrangedReviewEvents: data.arrangedReviewEvents } : {}),
       reviewCoach: data.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },

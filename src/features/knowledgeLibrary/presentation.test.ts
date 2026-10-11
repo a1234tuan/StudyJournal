@@ -106,3 +106,37 @@ describe("knowledge presentation model", () => {
     expect(result.nodes.map(node => node.id)).toEqual([ROOT_NODE]); expect(JSON.stringify(state)).toBe(before);
   });
 });
+
+describe("map structures and line styles", () => {
+  for (const structure of ["balanced", "logic", "radial"] as const) {
+    it(structure + " preserves nodes and keeps varied subtrees disjoint", () => {
+      const { state, add } = fixture();
+      for (let index = 0; index < 120; index++) add("dense-" + index, "node", ["alpha", "beta", "gamma", "delta"][index % 4], index % 5 ? "条目" : "很长的标题".repeat(12));
+      state.entities.topic.units.map = "map-style";
+      state.revisions["map-style"] = { id: "map-style", entityId: "topic", unit: "map", value: { structure, line: "elbow" }, parents: [], commandId: "style" };
+      assertNoOverlap(state);
+      const layout = layoutKnowledgeMap(state, "topic", new Set());
+      expect(layout.nodes).toHaveLength(128);
+      expect(layoutKnowledgeMap(state, "topic", new Set(), layout.sides)).toEqual(layout);
+      if (structure === "radial") expect(new Set(layout.nodes.filter(node => node.parentId === ROOT_NODE).map(node => node.direction)).size).toBe(4);
+      if (structure === "logic") expect(layout.nodes.slice(1).every(node => node.x > layout.nodes[0].x)).toBe(true);
+      const folded = layoutKnowledgeMap(state, "topic", new Set(["alpha"]), layout.sides);
+      expect(folded.nodes.length).toBeLessThan(layout.nodes.length);
+      for (const node of layout.nodes.slice(1)) {
+        const parent = layout.nodes.find(item => item.id === node.parentId)!;
+        expect(knowledgeMapPath(parent, node, "curve")).toContain(" C ");
+        expect(knowledgeMapPath(parent, node, "straight")).toContain(" L ");
+        expect(knowledgeMapPath(parent, node, "elbow")).toContain(" H ");
+        expect(knowledgeMapPath(parent, node, "elbow")).not.toMatch(/NaN|undefined/);
+      }
+    });
+  }
+  it("measures bold text and new-node drafts without needing persisted style", () => {
+    const { state } = fixture();
+    const measure = (_title: string, bold = false) => bold ? 170 : 90;
+    const normal = layoutKnowledgeMap(state, "topic", new Set(), {}, undefined, measure);
+    const styled = layoutKnowledgeMap(state, "topic", new Set(), {}, undefined, measure, { id: "alpha", appearance: { background: "yellow", color: "blue", bold: true } });
+    expect(styled.nodes.find(node => node.id === "alpha")!.width).toBeGreaterThan(normal.nodes.find(node => node.id === "alpha")!.width);
+    expect(() => layoutKnowledgeMap(state, "topic", new Set(), {}, { id: "new", parentId: ROOT_NODE }, measure)).not.toThrow();
+  });
+});

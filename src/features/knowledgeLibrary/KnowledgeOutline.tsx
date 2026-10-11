@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { NodeAppearance } from "./appearance";
 import { Check, ChevronDown, ChevronRight, FileText, X } from "lucide-react";
 import { ROOT_NODE, type KnowledgePosition, type KnowledgeState } from "./domain";
 import { valueOf } from "./protocol";
@@ -7,11 +8,11 @@ import { flattenKnowledgeOutline } from "./presentation";
 import type { RecordBlock } from "../../types";
 import { knowledgeOutlineScroll, type KnowledgeNavigation } from "./navigation";
 
-export interface KnowledgeTitleEditor { entityId: string; parentId?: string; afterId?: string; text: string; isNew: boolean; busy: boolean; onChange: (text: string) => void; onSave: () => void; onCancel: () => void }
+export interface KnowledgeTitleEditor { appearance?: NodeAppearance; entityId: string; parentId?: string; afterId?: string; text: string; isNew: boolean; busy: boolean; onChange: (text: string) => void; onSave: () => void; onCancel: () => void; onDelete?: () => void }
 export function KnowledgeTitleInput({ editor, label = "节点标题" }: { editor: KnowledgeTitleEditor; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); input.current?.select(); }, [editor.entityId]);
-  return <form className="knowledge-title-editor" onSubmit={event => { event.preventDefault(); if (!editor.busy && editor.text.trim()) editor.onSave(); }} onPointerDown={event => event.stopPropagation()} onKeyDown={event => { event.stopPropagation(); if (event.nativeEvent.isComposing) { if (event.key === "Enter") event.preventDefault(); return; } if (event.key === "Escape") { event.preventDefault(); editor.onCancel(); } }}>
+  return <form className="knowledge-title-editor" onSubmit={event => { event.preventDefault(); if (!editor.busy && editor.text.trim()) editor.onSave(); }} onPointerDown={event => event.stopPropagation()} onKeyDown={event => { event.stopPropagation(); if (event.nativeEvent.isComposing) { if (event.key === "Enter") event.preventDefault(); return; } if (event.key === "Escape") { event.preventDefault(); editor.onCancel(); } else if (event.key === "Backspace" && !editor.text.trim() && !editor.busy && editor.onDelete) { event.preventDefault(); editor.onDelete(); } }}>
     <input ref={input} aria-label={label} placeholder="输入节点标题" value={editor.text} disabled={editor.busy} onChange={event => editor.onChange(event.target.value)} />
     <button type="submit" aria-label="保存节点" disabled={editor.busy || !editor.text.trim()}><Check size={18} /></button>
     <button type="button" aria-label="取消编辑节点" disabled={editor.busy} onClick={editor.onCancel}><X size={18} /></button>

@@ -1,4 +1,5 @@
-import { createKnowledgeEntity } from "./commands";
+import { DEFAULT_NODE_APPEARANCE, DEFAULT_MAP_APPEARANCE, type MapAppearance } from "./appearance";
+import { createKnowledgeEntity, editKnowledgeEntity } from "./commands";
 import type { StudyJournalDatabase } from "../../db/database";
 import { knowledgeHash, revisionIdentity } from "./canonical";
 import { emptyKnowledgeState, KnowledgeError, type KnowledgeBackupScope, type KnowledgeCommand, type KnowledgeContext, type KnowledgeDraft, type KnowledgeEntity, type KnowledgeLibrary, type KnowledgeOwner, type KnowledgePosition, type KnowledgeState, type KnowledgeSyncState, type KnowledgeUnit } from "./domain";
@@ -51,6 +52,22 @@ export const writeKnowledgeStateDelta = async (database: StudyJournalDatabase, l
 };
 export const initialKnowledgeScope = (ownerScope: KnowledgeOwner): KnowledgeBackupScope => ({ ownerScope, scopeEpoch: 0, membershipGeneration: 0, destinationId: null, consented: false, capturedGenerations: {} });
 export class KnowledgeRepository {
+  async executeBatch(context: KnowledgeContext, commands: KnowledgeCommand[], clearDraftId?: string): Promise<void> {
+    await this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      for (const command of commands) await this.execute(context, command);
+      if (clearDraftId) await this.database.knowledgeDrafts.delete([context.libraryId, clearDraftId]);
+    });
+  }
+
+  async undoBatch(context: KnowledgeContext, actions: Array<{ command: KnowledgeCommand; unit: KnowledgeUnit }>): Promise<void> {
+    await this.database.transaction("rw", knowledgeTables(this.database), async () => {
+      for (const action of [...actions].reverse()) {
+        const opened = await this.open(context.libraryId);
+        if (!opened.state.revisions[revisionIdentity(action.command.id, action.unit)]) continue;
+        await this.undo(context, action.command, action.unit, crypto.randomUUID());
+      }
+    });
+  }
   constructor(readonly database: StudyJournalDatabase, readonly currentOwner: () => KnowledgeOwner, readonly contextGeneration: () => number = () => 0) {}
 
   async listLibraries(): Promise<KnowledgeLibrary[]> {
@@ -79,7 +96,7 @@ export class KnowledgeRepository {
     return library;
   }
 
-  async createTopic(title: string, intent: { id: string; ownerScope: KnowledgeOwner; sessionGeneration: number; context?: KnowledgeContext }): Promise<{ libraryId: string; workspaceId: string }> {
+  async createTopic(title: string, intent: { id: string; ownerScope: KnowledgeOwner; sessionGeneration: number; context?: KnowledgeContext }, appearance?: MapAppearance): Promise<{ libraryId: string; workspaceId: string }> {
     if (!title.trim() || new TextEncoder().encode(title.trim()).byteLength > 512) throw new KnowledgeError("invalid", "专题名称无效");
     return this.database.transaction("rw", knowledgeTables(this.database), async () => {
       if (intent.ownerScope !== this.currentOwner() || intent.sessionGeneration !== this.contextGeneration()) throw new KnowledgeError("scope", "账号已变化");
@@ -91,7 +108,12 @@ export class KnowledgeRepository {
       command.id = intent.id;
       command.entity.id = "topic-" + intent.id;
       command.entity.workspaceId = command.entity.id;
-      await this.execute(opened.context, command);
+      const created = await this.execute(opened.context, command);
+      if (appearance && knowledgeHash(appearance) !== knowledgeHash(DEFAULT_MAP_APPEARANCE)) {
+        const configure = editKnowledgeEntity(command.libraryId, created, created.entities[command.entity.id], "map", appearance);
+        configure.id = "map-" + intent.id;
+        await this.execute(opened.context, configure);
+      }
       return { libraryId: library.id, workspaceId: command.entity.id };
     });
   }
@@ -271,7 +293,7 @@ export class KnowledgeRepository {
       await this.assertWritable(context.libraryId);
       if (draft.libraryId !== context.libraryId || draft.dataGeneration !== context.dataGeneration) throw new KnowledgeError("scope", "草稿身份已变化");
       const existing = await this.database.knowledgeDrafts.get([context.libraryId, draft.id]);
-      if (existing && (existing.entityId !== draft.entityId || existing.unit !== draft.unit || existing.expectedRevision !== draft.expectedRevision)) throw new KnowledgeError("stale", "草稿原始编辑基线不可重写");
+      if (existing && (existing.entityId !== draft.entityId || existing.unit !== draft.unit || existing.expectedRevision !== draft.expectedRevision || (existing.appearance && draft.appearance && existing.styleExpected !== draft.styleExpected))) throw new KnowledgeError("stale", "草稿原始编辑基线不可重写");
       await this.database.knowledgeDrafts.put(draft);
     });
   }
@@ -322,7 +344,7 @@ export class KnowledgeRepository {
     const opened = await this.open(context.libraryId);
     const entity = opened.state.entities[command.entity.id];
     const previousId = command.expected[unit];
-    if (!entity || entity.units[unit] !== revisionIdentity(command.id, unit) || !previousId || !opened.state.revisions[previousId] || unit === "deleted") throw new KnowledgeError("stale", "内容已变化或需显式恢复，无法撤销");
-    return this.execute(context, { protocolVersion: 1, id: undoCommandId, libraryId: command.libraryId, operation: "edit", entity: command.entity, expected: { [unit]: entity.units[unit] }, changes: { [unit]: revisionValue(opened.state, previousId)! } });
+    if (!entity || entity.units[unit] !== revisionIdentity(command.id, unit) || (previousId ? !opened.state.revisions[previousId] : unit !== "style" && unit !== "map") || unit === "deleted") throw new KnowledgeError("stale", "内容已变化或需显式恢复，无法撤销");
+    return this.execute(context, { protocolVersion: unit === "style" || unit === "map" ? 2 : 1, id: undoCommandId, libraryId: command.libraryId, operation: "edit", entity: command.entity, expected: { [unit]: entity.units[unit] }, changes: { [unit]: previousId ? revisionValue(opened.state, previousId)! : unit === "style" ? DEFAULT_NODE_APPEARANCE : DEFAULT_MAP_APPEARANCE } });
   }
 }

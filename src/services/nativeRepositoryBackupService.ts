@@ -195,12 +195,12 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
   if (
     !payload?.manifest ||
     !["408-study-journal", "study-journal"].includes(payload.manifest.format) ||
-    ![1, 2, 3, 4, 5, 6, 7].includes(payload.manifest.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8].includes(payload.manifest.version)
   ) {
     throw new Error("自动备份仓库快照格式不兼容或已损坏。");
   }
   validateBackupPayloadVersion(payload);
-  if (payload.manifest.version === 7) validateBackupContainer(parsed.container, { ...payload, assets: parsed.assets } as typeof payload);
+  if (payload.manifest.version >= 7) validateBackupContainer(parsed.container, { ...payload, assets: parsed.assets } as typeof payload);
   const blocks = migrateBlocksToRecords(payload.blocks ?? []);
   const recordBlocks = blocks.filter((block): block is RecordBlock => block.type === "record");
   return {
@@ -226,6 +226,7 @@ const normalizeSnapshot = (parsed: RepositorySnapshotFile): StreamableBackupSnap
       // Same absent-vs-empty rule as the other import paths: a repository file
       // written before daily plans existed must not be read as "no plans".
       ...(payload.dailyPlans !== undefined ? { dailyPlans: payload.dailyPlans } : {}),
+      ...(payload.reviewMarkEvents !== undefined ? { reviewMarkEvents: payload.reviewMarkEvents } : {}),
       ...(payload.arrangedReviews !== undefined || payload.arrangedReviewEvents !== undefined ? { arrangedReviews: payload.arrangedReviews, arrangedReviewEvents: payload.arrangedReviewEvents } : {}),
       reviewCoach: payload.reviewCoach ?? structuredClone(EMPTY_REVIEW_COACH_FORMAL_SNAPSHOT),
     },
@@ -371,7 +372,7 @@ const readBackSnapshot = async (snapshotPath: string, expectedSize: number): Pro
   if (!parsed.payload?.manifest) {
     throw fail(`刚写入的快照 ${snapshotPath} 缺少备份清单`);
   }
-  if (parsed.payload.manifest.version === 7) {
+  if (parsed.payload.manifest.version >= 7) {
     try {
       validateBackupContainer(parsed.container, { ...parsed.payload, assets: parsed.assets } as typeof parsed.payload);
     } catch (error) {
@@ -464,7 +465,7 @@ const writeNativeRepositoryBackupSnapshot = async (
       .filter((entry): entry is BackupAssetChecksum => Boolean(entry)),
   };
   const snapshotFile: RepositorySnapshotFile = {
-    ...(payload.manifest.version === 7 ? { container: containerForPayload({ ...payload, assets: portableSnapshot.assets }) } : {}),
+    ...(payload.manifest.version >= 7 ? { container: containerForPayload({ ...payload, assets: portableSnapshot.assets }) } : {}),
     format: REPOSITORY_SNAPSHOT_FORMAT,
     version: 1,
     exportedAt: payload.manifest.exportedAt,

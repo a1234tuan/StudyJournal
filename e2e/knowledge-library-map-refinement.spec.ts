@@ -96,6 +96,144 @@ test("fullscreen fills the workspace and exits without losing map state", async 
   await expect(active(page).getByRole("button", { name: "导图", exact: true })).toBeVisible();
 });
 
+test("radial branches retain drag behavior and styled colors remain legible", async ({ page }, info) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  const panel = active(page).getByRole("complementary", { name: "导图样式" });
+  await panel.getByRole("button", { name: "四向发散", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "四向发散", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await panel.getByRole("button", { name: "关闭样式面板" }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
+  const root = active(page).locator('[data-map-root="true"]');
+  await dragTo(page, node(page, ids.deep).locator(".knowledge-map-label"), root);
+  await expect.poll(async () => (await position(page, ids.deep) as { parentNodeId: string }).parentNodeId).toBe("@root");
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  for (const visual of ["reading", "modern"]) for (const theme of ["light", "dark"]) {
+    await page.evaluate(({ visual, theme }) => { document.documentElement.dataset.visualTheme = visual; document.documentElement.dataset.theme = theme; }, { visual, theme });
+    for (const color of ["黄色", "绿色", "蓝色", "紫色", "橙色"]) {
+      await panel.getByRole("button", { name: "背景" + color, exact: true }).click();
+      await panel.getByRole("button", { name: "文字" + color, exact: true }).click();
+      await expect(active(page).getByRole("alert")).toHaveCount(0);
+      const contrast = await node(page, ids.first).evaluate(element => {
+        const canvas = document.createElement("canvas"); canvas.width = 1; canvas.height = 1;
+        const context = canvas.getContext("2d")!;
+        const luminance = (color: string) => { context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1); const bytes = context.getImageData(0, 0, 1, 1).data; const values = Array.from(bytes).slice(0, 3).map(byte => { const value = byte / 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4; }); return values[0] * .2126 + values[1] * .7152 + values[2] * .0722; };
+        const style = getComputedStyle(element); const foreground = luminance(style.color); const background = luminance(style.backgroundColor);
+        return (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05);
+      });
+      expect(contrast).toBeGreaterThanOrEqual(4.5);
+    }
+    await page.screenshot({ path: info.outputPath("styled-" + visual + "-" + theme + ".png") });
+  }
+  if (info.project.name === "android-narrow") {
+    await page.setViewportSize({ width: 320, height: 700 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath("styled-320.png") });
+  }
+});
+
+test("new topic chooses its map structure and styled nodes survive reopening", async ({ page }, info) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").click();
+  await expect(node(page, ids.first)).toHaveClass(/selected/);
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  const panel = active(page).getByRole("complementary", { name: "导图样式" });
+  await panel.getByRole("button", { name: "背景绿色", exact: true }).click();
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "green");
+  await panel.getByRole("button", { name: "加粗", exact: true }).click();
+  await expect(node(page, ids.first)).toHaveAttribute("data-bold", "true");
+  await active(page).getByRole("button", { name: "返回", exact: true }).click();
+  await active(page).getByRole("button", { name: "数据结构与算法", exact: true }).click();
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "green");
+  await expect(node(page, ids.first)).toHaveAttribute("data-bold", "true");
+  await active(page).getByRole("button", { name: "返回", exact: true }).click();
+  await active(page).getByRole("button", { name: "新建专题", exact: true }).click();
+  const dialog = active(page).getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "新建专题", exact: true }).fill("四向知识整理");
+  await dialog.getByRole("button", { name: "四向发散", exact: true }).click();
+  await dialog.getByLabel("分支线型").selectOption("elbow");
+  await dialog.getByRole("button", { name: "创建专题", exact: true }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "四向发散", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByLabel("分支线型")).toHaveValue("elbow");
+  await expect(active(page).getByRole("alert")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("new-topic-style.png") });
+});
+
+test("node styles follow rename save and cancel and preserve direct log preview", async ({ page }, info) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await node(page, ids.first).locator(".knowledge-map-label").dblclick();
+  const stylePanel = active(page).getByRole("complementary", { name: "导图样式" });
+  await expect(stylePanel).toBeVisible();
+  await stylePanel.getByRole("button", { name: "背景黄色", exact: true }).click();
+  await stylePanel.getByRole("button", { name: "加粗", exact: true }).click();
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "yellow");
+  await expect(node(page, ids.first)).toHaveAttribute("data-bold", "true");
+  await active(page).getByRole("button", { name: "取消编辑节点" }).click();
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "default");
+  await node(page, ids.first).locator(".knowledge-map-label").dblclick();
+  await active(page).getByRole("textbox", { name: "节点标题", exact: true }).fill("样式与标题一起保存");
+  await stylePanel.getByRole("button", { name: "背景蓝色", exact: true }).click();
+  await stylePanel.getByRole("button", { name: "文字紫色", exact: true }).click();
+  await stylePanel.getByRole("button", { name: "加粗", exact: true }).click();
+  await page.screenshot({ path: info.outputPath("node-style-editing.png") });
+  await active(page).getByRole("button", { name: "保存节点" }).click();
+  await expect(node(page, ids.first).locator(".knowledge-map-label")).toHaveText("样式与标题一起保存");
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "blue");
+  await page.keyboard.press("Control+z");
+  await expect(node(page, ids.first).locator(".knowledge-map-label")).toHaveText("队列与栈");
+  await expect(node(page, ids.first)).toHaveAttribute("data-highlight", "default");
+  await node(page, ids.first).locator(".knowledge-map-count").click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await expect(stylePanel).toBeHidden();
+  await page.screenshot({ path: info.outputPath("style-log-preview.png") });
+});
+
+test("map structure and line choices persist and keep panels inside the viewport", async ({ page }, info) => {
+  await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  const panel = active(page).getByRole("complementary", { name: "导图样式" });
+  for (const structure of ["四向发散", "单向逻辑图", "双向导图"]) {
+    await panel.getByRole("button", { name: structure, exact: true }).click();
+    await expect(panel.getByRole("button", { name: structure, exact: true })).toHaveAttribute("aria-pressed", "true");
+    for (const line of ["straight", "elbow", "curve"]) {
+      await panel.getByLabel("分支线型").selectOption(line);
+      await expect(panel.getByLabel("分支线型")).toHaveValue(line);
+      await expect(active(page).locator(".knowledge-map-lines").first().locator("path").first()).toHaveAttribute("d", line === "curve" ? / C / : line === "straight" ? / L / : / H /);
+    }
+  }
+  await panel.getByRole("button", { name: "四向发散", exact: true }).click();
+  await panel.getByLabel("分支线型").selectOption("elbow");
+  const bounds = (await panel.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height + 1);
+  await expect(panel.getByLabel("分支线型")).toHaveValue("elbow");
+  await expect(active(page).getByRole("alert")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("map-appearance.png") });
+  await page.reload();
+  await page.getByRole("button", { name: "更多", exact: true }).last().click();
+  await active(page).getByRole("button", { name: "知识库", exact: true }).click();
+  const topic = active(page).getByRole("button", { name: "数据结构与算法", exact: true });
+  await topic.click();
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toBeVisible();
+  await active(page).getByRole("button", { name: "导图样式", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "四向发散", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByLabel("分支线型")).toHaveValue("elbow");
+});
+
 test("selection is immediate and details preserve the chosen zoom", async ({ page }) => {
   const ids = await prepare(page);
   await active(page).getByRole("button", { name: "导图", exact: true }).click();
@@ -109,6 +247,22 @@ test("selection is immediate and details preserve the chosen zoom", async ({ pag
   await active(page).getByRole("button", { name: "查看详情", exact: true }).click();
   await expect(active(page).getByRole("complementary", { name: "节点详情" })).toBeVisible();
   await expect(zoom).toHaveText(before);
+});
+
+test("map log count opens the first available record in the right preview", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await expect(active(page).locator("main.knowledge-shell")).toHaveClass(/knowledge-map-view/);
+  const shell = (await active(page).locator("main.knowledge-shell").boundingBox())!;
+  const workspace = (await active(page).locator(".knowledge-workspace").boundingBox())!;
+  expect(workspace.x - shell.x).toBeLessThanOrEqual(13);
+  expect(shell.x + shell.width - (workspace.x + workspace.width)).toBeLessThanOrEqual(13);
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
+  await node(page, ids.first).locator(".knowledge-map-count").click();
+  await expect(active(page).getByRole("complementary", { name: "日志浏览" })).toBeVisible();
+  await expect(active(page).getByRole("complementary", { name: "节点详情" })).toHaveCount(0);
+  await expect(active(page).locator(".knowledge-record-pane-header h2")).toHaveText(ids.labels[0]);
 });
 
 test("balanced map, compact circular controls, direct details and nested outline logs", async ({ page }) => {
@@ -304,6 +458,37 @@ test("map arrow keys select visible nodes without writing and ignore the preview
   await active(page).getByRole("button", { name: "返回节点说明" }).focus();
   await page.keyboard.press("ArrowDown"); await expect(node(page, ids.first)).toHaveClass(/selected/);
   expect(await page.evaluate(async () => (await import("/src/db/database.ts")).db.knowledgeCommands.count())).toBe(count);
+});
+
+test("map supports Ctrl+Z for title edits and Backspace deletes an empty node", async ({ page }) => {
+  const ids = await prepare(page);
+  await active(page).getByRole("button", { name: "导图", exact: true }).click();
+  await active(page).getByRole("button", { name: "适应画布" }).click();
+  await expect(active(page).locator(".knowledge-map-viewport")).toHaveAttribute("aria-busy", "false");
+
+  const label = node(page, ids.first).locator(".knowledge-map-label");
+  await label.dblclick();
+  const rename = active(page).getByRole("textbox", { name: "节点标题", exact: true });
+  await rename.fill("撤回测试节点");
+  await rename.press("Enter");
+  await expect(active(page).getByRole("button", { name: "撤回测试节点", exact: true })).toBeVisible();
+  await active(page).getByRole("button", { name: "撤回测试节点", exact: true }).focus();
+  await page.keyboard.press("Control+Z");
+  await expect(active(page).getByRole("button", { name: "队列与栈", exact: true })).toBeVisible();
+  await expect(active(page).getByRole("button", { name: "撤回测试节点", exact: true })).toHaveCount(0);
+
+  await node(page, ids.first).locator(".knowledge-map-label").dblclick();
+  const emptyTitle = active(page).getByRole("textbox", { name: "节点标题", exact: true });
+  await emptyTitle.fill("");
+  await emptyTitle.press("Backspace");
+  await expect(emptyTitle).toHaveCount(0);
+  await expect(node(page, ids.first)).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async id => {
+    const { knowledgeRepository } = await import("/src/features/knowledgeLibrary/runtime.ts");
+    const { valueOf } = await import("/src/features/knowledgeLibrary/protocol.ts");
+    const opened = await knowledgeRepository.open("map-ux");
+    return valueOf(opened.state, opened.state.entities[id], "deleted");
+  }, ids.first)).toBe(true);
 });
 
 test("drag previews describe child, before, after and invalid positions without writes before release", async ({ page }, info) => {

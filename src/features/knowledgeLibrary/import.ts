@@ -28,6 +28,13 @@ export const buildKnowledgeImport = (sourceState: KnowledgeState, scope: string,
     command.entity.workspaceId = remap.get(entity.workspaceId)!;
     if (position) command.changes.position = { parentNodeId: position.parentNodeId === ROOT_NODE ? ROOT_NODE : remap.get(position.parentNodeId)!, orderKey: position.orderKey };
     append(command);
+    for (const unit of ["style", "map"] as const) {
+      const appearance = valueOf(sourceState, entity, unit);
+      if (appearance === undefined) continue;
+      const edit = editKnowledgeEntity(scope, projected, projected.entities[command.entity.id], unit, appearance);
+      edit.id = "import-" + knowledgeHash({ sessionId, entityId: entity.id, step: unit });
+      append(edit);
+    }
     const textUnit = entity.kind === "reference" ? "remark" : "note";
     const currentText = String(valueOf(sourceState, entity, textUnit) ?? "");
     if (currentText) { const edit = editKnowledgeEntity(scope, projected, projected.entities[command.entity.id], textUnit, currentText); edit.id = "import-" + knowledgeHash({ sessionId, entityId: entity.id, step: "text" }); append(edit); }

@@ -1,3 +1,4 @@
+import { markTestEvent } from "../features/reviewMarks/fixtures";
 import { createKnowledgeEnvelope } from "../features/knowledgeLibrary/backup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -286,21 +287,23 @@ const importableLegacySnapshot = (): string =>
   });
 
 describe("native repository backup service", () => {
-  it("round-trips a v7 empty knowledge library without falling back to an older nonempty snapshot", async () => {
+  it.each([7, 8] as const)("round-trips a v%s formal snapshot without falling back to older data", async version => {
     await writeNativeRepositoryBackupSnapshot(snapshot(), async id => asset(id));
     await nextMillisecond();
     const versioned = emptySnapshot();
-    versioned.payload.manifest.version = 7;
+    versioned.payload.manifest.version = version;
+    if (version === 8) versioned.payload.reviewMarkEvents = [markTestEvent()];
     versioned.payload.knowledge = createKnowledgeEnvelope([]);
     const written = await writeNativeRepositoryBackupSnapshot(versioned, async () => undefined);
     const file = JSON.parse((await readNativeBackupRepositoryTextFile("study-journal-backup", "snapshots/" + written.snapshotId + ".json")).text);
-    expect(file.container.version).toBe(7);
+    expect(file.container.version).toBe(version);
     expect(file.payload.knowledge).toEqual(versioned.payload.knowledge);
     const store = { restoreStreamableSnapshot: vi.fn(async () => undefined) } as unknown as StorageAdapter;
     await restoreNativeRepositoryBackup(store);
     const restored = vi.mocked(store.restoreStreamableSnapshot).mock.calls[0][0];
     expect(restored.payload.blocks).toHaveLength(0);
     expect(restored.payload.knowledge).toEqual(versioned.payload.knowledge);
+    if (version === 8) expect(restored.payload.reviewMarkEvents).toEqual([markTestEvent()]);
   });
   beforeEach(() => {
     nativeMock.__repositoryFiles.clear();

@@ -12,5 +12,5 @@ export const createKnowledgeEntity = (libraryId: string, kind: KnowledgeEntity["
 export const editKnowledgeEntity = (libraryId: string, state: KnowledgeState, entity: KnowledgeEntity, unit: KnowledgeUnit, value: KnowledgeValue): KnowledgeCommand => {
   const { units, ...identity } = entity;
   const operation = unit === "deleted" ? value ? "delete" : "restore" : "edit";
-  return { protocolVersion: 1, id: crypto.randomUUID(), libraryId, operation, entity: identity, expected: { [unit]: units[unit] ?? null }, changes: { [unit]: value }, ...(operation === "restore" ? { restoreToken: restorationToken(state, entity) } : {}) };
+  return { protocolVersion: unit === "style" || unit === "map" ? 2 : 1, id: crypto.randomUUID(), libraryId, operation, entity: identity, expected: { [unit]: units[unit] ?? null }, changes: { [unit]: value }, ...(operation === "restore" ? { restoreToken: restorationToken(state, entity) } : {}) };
 };

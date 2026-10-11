@@ -80,7 +80,7 @@ import {
 } from "./nativeFirebaseStorage";
 import { runNativeGoogleSignIn } from "./cloudGoogleSignIn";
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const MAX_BATCH_WRITES = 400;
 const LOCK_DURATION_MS = 30 * 60 * 1000;
 const LOCK_RENEW_INTERVAL_MS = 5 * 60 * 1000;
@@ -747,7 +747,9 @@ const migrateLegacyLedgers = async (exported: CloudSyncExport, ledger: CloudSync
 
 const getRemoteState = async (uid: string) => {
   const snapshot = await withTimeout(getDoc(stateRef(uid)), FIRESTORE_READ_TIMEOUT_MS, "检查云端同步状态超时，请确认网络可连接后重试。");
-  return { exists: snapshot.exists(), state: parseRemoteState(snapshot.data()) };
+  const state = parseRemoteState(snapshot.data());
+  if (state.protocolVersion !== 2 && state.protocolVersion !== PROTOCOL_VERSION) throw new Error("云端同步协议版本不兼容，请升级全部设备后重试。");
+  return { exists: snapshot.exists(), state };
 };
 
 const getRemoteChanges = async (uid: string, afterRevision: number, state: RemoteSyncState, strict = false) => {
@@ -1437,7 +1439,7 @@ const acquireLock = async (uid: string, deviceId: string, operationId: string) =
     const reference = stateRef(uid);
     const current = parseRemoteState((await transaction.get(reference)).data());
     const now = Date.now();
-    if (current.protocolVersion !== PROTOCOL_VERSION) {
+    if (current.protocolVersion !== 2 && current.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error("云端同步协议版本不兼容，请先使用新版应用完成迁移。");
     }
     const activeLock = current.lock && current.lock.expiresAt > now ? current.lock : undefined;

@@ -2,7 +2,8 @@ import { canonicalKnowledge, groupIdentity, knowledgeBytes, knowledgeHash, refer
 import { KNOWLEDGE_LIMITS, KNOWLEDGE_PROTOCOL, KnowledgeError, ROOT_NODE, type KnowledgeCandidate, type KnowledgeCommand, type KnowledgeEntity, type KnowledgeGroup, type KnowledgePosition, type KnowledgeReceipt, type KnowledgeRevision, type KnowledgeState, type KnowledgeUnit, type KnowledgeValue } from "./domain";
 import { isOrderKey } from "./orderKey";
 
-const allowedUnits = { workspace: ["title", "note", "archived", "deleted"], node: ["title", "note", "position", "deleted"], reference: ["remark", "deleted"] } as const;
+import { isNodeAppearance, isMapAppearance } from "./appearance";
+const requiredUnits = { workspace: ["title", "note", "archived", "deleted"], node: ["title", "note", "position", "deleted"], reference: ["remark", "deleted"] } as const;
 const validId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_:@.-]{1,180}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value);
 const validStoredId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_:@.-]{1,200}$/.test(value) && !["__proto__", "constructor", "prototype"].includes(value);
 export const revisionValue = (state: KnowledgeState, revisionId: string): KnowledgeValue | undefined => {
@@ -32,8 +33,11 @@ export const isRevisionAncestor = (state: KnowledgeState, ancestor: string, desc
   }
   return false;
 };
+const allowedUnits = { workspace: [...requiredUnits.workspace, "map"], node: [...requiredUnits.node, "style"], reference: requiredUnits.reference } as const;
 export const validateKnowledgeValue = (unit: KnowledgeUnit, value: KnowledgeValue): void => {
-  if (unit === "deleted" || unit === "archived") {
+  if (unit === "style" || unit === "map") {
+    if (!(unit === "style" ? isNodeAppearance(value) : isMapAppearance(value))) throw new KnowledgeError("invalid", "导图样式字段无效");
+  } else if (unit === "deleted" || unit === "archived") {
     if (typeof value !== "boolean") throw new KnowledgeError("invalid", "生命周期字段无效");
   } else if (unit === "position") {
     const position = value as KnowledgePosition;
@@ -43,7 +47,7 @@ export const validateKnowledgeValue = (unit: KnowledgeUnit, value: KnowledgeValu
   }
 };
 export const validateKnowledgeCommand = (command: KnowledgeCommand): void => {
-  if (!command || command.protocolVersion !== KNOWLEDGE_PROTOCOL || !validId(command.id) || !validId(command.libraryId) || !command.entity || !validId(command.entity.id)) throw new KnowledgeError("invalid", "知识命令身份或版本无效");
+  if (!command || ![1, KNOWLEDGE_PROTOCOL].includes(command.protocolVersion) || !validId(command.id) || !validId(command.libraryId) || !command.entity || !validId(command.entity.id)) throw new KnowledgeError("invalid", "知识命令身份或版本无效");
   if (!Object.hasOwn(allowedUnits, command.entity.kind)) throw new KnowledgeError("invalid", "知识实体类型无效");
   const entity = command.entity;
   if (Object.keys(entity).sort().join(",") !== "id,kind,nodeId,recordId,workspaceId") throw new KnowledgeError("invalid", "知识实体包含未知身份字段");
@@ -52,6 +56,7 @@ export const validateKnowledgeCommand = (command: KnowledgeCommand): void => {
   const changes = Object.entries(command.changes);
   if (!changes.length || changes.length > 4 || !["create", "edit", "delete", "restore", "resolve"].includes(command.operation)) throw new KnowledgeError("invalid", "知识命令范围无效");
   for (const [unit, value] of changes) {
+    if ((unit === "style" || unit === "map") && command.protocolVersion !== 2) throw new KnowledgeError("invalid", "导图样式需要新版知识协议");
     if (!(allowedUnits[entity.kind] as readonly string[]).includes(unit)) throw new KnowledgeError("invalid", "知识命令包含不允许的字段");
     validateKnowledgeValue(unit as KnowledgeUnit, value);
   }
@@ -126,7 +131,7 @@ const assertKnowledgeEntity = (state: KnowledgeState, entity: KnowledgeEntity, i
   if (entity.kind === "node" && (entity.nodeId !== "" || entity.recordId !== "")) throw new KnowledgeError("invalid", "节点实体身份无效");
   if (entity.kind === "reference" && (!validId(entity.nodeId) || !validId(entity.recordId) || entity.id !== referenceIdentity(entity.nodeId, entity.recordId))) throw new KnowledgeError("invalid", "引用实体身份无效");
   const required = allowedUnits[entity.kind];
-  if (Object.keys(entity.units).sort().join(",") !== [...required].sort().join(",")) throw new KnowledgeError("invalid", "知识实体缺少正式字段");
+  if (requiredUnits[entity.kind].some(unit => !Object.hasOwn(entity.units, unit))) throw new KnowledgeError("invalid", "知识实体缺少正式字段");
   for (const [unit, revisionId] of Object.entries(entity.units)) {
     if (!(required as readonly string[]).includes(unit) || !validStoredId(revisionId)) throw new KnowledgeError("invalid", "知识实体字段引用无效");
     const revision = state.revisions[revisionId];

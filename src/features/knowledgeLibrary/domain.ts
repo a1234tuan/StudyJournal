@@ -1,11 +1,12 @@
-export const KNOWLEDGE_PROTOCOL = 1 as const;
+import type { MapAppearance, NodeAppearance } from "./appearance";
+export const KNOWLEDGE_PROTOCOL = 2 as const;
 export const ROOT_NODE = "@root";
 export const KNOWLEDGE_LIMITS = { title: 512, note: 16384, remark: 4096, order: 4096, commandBytes: 65536, writes: 20, resolution: 4 } as const;
 export type KnowledgeOwner = "deviceGuest" | `account:${string}`;
 export type KnowledgeKind = "workspace" | "node" | "reference";
-export type KnowledgeUnit = "title" | "note" | "remark" | "position" | "archived" | "deleted";
+export type KnowledgeUnit = "title" | "note" | "remark" | "position" | "archived" | "deleted" | "style" | "map";
 export interface KnowledgePosition { parentNodeId: string; orderKey: string }
-export type KnowledgeValue = string | boolean | KnowledgePosition;
+export type KnowledgeValue = string | boolean | KnowledgePosition | NodeAppearance | MapAppearance;
 export interface KnowledgeValueReference { revisionValueId: string }
 export interface KnowledgeEntity {
   id: string;
@@ -47,7 +48,7 @@ export interface KnowledgeState {
 }
 export interface KnowledgeContext { libraryId: string; ownerScope: KnowledgeOwner; dataGeneration: number; sessionGeneration?: number }
 export interface KnowledgeCommand {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   id: string;
   libraryId: string;
   operation: "create" | "edit" | "delete" | "restore" | "resolve";
@@ -107,7 +108,7 @@ export interface KnowledgeSyncState {
   cursor: number;
 }
 export interface KnowledgePending { libraryId: string; id: string; command: KnowledgeCommand; hash: string; status: "pending" | "unknown" }
-export interface KnowledgeDraft { libraryId: string; id: string; entityId: string; unit: KnowledgeUnit; text: string; expectedRevision: string | null; dataGeneration: number }
+export interface KnowledgeDraft { appearance?: NodeAppearance; styleExpected?: string | null; libraryId: string; id: string; entityId: string; unit: KnowledgeUnit; text: string; expectedRevision: string | null; dataGeneration: number }
 export interface KnowledgeBackupScope {
   autoBackupState?: import("../../types").AutoBackupSettings;
   ownerScope: KnowledgeOwner;

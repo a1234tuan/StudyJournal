@@ -6,6 +6,7 @@ import { groupIdentity, knowledgeHash } from "../src/features/knowledgeLibrary/c
 import { emptyKnowledgeState, type KnowledgeCommand } from "../src/features/knowledgeLibrary/domain";
 import { applyKnowledgeCommand } from "../src/features/knowledgeLibrary/protocol";
 import { applyKnowledgeCloudPacket, knowledgeCloudPacket, type KnowledgeCloudPacket } from "../src/features/knowledgeLibrary/cloudProtocol";
+import { createKnowledgeEntity, editKnowledgeEntity } from "../src/features/knowledgeLibrary/commands";
 import { createKnowledgeTransport } from "../src/features/knowledgeLibrary/firestoreTransport";
 
 let environment: RulesTestEnvironment;
@@ -21,6 +22,37 @@ const register = (database: Firestore, libraryId: string, requestId: string) => 
   transaction.set(doc(database, root(libraryId) + "/state/head"), { protocolVersion: 1, sequence: 0, commandId: requestId });
   transaction.set(doc(database, root(libraryId) + "/receipts/" + requestId), { protocolVersion: 1, sequence: 0, commandId: requestId, commandHash: knowledgeHash({ requestId, libraryId }), registration: true });
   return libraryId;
+});
+
+it("STYLE-V2: upgrades only styled libraries and rejects old-client downgrade writes", async () => {
+  const owner = "style-v2-" + crypto.randomUUID();
+  const database = environment.authenticatedContext(owner).firestore();
+  const transport = createKnowledgeTransport(database, owner);
+  const registry = await transport.register("style-library", "style-registration");
+  const topic = createKnowledgeEntity(registry.cloudLibraryId, "workspace", "样式专题");
+  const initial = emptyKnowledgeState();
+  const legacy = applyKnowledgeCommand(initial, topic);
+  await assertSucceeds(transport.publish(registry.cloudLibraryId, 0, knowledgeCloudPacket(initial, legacy, topic)));
+  const configure = editKnowledgeEntity(registry.cloudLibraryId, legacy, legacy.entities[topic.entity.id], "map", { structure: "radial", line: "elbow" });
+  const styled = applyKnowledgeCommand(legacy, configure);
+  await assertSucceeds(transport.publish(registry.cloudLibraryId, 1, knowledgeCloudPacket(legacy, styled, configure)));
+  expect(await transport.head(registry.cloudLibraryId)).toBe(2);
+  const packets = await transport.commits(registry.cloudLibraryId, 0, 2);
+  expect(packets.map(packet => packet.head.protocolVersion)).toEqual([1, 2]);
+  expect(packets.reduce((state, packet) => applyKnowledgeCloudPacket(state, packet), initial)).toEqual(styled);
+  const rename = editKnowledgeEntity(registry.cloudLibraryId, styled, styled.entities[topic.entity.id], "title", "后续文字编辑");
+  const renamed = applyKnowledgeCommand(styled, rename);
+  const packet = knowledgeCloudPacket(styled, renamed, rename);
+  const batch = writeBatch(database);
+  const path = "knowledgeUsers/" + owner + "/libraries/" + registry.cloudLibraryId;
+  batch.set(doc(database, path + "/state/head"), { ...packet.head, protocolVersion: 1 });
+  batch.set(doc(database, path + "/commits/" + packet.commit.commandId), { ...packet.commit, protocolVersion: 1 });
+  batch.set(doc(database, path + "/receipts/" + packet.receipt.commandId), { ...packet.receipt, protocolVersion: 1 });
+  for (const row of packet.rows) batch.set(doc(database, path + "/" + row.collection + "/" + row.id), { ...row.data, protocolVersion: 1 });
+  await assertFails(batch.commit());
+  expect(await transport.head(registry.cloudLibraryId)).toBe(2);
+  await assertSucceeds(transport.publish(registry.cloudLibraryId, 2, packet));
+  expect(await transport.head(registry.cloudLibraryId)).toBe(3);
 });
 const publish = (database: Firestore, libraryId: string, packet: KnowledgeCloudPacket, omitLast = false) => {
   const batch = writeBatch(database);

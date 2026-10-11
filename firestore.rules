@@ -22,7 +22,7 @@ service cloud.firestore {
         function receiptAfter(commandId) { return getAfter(/databases/$(database)/documents/knowledgeUsers/$(userId)/libraries/$(libraryId)/receipts/$(commandId)).data; }
         function nextCommit(commit) {
           let head = headAfter();
-          return commit.protocolVersion == 1 && commit.sequence == head.sequence && commit.commandId == head.commandId;
+          return commit.protocolVersion in [1, 2] && commit.protocolVersion == head.protocolVersion && commit.sequence == head.sequence && commit.commandId == head.commandId;
         }
         function validSlot(slot) {
           return slot.keys().hasOnly(['collection', 'kind', 'id', 'hash', 'bytes', 'payload'])
@@ -47,7 +47,7 @@ service cloud.firestore {
           let slot = commit.slots[row.slot];
           return row.keys().hasOnly(['protocolVersion', 'sequence', 'commandId', 'slot', 'payload', 'hash', 'kind'])
             && nextCommit(commit)
-            && row.protocolVersion == 1 && row.sequence == commit.sequence && row.commandId == commit.commandId
+            && row.protocolVersion == commit.protocolVersion && row.sequence == commit.sequence && row.commandId == commit.commandId
             && row.slot is int && row.slot >= 0 && row.slot < commit.slots.size()
             && slot.collection == collection && slot.id == entityId && slot.hash == row.hash
             && slot.kind == row.kind && row.payload is string && slot.bytes == row.payload.toUtf8().size()
@@ -59,7 +59,7 @@ service cloud.firestore {
           let commit = commitAfter(request.resource.data.commandId);
           let receipt = receiptAfter(request.resource.data.commandId);
           return request.resource.data.keys().hasOnly(['protocolVersion', 'sequence', 'commandId'])
-            && request.resource.data.protocolVersion == 1 && request.resource.data.sequence == resource.data.sequence + 1
+            && request.resource.data.protocolVersion in [1, 2] && request.resource.data.protocolVersion >= resource.data.protocolVersion && request.resource.data.sequence == resource.data.sequence + 1
             && commit.sequence == request.resource.data.sequence && receipt.sequence == request.resource.data.sequence
             && slotValid(commit, 0) && slotValid(commit, 1) && slotValid(commit, 2) && slotValid(commit, 3) && slotValid(commit, 4) && slotValid(commit, 5) && slotValid(commit, 6);
         }

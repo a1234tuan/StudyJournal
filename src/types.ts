@@ -810,7 +810,7 @@ export interface AppSettings {
 
 export interface BackupManifest {
   format: "408-study-journal" | "study-journal";
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   exportedAt: ISODateTime;
   appVersion: string;
   counts: {
@@ -856,6 +856,7 @@ export interface BackupPayload {
    * Our own writers always emit it (even as `[]`).
    */
   dailyPlans?: DailyPlan[];
+  reviewMarkEvents?: import("./features/reviewMarks/domain").ReviewMarkEvent[];
   arrangedReviews?: import("./features/arrangedReview/domain").ArrangedReview[];
   arrangedReviewEvents?: import("./features/arrangedReview/domain").ArrangedReviewEvent[];
   reviewCoach?: ReviewCoachFormalSnapshot;
@@ -913,6 +914,7 @@ export type CloudSyncEntityType =
   | "daily-plan"
   | "arranged-review"
   | "arranged-review-event"
+  | "review-mark-event"
   | "decision-block"
   | "decision-block-archive"
   | "decision-block-feedback"

@@ -64,6 +64,7 @@ import type { AnalysisPlanningBlock } from "../features/reviewCoach/analysisPlan
 import type { ReviewCoachFormalSnapshot } from "../features/reviewCoach/domain";
 import { ReviewCoachWorkbench } from "../features/reviewCoach/ReviewCoachWorkbench";
 import type { ReviewSessionRuntimeState, ReviewUndoEntry, DecisionBlockFeedbackDraft } from "../features/reviewSession/runtime";
+import { ReviewMarkSurface } from "../features/reviewMarks/ReviewMarkSurface";
 import { ReviewAnnotationSurface } from "../features/reviewAnnotations/ReviewAnnotationSurface";
 import { reviewAnnotationRepository } from "../features/reviewAnnotations/repository";
 import { reviewOccurrenceKey } from "../features/reviewAnnotations/domain";
@@ -364,6 +365,7 @@ export const ReviewPage = ({
   const [undoing, setUndoing] = useState(false);
   const [ratingError, setRatingError] = useState("");
   const [annotationOpen, setAnnotationOpen] = useState(false);
+  const [marksOpen, setMarksOpen] = useState(false);
   const showAllDue = reviewRuntime.showAllDue ?? false;
   const setShowAllDue = useCallback((value: boolean) => {
     onReviewRuntimeChange((current) => ({ ...current, showAllDue: value }));
@@ -493,6 +495,7 @@ export const ReviewPage = ({
   );
   useEffect(() => {
     setAnnotationOpen(false);
+    setMarksOpen(false);
   }, [currentId]);
   const currentDecisionBlocks = useMemo(
     () => currentRecord ? extractDecisionBlocks(normalizeRecordContent(currentRecord), currentRecord.updatedAt) : [],
@@ -863,6 +866,7 @@ export const ReviewPage = ({
         Boolean(target.closest("[contenteditable='true']"))
       );
       if (
+        marksOpen || event.defaultPrevented ||
         event.key.toLowerCase() !== "z" ||
         (!event.ctrlKey && !event.metaKey) ||
         event.shiftKey ||
@@ -880,12 +884,12 @@ export const ReviewPage = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pendingUndoRestore, ratingRecordId, undoHistory.length, undoLastRating, undoing]);
+  }, [pendingUndoRestore, ratingRecordId, undoHistory.length, undoLastRating, undoing, marksOpen]);
 
   useEffect(() => {
     const editCurrent = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (pageLayerState !== "entered" || mode !== "queue" || !currentRecord || coachOpen || cardCoachOpen || dueBoardOpen || annotationOpen || headerMenuOpen || ratingRecordId || undoing || pendingUndoRestore) return;
+      if (pageLayerState !== "entered" || mode !== "queue" || !currentRecord || coachOpen || cardCoachOpen || dueBoardOpen || annotationOpen || marksOpen || headerMenuOpen || ratingRecordId || undoing || pendingUndoRestore) return;
       if (event.key.toLowerCase() !== "e" || event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
       if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=textbox], [role=dialog], [role=menu]")) return;
       if (document.querySelector("dialog[open], [role=dialog][aria-modal=true]")) return;
@@ -894,7 +898,7 @@ export const ReviewPage = ({
     };
     window.addEventListener("keydown", editCurrent);
     return () => window.removeEventListener("keydown", editCurrent);
-  }, [pageLayerState, mode, currentRecord, coachOpen, cardCoachOpen, dueBoardOpen, annotationOpen, headerMenuOpen, ratingRecordId, undoing, pendingUndoRestore, onEditRecord]);
+  }, [pageLayerState, mode, currentRecord, coachOpen, cardCoachOpen, dueBoardOpen, annotationOpen, marksOpen, headerMenuOpen, ratingRecordId, undoing, pendingUndoRestore, onEditRecord]);
 
   const runFeedbackAction = async (actionId: string, action: () => Promise<unknown>) => {
     if (feedbackActionId) return;
@@ -1082,20 +1086,22 @@ export const ReviewPage = ({
                   occurrenceKey={standalone ? "arranged:" + standalone.roundId : reviewOccurrenceKey(currentReview)}
                   contentRevision={currentRecord.updatedAt}
                   open={annotationOpen}
-                  onOpenChange={setAnnotationOpen}
+                  onOpenChange={open => { setAnnotationOpen(open); if (open) setMarksOpen(false); }}
                   viewportOverlayHost={viewportOverlayHost}
                   entryHost={annotationEntryHost}
                 >
-                  <RichTextEditor
-                    value={normalizeRecordContent(currentRecord)}
-                    onChange={() => undefined}
-                    placeholder=""
-                    readOnly
-                    currentRecordId={currentRecord.id}
-                    referenceRecords={referenceRecords}
-                    referenceSubjects={referenceSubjects}
-                    onOpenRecordReference={onOpenRecordReference ? (targetRecordId) => onOpenRecordReference(currentRecord.id, targetRecordId) : undefined}
-                  />
+                  <ReviewMarkSurface recordId={currentRecord.id} contentRevision={currentRecord.updatedAt} enabled={!standalone} open={marksOpen} onOpenChange={open => { setMarksOpen(open); if (open) setAnnotationOpen(false); }} entryHost={annotationEntryHost} viewportOverlayHost={viewportOverlayHost}>
+                    <RichTextEditor
+                      value={normalizeRecordContent(currentRecord)}
+                      onChange={() => undefined}
+                      placeholder=""
+                      readOnly
+                      currentRecordId={currentRecord.id}
+                      referenceRecords={referenceRecords}
+                      referenceSubjects={referenceSubjects}
+                      onOpenRecordReference={onOpenRecordReference ? (targetRecordId) => onOpenRecordReference(currentRecord.id, targetRecordId) : undefined}
+                    />
+                  </ReviewMarkSurface>
                 </ReviewAnnotationSurface>
                 {currentDecisionBlocks.length > 0 && (
                   <section className="decision-block-reflection-list" aria-label="复习重点评论">
@@ -1372,7 +1378,7 @@ export const ReviewPage = ({
                 })}
               </section>
               </section>;
-              if (annotationOpen || pageLayerState === "exiting") return null;
+              if (annotationOpen || marksOpen || pageLayerState === "exiting") return null;
               return viewportOverlayHost ? createPortal(ratingControls, viewportOverlayHost) : ratingControls;
             })()}
           </section>

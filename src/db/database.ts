@@ -76,6 +76,7 @@ export interface RestoreStagingAsset {
 }
 
 export class StudyJournalDatabase extends Dexie {
+  reviewMarkEvents!: Table<import("../features/reviewMarks/domain").ReviewMarkEvent, string>;
   arrangedReviews!: Table<import("../features/arrangedReview/domain").ArrangedReview, string>;
   arrangedReviewEvents!: Table<import("../features/arrangedReview/domain").ArrangedReviewEvent, string>;
   arrangedReviewDrafts!: Table<import("../features/arrangedReview/domain").ArrangedReviewDraft, string>;
@@ -377,6 +378,7 @@ export class StudyJournalDatabase extends Dexie {
     this.version(26).stores(KNOWLEDGE_SCHEMA_26_STORES).upgrade(migrateKnowledgeImports);
     this.version(27).stores(KNOWLEDGE_SCHEMA_27_STORES);
     this.version(28).stores({ arrangedReviews: "id, updatedAt", arrangedReviewEvents: "id, roundId, [roundId+recordId]", arrangedReviewDrafts: "id" });
+    this.version(29).stores({ reviewMarkEvents: "id, recordId, markId" });
   }
 }
 

@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

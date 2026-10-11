@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_MAP_APPEARANCE, type MapAppearance } from "./appearance";
 import { FileText, Focus, Home, Minus, Plus, Maximize2, Minimize2, Scan, Pencil, PanelRightOpen } from "lucide-react";
 import { pinchMap, wheelMapZoom, zoomMapAt, type MapPoint } from "./mapViewport";
 import { useMapCamera, useMapLayoutMotion } from "./useMapMotion";
@@ -13,25 +14,26 @@ import type { KnowledgeNavigation } from "./navigation";
 interface Props {
   fullscreen?: boolean; onFullscreenChange?: (fullscreen: boolean) => void;
   state: KnowledgeState; workspaceId: string; navigation: KnowledgeNavigation; organizing: boolean; editor?: KnowledgeTitleEditor;
-  onDetails: (id: string) => void; onEdit: (id: string) => void; onNavigation: (patch: Partial<KnowledgeNavigation>) => void;
+  onDetails: (id: string) => void; onOpenRecord: (nodeId: string) => void; onEdit: (id: string) => void; onNavigation: (patch: Partial<KnowledgeNavigation>) => void;
   onSelect: (id: string) => void; onClear: () => void; onToggle: (id: string) => void; onCreate: (parentId: string, afterId?: string) => void;
-  onMove: (id: string, parentId: string, beforeId?: string) => void;
+  onMove: (id: string, parentId: string, beforeId?: string) => void; onDelete: (id: string) => void;
 }
 interface Gesture { x: number; y: number; panX: number; panY: number; nodeId?: string; ready: boolean; moved: boolean; touch: boolean; zoom: number; pinch?: number; midpoint?: MapPoint }
 interface Drag { id: string; deltaX: number; deltaY: number; drop?: MapDrop }
-export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, workspaceId, navigation, organizing, editor, onDetails, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove }: Props) => {
+export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, workspaceId, navigation, organizing, editor, onDetails, onOpenRecord, onEdit, onNavigation, onSelect, onClear, onToggle, onCreate, onMove, onDelete }: Props) => {
   const { view, setView, camera } = useMapCamera({ zoom: navigation.zoom, panX: navigation.panX, panY: navigation.panY });
   const viewport = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [fontVersion, setFontVersion] = useState(0);
+  const mapAppearance = (valueOf(state, state.entities[workspaceId], "map") as MapAppearance | undefined) ?? DEFAULT_MAP_APPEARANCE;
   const measure = useMemo(() => {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
     if (!context) return undefined;
     const font = getComputedStyle(viewport.current ?? document.documentElement);
-    context.font = "500 " + getComputedStyle(document.documentElement).fontSize + " " + font.fontFamily;
+    const fontSize = getComputedStyle(document.documentElement).fontSize;
     const cache = new Map<string, number>();
-    return (title: string) => { if (!cache.has(title)) cache.set(title, context.measureText(title).width); return cache.get(title)!; };
+    return (title: string, bold = false) => { const key = (bold ? "700:" : "500:") + title; context.font = (bold ? "700 " : "500 ") + fontSize + " " + font.fontFamily; if (!cache.has(key)) cache.set(key, context.measureText(title).width); return cache.get(key)!; };
   }, [fontVersion]);
   useEffect(() => {
     let alive = true;
@@ -42,9 +44,13 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
   }, []);
   const sides = useRef(navigation.mapWorkspaceId === workspaceId ? navigation.mapSides ?? {} : {});
   const previousLayout = useRef<ReturnType<typeof layoutKnowledgeMap>>();
+  const previousStructure = useRef(mapAppearance.structure);
   const layout = useMemo(() => {
-    const next = layoutKnowledgeMap(state, workspaceId, new Set(navigation.collapsed), sides.current, editor?.isNew ? { id: editor.entityId, parentId: editor.parentId ?? ROOT_NODE, afterId: editor.afterId } : undefined, measure);
-    const anchorId = navigation.selectedNodeId ?? ROOT_NODE;
+    if (previousStructure.current !== mapAppearance.structure) { sides.current = {}; previousStructure.current = mapAppearance.structure; }
+    const next = layoutKnowledgeMap(state, workspaceId, new Set(navigation.collapsed), sides.current, editor?.isNew ? { id: editor.entityId, parentId: editor.parentId ?? ROOT_NODE, afterId: editor.afterId, appearance: editor.appearance } : undefined, measure, editor?.appearance ? { id: editor.entityId, appearance: editor.appearance } : undefined);
+    sides.current = next.sides;
+    if (editor?.appearance) { const node = next.nodes.find(item => item.id === editor.entityId); if (node) node.appearance = editor.appearance; }
+    const anchorId = editor?.entityId ?? navigation.selectedNodeId ?? ROOT_NODE;
     const before = previousLayout.current?.nodes.find(node => node.id === anchorId);
     const after = next.nodes.find(node => node.id === anchorId);
     if (before && after) {
@@ -54,7 +60,7 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
     }
     previousLayout.current = next;
     return next;
-  }, [state, workspaceId, navigation.collapsed, editor?.isNew, editor?.entityId, editor?.parentId, editor?.afterId, measure]);
+  }, [state, workspaceId, navigation.collapsed, editor?.isNew, editor?.entityId, editor?.parentId, editor?.afterId, editor?.appearance, measure]);
   const initialized = useRef(navigation.mapWorkspaceId === workspaceId);
   const latest = useRef({ view, onNavigation, layout });
   latest.current = { view: camera.current, onNavigation, layout };
@@ -112,10 +118,16 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
     const observer = new ResizeObserver(entries => setSize({ width: entries[0].contentRect.width, height: entries[0].contentRect.height }));
     observer.observe(element); return () => { observer.disconnect(); element.removeEventListener("wheel", preventBrowserZoom); };
   }, []);
+  useEffect(() => {
+    if (editor && camera.current.zoom < .85) {
+      const selected = layout.nodes.find(node => node.id === editor.entityId);
+      if (selected) setView({ zoom: .85, panX: size.width / 2 - (selected.x + selected.width / 2) * .85, panY: size.height / 2 - (selected.y + selected.height / 2) * .85 });
+    }
+  }, [editor?.entityId]);
   useEffect(() => { if (size.width && size.height && !initialized.current) { initialized.current = true; fit(true); } }, [size]);
   useEffect(() => {
-    if ((!navigation.selectedNodeId && !editor?.isNew) || !size.width || gesture.current) return;
-    const selected = layout.nodes.find(node => node.id === (editor?.isNew ? editor.entityId : navigation.selectedNodeId));
+    if (!size.width || gesture.current) return;
+    const selected = layout.nodes.find(node => node.id === (editor?.entityId ?? navigation.selectedNodeId ?? ROOT_NODE));
     if (!selected) return;
     const narrow = window.matchMedia("(max-width: 920px)").matches;
     const previewOverlay = navigation.recordPreviewId && (narrow || (viewport.current?.parentElement?.clientWidth ?? 0) < 720);
@@ -181,6 +193,11 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
       onCreate(selected.id);
       return;
     }
+    if (event.key === "Backspace" && selected?.kind === "node" && !String(valueOf(state, selected, "title") ?? "").trim()) {
+      event.preventDefault();
+      onDelete(selected.id);
+      return;
+    }
     if (event.key.startsWith("Arrow")) {
       if (navigation.selectedNodeId) { event.preventDefault(); focusNeighbor(event.key as MapDirection); }
       else if (!navigation.selectedNodeId) {
@@ -189,7 +206,7 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
       }
     }
   };
-  const dropPreview = drag?.drop ? mapDropPreview(nodes, drag.id, drag.drop) : undefined;
+  const dropPreview = drag?.drop ? mapDropPreview(nodes, drag.id, drag.drop, mapAppearance.line) : undefined;
   return <section className="knowledge-map-section" aria-label="专题导图">
     {editor?.isNew && !layout.nodes.some(node => node.id === editor.entityId) && <div className="knowledge-map-new"><KnowledgeTitleInput editor={editor} label="新建节点" /></div>}
     <div className="knowledge-map-context" aria-live="polite"><span>{fullscreen ? knowledgeLabel(state, state.entities[workspaceId]) : "专题导图"}</span><small>{layout.nodes.length - 1} 个可见节点 · 单击选择，双击编辑</small></div>
@@ -254,13 +271,13 @@ export const KnowledgeMap = ({ fullscreen = false, onFullscreenChange, state, wo
       }}
       onPointerCancel={cancel}>
       <div className="knowledge-map-plane" style={{ transform: "translate(" + view.panX + "px," + view.panY + "px) scale(" + view.zoom + ")" }}>
-        <svg aria-hidden="true" className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => node.id !== ROOT_NODE && lineVisible(node)).map(node => <path key={node.id} data-branch={node.branch} data-depth={node.depth} d={knowledgeMapPath(byId.get(node.parentId)!, node)} />)}</svg>
+        <svg aria-hidden="true" className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => node.id !== ROOT_NODE && lineVisible(node)).map(node => <path key={node.id} data-branch={node.branch} data-depth={node.depth} d={knowledgeMapPath(byId.get(node.parentId)!, node, mapAppearance.line)} />)}</svg>
          {dropPreview && <svg aria-hidden="true" className="knowledge-map-drop-preview" data-drop-preview-mode={drag?.drop?.mode} width="1" height="1"><path d={dropPreview.path} /><rect x={dropPreview.slot.x} y={dropPreview.slot.y} width={dropPreview.slot.width} height={dropPreview.slot.height} rx="6" /><circle cx={dropPreview.x} cy={dropPreview.y} r="4" /></svg>}
-        {visible.map(node => <div key={node.id} data-node-id={node.id === ROOT_NODE ? undefined : node.id} data-map-root={node.id === ROOT_NODE || undefined} data-branch={node.branch} data-side={node.side} data-depth={node.depth} data-drop={drag?.drop?.targetId === node.id ? drag.drop.mode : undefined} className={"knowledge-map-node" + (node.id === ROOT_NODE ? " knowledge-map-center" : "") + (navigation.selectedNodeId === node.id ? " selected" : "") + (draggedIds.has(node.id) ? " dragging" : "")} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}>
-          {node.id === ROOT_NODE ? <strong>{knowledgeLabel(state, state.entities[workspaceId])}</strong> : editor?.entityId === node.id ? <KnowledgeTitleInput editor={editor} label={editor.isNew ? "新建节点" : "节点标题"} /> : <><button className="knowledge-map-label" aria-pressed={navigation.selectedNodeId === node.id} onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); window.clearTimeout(selectTimer.current); onEdit(node.id); } }} onClick={event => { if (event.detail === 0) onSelect(node.id); }}>{knowledgeLabel(state, state.entities[node.id])}</button>{node.count > 0 && <button type="button" className="knowledge-map-count" aria-label={"查看 " + node.count + " 条日志"} onDoubleClick={event => event.stopPropagation()} onClick={() => onDetails(node.id)}><FileText size={13} />{node.count}</button>}</>}
+        {visible.map(node => <div key={node.id} data-node-id={node.id === ROOT_NODE ? undefined : node.id} data-map-root={node.id === ROOT_NODE || undefined} data-branch={node.branch} data-side={node.side} data-direction={node.direction} data-highlight={node.appearance?.background} data-ink={node.appearance?.color} data-bold={node.appearance?.bold || undefined} data-depth={node.depth} data-drop={drag?.drop?.targetId === node.id ? drag.drop.mode : undefined} className={"knowledge-map-node" + (node.id === ROOT_NODE ? " knowledge-map-center" : "") + (navigation.selectedNodeId === node.id ? " selected" : "") + (draggedIds.has(node.id) ? " dragging" : "")} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}>
+          {node.id === ROOT_NODE ? <strong>{knowledgeLabel(state, state.entities[workspaceId])}</strong> : editor?.entityId === node.id ? <KnowledgeTitleInput editor={editor} label={editor.isNew ? "新建节点" : "节点标题"} /> : <><button className="knowledge-map-label" aria-pressed={navigation.selectedNodeId === node.id} onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); window.clearTimeout(selectTimer.current); onEdit(node.id); } }} onClick={event => { if (event.detail === 0) onSelect(node.id); }}>{knowledgeLabel(state, state.entities[node.id])}</button>{node.count > 0 && <button type="button" className="knowledge-map-count" aria-label={"查看 " + node.count + " 条日志"} onDoubleClick={event => event.stopPropagation()} onClick={() => onOpenRecord(node.id)}><FileText size={13} />{node.count}</button>}</>}
           {node.hasChildren && <button className="knowledge-map-toggle" aria-expanded={!navigation.collapsed.includes(node.id)} aria-label={navigation.collapsed.includes(node.id) ? "展开分支" : "折叠分支"} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={() => onToggle(node.id)}><span>{navigation.collapsed.includes(node.id) ? "+" : "−"}</span></button>}
         </div>)}
-        {drag && <div className="knowledge-map-ghost" aria-hidden="true" style={{ transform: "translate(" + drag.deltaX + "px," + drag.deltaY + "px)" }}><svg className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => draggedIds.has(node.id) && draggedIds.has(node.parentId)).map(node => <path key={node.id} data-branch={node.branch} d={knowledgeMapPath(byId.get(node.parentId)!, node)} />)}</svg>{nodes.filter(node => draggedIds.has(node.id)).map(node => <div className="knowledge-map-node" data-branch={node.branch} key={node.id} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}><span className="knowledge-map-label">{knowledgeLabel(state, state.entities[node.id])}</span></div>)}</div>}
+        {drag && <div className="knowledge-map-ghost" aria-hidden="true" style={{ transform: "translate(" + drag.deltaX + "px," + drag.deltaY + "px)" }}><svg className="knowledge-map-lines" width="1" height="1">{nodes.filter(node => draggedIds.has(node.id) && draggedIds.has(node.parentId)).map(node => <path key={node.id} data-branch={node.branch} d={knowledgeMapPath(byId.get(node.parentId)!, node, mapAppearance.line)} />)}</svg>{nodes.filter(node => draggedIds.has(node.id)).map(node => <div className="knowledge-map-node" data-branch={node.branch} key={node.id} style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}><span className="knowledge-map-label">{knowledgeLabel(state, state.entities[node.id])}</span></div>)}</div>}
       </div>
     </div>
   </section>;
