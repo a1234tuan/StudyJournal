@@ -11,17 +11,27 @@ interface Props {
   records: readonly RecordBlock[];
   subjects: readonly SubjectConfig[];
   scrollTop: number;
+  focusOnOpen?: boolean;
   onScroll: (recordId: string, scrollTop: number) => void;
   onClose: () => void;
   onOpenFull: (record: RecordBlock) => void;
 }
 
-export function JournalRecordPreview({ record, recordId, records, subjects, scrollTop, onScroll, onClose, onOpenFull }: Props) {
+export function JournalRecordPreview({ record, recordId, records, subjects, scrollTop, focusOnOpen = true, onScroll, onClose, onOpenFull }: Props) {
   const body = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
+  const savedScroll = useRef(scrollTop);
+  savedScroll.current = scrollTop;
+  useEffect(() => {
+    const content = body.current?.querySelector("article");
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (body.current) body.current.scrollTop = savedScroll.current; });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [recordId, record?.id]);
   useEffect(() => {
     if (body.current) body.current.scrollTop = scrollTop;
-    close.current?.focus({ preventScroll: true });
+    if (focusOnOpen) close.current?.focus({ preventScroll: true });
   }, [recordId]);
   return <section className="journal-record-preview" aria-label="日志预览">
     <div className="journal-preview-toolbar">
@@ -36,7 +46,7 @@ export function JournalRecordPreview({ record, recordId, records, subjects, scro
           <h2>{record.title || "未命名日志"}</h2>
           <RecordTagChips subject={record.subject} tags={record.tags} />
         </header>
-        <RichTextEditor key={record.id} value={normalizeRecordContent(record)} onChange={() => undefined} placeholder="" readOnly currentRecordId={record.id} referenceRecords={records.filter(item => !item.deletedAt)} referenceSubjects={subjects} onOpenRecordReference={targetId => { const target = records.find(item => item.id === targetId && !item.deletedAt); if (target) onOpenFull(target); }} />
+        <RichTextEditor key={record.id} value={normalizeRecordContent(record)} onChange={() => undefined} placeholder="" readOnly deferInitialRender currentRecordId={record.id} referenceRecords={records.filter(item => !item.deletedAt)} referenceSubjects={subjects} onOpenRecordReference={targetId => { const target = records.find(item => item.id === targetId && !item.deletedAt); if (target) onOpenFull(target); }} />
       </article>}
     </div>
   </section>;

@@ -1,5 +1,6 @@
 import { restoreKnowledgeNavigation } from "../features/knowledgeLibrary/navigation";
 import { isISODate } from "./date";
+import { restoreJournalScope } from "./journalFilters";
 import {
   createInitialReviewLibraryState,
   createInitialTabMemory,
@@ -271,6 +272,9 @@ const restoreTabMemory = (value: unknown): TabMemory | null => {
       searchQuery: optionalString(value.journal.searchQuery) ?? "",
       browseMode: value.journal.browseMode === "calendar" ? "calendar" : "library",
       subjectFilter: optionalString(value.journal.subjectFilter) ?? "全部",
+      scope: restoreJournalScope(value.journal.scope),
+      previewDismissed: optionalBoolean(value.journal.previewDismissed) ?? false,
+      previewAutomatic: optionalBoolean(value.journal.previewAutomatic),
       visibleRecordCount: Math.max(20, Math.floor(optionalScrollY(value.journal.visibleRecordCount) ?? 20)),
       listScrollY: optionalScrollY(value.journal.listScrollY),
       previewRecordId: optionalString(value.journal.previewRecordId),

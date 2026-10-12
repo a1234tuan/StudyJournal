@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("compact page tools preserve actions and avoid horizontal overflow", async ({ page }) => {
+test("compact page tools preserve actions and avoid horizontal overflow", async ({ page }, info) => {
   await page.goto("/?preview=journal-performance");
   await expect(page.getByRole("button", { name: "打开今日计划" })).toBeVisible();
   await expect(page.getByRole("button", { name: "打开收藏夹" })).toBeVisible();
@@ -11,14 +11,15 @@ test("compact page tools preserve actions and avoid horizontal overflow", async 
   if (await page.getByRole("button", { name: "筛选日志", exact: true }).isVisible()) await page.getByRole("button", { name: "筛选日志", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "按学科筛选" })).toBeVisible();
   await expect(page.getByRole("button", { name: "全局搜索" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "按日期", exact: true })).toBeVisible();
+  if (info.project.name === "desktop") await expect(page.getByRole("tab", { name: "按日期", exact: true })).toHaveCount(0);
+  else await expect(page.getByRole("tab", { name: "按日期", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   const header = await page.locator(".journal-page .page-header").boundingBox();
   expect(header!.height).toBeLessThan(145);
 });
 
 
-test("journal preview keeps browser history, reading position and business facts", async ({ page }) => {
+test("journal preview keeps browser history, reading position and business facts", async ({ page }, info) => {
   await page.goto("/?preview=journal-performance");
   await page.getByRole("button", { name: "日志", exact: true }).first().click();
   const facts = () => page.evaluate(async () => {
@@ -49,11 +50,13 @@ test("journal preview keeps browser history, reading position and business facts
   await expect(preview).toBeVisible();
   await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(scroll);
   await page.goBack();
-  await expect(preview).toHaveCount(0);
+  if (info.project.name === "desktop") await expect(preview).toBeVisible();
+  else await expect(preview).toHaveCount(0);
   await page.goForward();
   await expect(preview).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(preview).toHaveCount(0);
+  if (info.project.name === "desktop") await expect(preview).toHaveText("选择左侧日志以预览");
+  else await expect(preview).toHaveCount(0);
   expect(await facts()).toBe(before);
 });
 
@@ -113,13 +116,18 @@ test("preview changes records, retains filtering and reports a deleted source", 
   await page.getByRole("button", { name: "更多操作", exact: true }).click();
   page.once("dialog", dialog => dialog.accept());
   await page.locator(".record-more-menu").getByRole("button", { name: "删除记录", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "原日志暂不可用" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "打开完整日志" })).toBeDisabled();
+  if (info.project.name === "desktop") await expect(page.getByRole("button", { name: "打开完整日志" })).toBeEnabled();
+  else {
+    await expect(page.getByRole("status").filter({ hasText: "原日志暂不可用" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "打开完整日志" })).toBeDisabled();
+  }
   await page.getByRole("button", { name: "返回列表" }).click();
   await expect(page.locator(".page-transition-layer-exiting, .page-transition-layer-entering")).toHaveCount(0);
   await expect(page.getByLabel("按学科筛选", { exact: true })).toHaveValue("数据结构");
-  await page.getByRole("tab", { name: "按日期", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "本月有记录日期" })).toBeVisible();
+  if (info.project.name !== "desktop") {
+    await page.getByRole("tab", { name: "按日期", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "本月有记录日期" })).toBeVisible();
+  }
   await page.getByRole("button", { name: "全局搜索" }).click();
   await expect(page.locator(".search-page")).toBeVisible();
 });

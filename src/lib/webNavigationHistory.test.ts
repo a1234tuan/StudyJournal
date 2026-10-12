@@ -8,6 +8,13 @@ import {
 } from "./webNavigationHistory";
 
 describe("web navigation history snapshots", () => {
+  it("round-trips topic scope and explicit preview dismissal", () => {
+    const memory = createInitialTabMemory();
+    memory.journal.scope = { kind: "topic", owner: "deviceGuest", libraryId: "library", workspaceId: "topic" };
+    memory.journal.previewDismissed = true;
+    const restored = restoreWebNavigationSnapshot(JSON.parse(JSON.stringify(createWebNavigationSnapshot("session", "journal", memory, null, 0))));
+    expect(restored?.tabMemory.journal).toEqual(memory.journal);
+  });
   it("round-trips journal browsing, pagination and both pane positions", () => {
     const memory = createInitialTabMemory();
     Object.assign(memory.journal, { browseMode: "library", subjectFilter: "数学", visibleRecordCount: 60, listScrollY: 12, libraryScrollTop: 980, previewRecordId: "record-a", previewScrollTop: 300 });

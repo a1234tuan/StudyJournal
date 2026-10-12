@@ -119,6 +119,9 @@ export type TabMemory = {
     planDate?: string;
   };
   journal: RecordTabState & {
+    scope?: import("./journalFilters").JournalScope;
+    previewDismissed?: boolean;
+    previewAutomatic?: boolean;
     month: Date;
     selectedDate?: string;
     selectedSubject?: Subject;
@@ -171,6 +174,8 @@ export const createInitialTabMemory = (): TabMemory => ({
     searchQuery: "",
     browseMode: "library",
     subjectFilter: "全部",
+    scope: { kind: "all" },
+    previewDismissed: false,
     visibleRecordCount: 20,
   },
   categories: {
@@ -407,7 +412,7 @@ export const popTabDepth = (memory: TabMemory, tab: TabKey): TabMemory => {
         };
       }
       if (memory.journal.previewRecordId) {
-        return { ...memory, journal: { ...memory.journal, previewRecordId: undefined, previewScrollTop: undefined } };
+        return { ...memory, journal: { ...memory.journal, previewRecordId: undefined, previewScrollTop: undefined, previewDismissed: true } };
       }
       if (memory.journal.selectedSubject) {
         return {

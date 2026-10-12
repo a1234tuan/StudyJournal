@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { JournalRecordPreview } from "./JournalRecordPreview";
 import type { RecordBlock } from "../types";
 
-vi.mock("./RichTextEditor", () => ({ RichTextEditor: ({ readOnly, value }: { readOnly: boolean; value: string }) => <div data-testid="reader" data-readonly={readOnly}>{value}</div> }));
+vi.mock("./RichTextEditor", () => ({ RichTextEditor: ({ readOnly, deferInitialRender, value }: { readOnly: boolean; deferInitialRender: boolean; value: string }) => <div data-testid="reader" data-readonly={readOnly} data-deferred={deferInitialRender}>{value}</div> }));
 const record = { id: "a", type: "record", title: "真实标题", date: "2026-10-08", subject: "数学", contentHtml: "<p>真实正文</p>", tags: [], assets: [], formulas: [], mistakeRefs: [] } as unknown as RecordBlock;
 
 it("renders read-only content and keeps full opening explicit", () => {
@@ -12,6 +12,7 @@ it("renders read-only content and keeps full opening explicit", () => {
   const onScroll = vi.fn();
   const { container } = render(<JournalRecordPreview record={record} recordId="a" records={[record]} subjects={[]} scrollTop={240} onScroll={onScroll} onClose={onClose} onOpenFull={onOpenFull} />);
   expect(screen.getByTestId("reader")).toHaveAttribute("data-readonly", "true");
+  expect(screen.getByTestId("reader")).toHaveAttribute("data-deferred", "true");
   expect(screen.getByRole("heading", { name: "真实标题" })).toBeInTheDocument();
   const body = container.querySelector(".journal-preview-body")!;
   expect(body.scrollTop).toBe(240);

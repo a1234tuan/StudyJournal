@@ -991,6 +991,7 @@ interface RichTextEditorProps {
   placeholder?: string;
   renderInsertTools?: (editor: Editor) => React.ReactNode;
   readOnly?: boolean;
+  deferInitialRender?: boolean;
   highlightedAssetId?: string;
   onAssetChanged?: () => void;
   onAssetTitleChange?: (assetId: string, title: string) => Promise<void> | void;
@@ -1191,6 +1192,7 @@ export const RichTextEditor = ({
   placeholder,
   renderInsertTools,
   readOnly = false,
+  deferInitialRender = false,
   highlightedAssetId,
   onAssetChanged,
   onAssetTitleChange,
@@ -1828,6 +1830,7 @@ export const RichTextEditor = ({
   };
 
   const editor = useEditor({
+    immediatelyRender: deferInitialRender ? false : undefined,
     editable: !readOnly,
     extensions: [
       StarterKit.configure({

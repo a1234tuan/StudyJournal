@@ -492,6 +492,12 @@ export const App = () => {
     commitNavigation(update(current), { history });
   }, [commitNavigation]);
 
+  useEffect(() => {
+    if (mobilePresentation || activeTab !== "journal" || tabMemory.journal.recordId || tabMemory.journal.searchOpen) return;
+    if (tabMemory.journal.browseMode === "library" && !tabMemory.journal.selectedDate && !tabMemory.journal.selectedSubject) return;
+    updateNavigationState(current => ({ ...current, tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, browseMode: "library", selectedDate: undefined, selectedSubject: undefined } } }));
+  }, [mobilePresentation, activeTab, tabMemory.journal.browseMode, tabMemory.journal.selectedDate, tabMemory.journal.selectedSubject, tabMemory.journal.recordId, tabMemory.journal.searchOpen, updateNavigationState]);
+
   const switchTab = useCallback(
     (tab: TabKey, motion: NavigationMotionIntent = "tab") => {
       clearBackHint();
@@ -1768,6 +1774,17 @@ export const App = () => {
           />
         ) : (
           <JournalPage
+            scope={tabMemory.journal.scope}
+            previewDismissed={tabMemory.journal.previewDismissed}
+            onScopeChange={scope => updateNavigationState(current => ({
+              ...current,
+              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, scope, browseMode: "library", selectedDate: undefined, selectedSubject: undefined, previewDismissed: false, visibleRecordCount: 20, libraryScrollTop: 0 } },
+            }))}
+            onResolvePreview={previewRecordId => {
+              const current = navigationStateRef.current;
+              if (current.activeTab !== "journal" || current.tabMemory.journal.recordId || current.tabMemory.journal.searchOpen || current.tabMemory.journal.previewRecordId === previewRecordId) return;
+              updateNavigationState(state => ({ ...state, tabMemory: { ...state.tabMemory, journal: { ...state.tabMemory.journal, previewRecordId, previewScrollTop: 0, previewAutomatic: true } } }));
+            }}
             onOpenKnowledge={() => openMoreSubRoute("knowledge")}
             blocks={app.blocks}
             subjects={app.subjects}
@@ -1785,8 +1802,8 @@ export const App = () => {
             libraryScrollTop={tabMemory.journal.libraryScrollTop}
             onPreviewRecord={(record) => {
               const current = navigationStateRef.current;
-              if (current.tabMemory.journal.previewRecordId === record.id) return;
-              commitNavigation({ ...current, tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, previewRecordId: record.id, previewScrollTop: 0 } } }, { history: current.tabMemory.journal.previewRecordId ? "replace" : "push", motion: "none", scrollToTop: false });
+              if (current.tabMemory.journal.previewRecordId === record.id && !current.tabMemory.journal.previewAutomatic) return;
+              commitNavigation({ ...current, tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, previewRecordId: record.id, previewScrollTop: current.tabMemory.journal.previewRecordId === record.id ? current.tabMemory.journal.previewScrollTop : 0, previewDismissed: false, previewAutomatic: false } } }, { history: current.tabMemory.journal.previewRecordId && !current.tabMemory.journal.previewAutomatic ? "replace" : "push", motion: "none", scrollToTop: false });
             }}
             onClosePreview={popCurrentTabDepth}
             onPreviewScroll={(recordId, previewScrollTop) => {
@@ -1841,11 +1858,11 @@ export const App = () => {
             }}
             onBrowseModeChange={(browseMode) => updateNavigationState((current) => ({
               ...current,
-              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, browseMode, previewRecordId: undefined, previewScrollTop: undefined } },
+              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, browseMode, selectedDate: undefined, selectedSubject: undefined, previewRecordId: undefined, previewScrollTop: undefined, previewDismissed: false } },
             }))}
             onSubjectFilterChange={(subjectFilter) => updateNavigationState((current) => ({
               ...current,
-              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, subjectFilter, visibleRecordCount: 20, libraryScrollTop: 0, previewRecordId: undefined, previewScrollTop: undefined } },
+              tabMemory: { ...current.tabMemory, journal: { ...current.tabMemory.journal, subjectFilter, visibleRecordCount: 20, libraryScrollTop: 0, previewDismissed: false } },
             }))}
             onVisibleRecordCountChange={(visibleRecordCount) => updateNavigationState((current) => ({
               ...current,

@@ -21,7 +21,10 @@ test("journal tabs keep their header and toolbar anchors", async ({ page }, info
   }
   await page.getByRole("combobox", { name: "按学科筛选" }).selectOption("数学");
   await page.keyboard.press("Escape");
-  await page.getByRole("tab", { name: "按日期", exact: true }).click();
+  if (info.project.name === "desktop") {
+    await page.getByRole("button", { name: "按标签", exact: true }).click();
+    await page.keyboard.press("Escape");
+  } else await page.getByRole("tab", { name: "按日期", exact: true }).click();
   for (const [selector, before] of [[".journal-page .page-header", header], [".journal-toolbar", toolbar], [".journal-view-tabs", tabs]] as const) {
     const after = await box(page, selector);
     for (const coordinate of ["x", "y", "width", "height"] as const) expect(Math.abs(after[coordinate] - before[coordinate])).toBeLessThanOrEqual(1);

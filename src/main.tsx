@@ -26,6 +26,7 @@ import "./styles/ai-chat.css";
 import "./styles/desktop-chrome.css";
 import "./styles/sidebar-layout.css";
 import "./styles/mobile.css";
+import "./styles/journal-filters.css";
 
 const disposePresentation = initializePresentation();
 if (import.meta.hot) import.meta.hot.dispose(disposePresentation);
